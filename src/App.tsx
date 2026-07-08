@@ -13,7 +13,7 @@ import {
   getPowerLineLimitHint,
   getMaxPixelsPerDataPort,
 } from './lib/constants'
-import { isLargeGrid, screenRoutingKey } from './lib/screenConfigHash'
+import { isLargeGrid, fullRoutingKey } from './lib/screenConfigHash'
 import { useActiveRouting, useAllScreensRouting } from './hooks/useRoutingResults'
 import Sidebar from './components/Sidebar'
 import GridVisualization from './components/GridVisualization'
@@ -82,26 +82,28 @@ export default function App() {
     screens.length > 1 || showCombinedPacking
   const allScreenResults = useAllScreensRouting(screens, routingByScreen, needsAllScreens)
 
-  const pendingRoutingKey = useRef(screenRoutingKey(activeScreen))
+  const pendingRoutingKey = useRef(fullRoutingKey(activeScreen, activeRouting))
   const [isMeterPending, setIsMeterPending] = useState(false)
 
   useEffect(() => {
-    const nextKey = screenRoutingKey(activeScreen)
+    const nextKey = fullRoutingKey(activeScreen, activeRouting)
     if (nextKey !== pendingRoutingKey.current) {
       pendingRoutingKey.current = nextKey
       if (isLargeGrid(activeScreen)) {
         setIsMeterPending(true)
       }
     }
-  }, [activeScreen])
+  }, [activeScreen, activeRouting])
 
   useEffect(() => {
-    if (result && !isRouting) {
+    const currentKey = fullRoutingKey(activeScreen, activeRouting)
+    if (result && !isRouting && currentKey === pendingRoutingKey.current) {
       setIsMeterPending(false)
     }
-  }, [result, isRouting])
+  }, [result, isRouting, activeScreen, activeRouting])
 
-  const showRoutingSpinner = isRouting || isMeterPending || result == null
+  const showInitialSpinner = isRouting || result == null
+  const showRecalcOverlay = isMeterPending && result != null
 
   const prevGridSize = useRef(
     `${activeScreen.id}:${activeScreen.cabinetsWide}x${activeScreen.cabinetsHigh}`,
@@ -192,11 +194,24 @@ export default function App() {
     setScreens((prev) => prev.map((s) => (s.id === next.id ? syncCabinetGridFromMeters(next) : s)))
   }, [])
 
+  const cloneScreenRouting = (state: ScreenRoutingState): ScreenRoutingState => ({
+    manualMode: state.manualMode,
+    manualOverrides: {
+      dataPorts: { ...state.manualOverrides.dataPorts },
+      powerLines: { ...state.manualOverrides.powerLines },
+      dataStartPoints: { ...state.manualOverrides.dataStartPoints },
+      powerStartPoints: { ...state.manualOverrides.powerStartPoints },
+    },
+  })
+
   const setActiveRouting = useCallback(
     (patch: Partial<ScreenRoutingState>) => {
       setRoutingByScreen((prev) => ({
         ...prev,
-        [activeScreen.id]: { ...(prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING), ...patch },
+        [activeScreen.id]: {
+          ...cloneScreenRouting(prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING),
+          ...patch,
+        },
       }))
     },
     [activeScreen.id],
@@ -222,8 +237,11 @@ export default function App() {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         const dataPorts = { ...current.manualOverrides.dataPorts }
         const dataStartPoints = { ...current.manualOverrides.dataStartPoints }
+        const emptySet = new Set(
+          screens.find((s) => s.id === activeScreen.id)?.emptyCabinets ?? [],
+        )
         for (const label of labels) {
-          if (!activeScreen.emptyCabinets.includes(label)) {
+          if (!emptySet.has(label)) {
             dataPorts[label] = portNumber
             if (!dataStartPoints[portNumber]) {
               dataStartPoints[portNumber] = label
@@ -244,7 +262,7 @@ export default function App() {
         }
       })
     },
-    [activeScreen],
+    [activeScreen.id, screens],
   )
 
   const handlePowerAssignment = useCallback(
@@ -253,8 +271,11 @@ export default function App() {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         const powerLines = { ...current.manualOverrides.powerLines }
         const powerStartPoints = { ...current.manualOverrides.powerStartPoints }
+        const emptySet = new Set(
+          screens.find((s) => s.id === activeScreen.id)?.emptyCabinets ?? [],
+        )
         for (const label of labels) {
-          if (!activeScreen.emptyCabinets.includes(label)) {
+          if (!emptySet.has(label)) {
             powerLines[label] = lineNumber
             if (!powerStartPoints[lineNumber]) {
               powerStartPoints[lineNumber] = label
@@ -275,7 +296,7 @@ export default function App() {
         }
       })
     },
-    [activeScreen],
+    [activeScreen.id, screens],
   )
 
   const handleDataStartPoint = useCallback(
@@ -464,7 +485,7 @@ export default function App() {
                 {config.cabinetsWide}×{config.cabinetsHigh} cabs) · {config.controllerModel}
               </h2>
               <p className="mt-0.5 text-xs leading-relaxed text-slate-500 sm:mt-0">
-                {showRoutingSpinner ? (
+                {showInitialSpinner ? (
                   <span className="text-slate-400">Расчёт маршрутизации…</span>
                 ) : (
                   <>
@@ -526,7 +547,7 @@ export default function App() {
               </div>
             )}
 
-            {showRoutingSpinner ? (
+            {showInitialSpinner ? (
               <RoutingSpinner
                 cabinetCount={cabinetCount}
                 label={
@@ -536,6 +557,15 @@ export default function App() {
                 }
               />
             ) : (
+              <div className={showRecalcOverlay ? 'relative' : undefined}>
+                {showRecalcOverlay && (
+                  <div className="absolute inset-0 z-10 flex items-start justify-center bg-white/70 pt-16 backdrop-blur-[1px]">
+                    <RoutingSpinner
+                      cabinetCount={cabinetCount}
+                      label="Обновление сетки…"
+                    />
+                  </div>
+                )}
               <>
             <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               <SummaryCard label="Cabinets" value={result!.summary.totalCabinets} />              <SummaryCard
@@ -626,6 +656,7 @@ export default function App() {
               )}
             </div>
               </>
+              </div>
             )}
           </div>        </main>
       </div>

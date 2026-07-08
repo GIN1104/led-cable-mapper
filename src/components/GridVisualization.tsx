@@ -228,6 +228,12 @@ export default memo(function GridVisualization({
   const [activeValue, setActiveValue] = useState(1)
   const [editMode, setEditMode] = useState<ManualEditMode>('assign')
 
+  useEffect(() => {
+    setSelectedLabels(new Set())
+    setActiveValue(1)
+    setEditMode('assign')
+  }, [manualMode, wide, high, mode])
+
   const emptySet = useMemo(() => new Set(emptyCabinets), [emptyCabinets])
 
   const svgW = PAD * 2 + wide * CELL_W + (wide - 1) * GAP
@@ -716,11 +722,10 @@ export default memo(function GridVisualization({
           }}
         >
           <svg
-            width={svgW}
-            height={svgH}
+            width={svgW * effectiveScale}
+            height={svgH * effectiveScale}
             viewBox={`0 0 ${svgW} ${svgH}`}
-            className="block max-w-none origin-top-left"
-            style={{ transform: `scale(${effectiveScale})` }}
+            className="block max-w-none"
             role="img"
             aria-label={isData ? 'Data port routing grid' : 'Power line routing grid'}
           >

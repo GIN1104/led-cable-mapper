@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { RoutingResult, ScreenConfig, ScreenRoutingState } from '../types'
 import { EMPTY_SCREEN_ROUTING } from '../types'
 import { computeRouting } from '../lib/routingEngine'
-import { fullRoutingKey } from '../lib/screenConfigHash'
+import { allScreensRoutingKey, fullRoutingKey, screenRoutingKey } from '../lib/screenConfigHash'
 import { useAfterFirstPaint } from './useAfterFirstPaint'
 
 function computeForScreen(
@@ -30,17 +30,20 @@ export function useActiveRouting(
 ): ActiveRoutingState {
   const afterPaint = useAfterFirstPaint()
   const routingKey = fullRoutingKey(screen, routing)
+  const screenKey = screenRoutingKey(screen)
 
   const result = useMemo(() => {
     if (!afterPaint) return null
     return computeForScreen(screen, routing)
+    // routingKey — единственный триггер для ручных overrides; routing читается из замыкания текущего рендера
   }, [afterPaint, routingKey, screen, routing])
 
   const autoResult = useMemo(() => {
     if (!afterPaint) return null
     if (!routing.manualMode) return result
     return computeRouting(screen)
-  }, [afterPaint, routingKey, screen, routing.manualMode, result])
+    // autoResult зависит только от конфигурации экрана, не от ручных правок
+  }, [afterPaint, screenKey, screen, routing.manualMode, result])
 
   return {
     result,
@@ -58,6 +61,7 @@ export function useAllScreensRouting(
   enabled: boolean,
 ): Array<{ screen: ScreenConfig; result: RoutingResult }> {
   const afterPaint = useAfterFirstPaint()
+  const combinedRoutingKey = allScreensRoutingKey(screens, routingByScreen)
 
   return useMemo(() => {
     if (!enabled || !afterPaint) return []
@@ -65,5 +69,5 @@ export function useAllScreensRouting(
       screen,
       result: computeForScreen(screen, routingByScreen[screen.id] ?? EMPTY_SCREEN_ROUTING),
     }))
-  }, [enabled, afterPaint, screens, routingByScreen])
+  }, [enabled, afterPaint, screens, combinedRoutingKey, routingByScreen])
 }

@@ -1,4 +1,5 @@
 import type { ManualRoutingOverrides, ScreenConfig, ScreenRoutingState } from '../types'
+import { EMPTY_SCREEN_ROUTING } from '../types'
 
 /** Стабильный ключ конфигурации для мемоизации маршрутизации */
 export function screenRoutingKey(screen: ScreenConfig): string {
@@ -55,6 +56,18 @@ export function fullRoutingKey(
   routing: ScreenRoutingState,
 ): string {
   return `${screenRoutingKey(screen)}::${routingOptionsKey(routing.manualMode, routing.manualOverrides)}`
+}
+
+/** Ключ маршрутизации для всех экранов — для мемоизации сводного расчёта */
+export function allScreensRoutingKey(
+  screens: ScreenConfig[],
+  routingByScreen: Record<string, ScreenRoutingState>,
+): string {
+  return screens
+    .map((screen) =>
+      fullRoutingKey(screen, routingByScreen[screen.id] ?? EMPTY_SCREEN_ROUTING),
+    )
+    .join('||')
 }
 
 /** Порог «большой сетки» для упрощённого рендера и индикатора загрузки */
