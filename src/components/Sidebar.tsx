@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type {
 
@@ -36,7 +36,9 @@ import {
 
 } from '../lib/pitchPresets'
 
-import { calcPixelsPerCabinet, syncCabinetGridFromMeters } from '../lib/cabinetGrid'
+import { calcCabinetsFromMeters, calcPixelsPerCabinet, syncCabinetGridFromMeters } from '../lib/cabinetGrid'
+
+const METER_INPUT_DEBOUNCE_MS = 400
 
 import ScreenManager from './ScreenManager'
 
@@ -87,6 +89,10 @@ interface SidebarProps {
     screenCount: number
 
   }
+
+  isOpen?: boolean
+
+  onClose?: () => void
 
 }
 
@@ -146,13 +152,31 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 const inputClass =
 
-  'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20'
+  'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-base shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 sm:py-2 sm:text-sm'
 
 
 
 const readOnlyClass =
 
-  'w-full rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-600'
+  'w-full rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5 text-base text-slate-600 sm:py-2 sm:text-sm'
+
+
+
+const toggleBtnClass =
+
+  'touch-manipulation min-h-[44px] flex-1 rounded-md px-2 py-2 text-xs font-medium transition sm:min-h-0 sm:py-1.5'
+
+
+
+const switchClass =
+
+  'relative inline-flex h-8 w-14 shrink-0 items-center rounded-full transition sm:h-7 sm:w-12'
+
+
+
+const switchKnobClass =
+
+  'inline-block h-6 w-6 transform rounded-full bg-white shadow transition sm:h-5 sm:w-5'
 
 
 
@@ -192,6 +216,10 @@ export default function Sidebar({
 
   globalTotals,
 
+  isOpen = false,
+
+  onClose,
+
 }: SidebarProps) {
 
   const update = <K extends keyof ScreenConfig>(key: K, value: ScreenConfig[K]) => {
@@ -212,15 +240,58 @@ export default function Sidebar({
 
 
 
-  const updateMeters = (key: 'wallWidthM' | 'wallHeightM', raw: string) => {
+  const [widthDraft, setWidthDraft] = useState(String(config.wallWidthM))
+  const [heightDraft, setHeightDraft] = useState(String(config.wallHeightM))
 
-    const val = Math.max(0.1, parseFloat(raw) || 0.1)
+  useEffect(() => {
+    setWidthDraft(String(config.wallWidthM))
+  }, [config.id, config.wallWidthM])
 
-    onChange(syncCabinetGridFromMeters({ ...config, [key]: val }))
+  useEffect(() => {
+    setHeightDraft(String(config.wallHeightM))
+  }, [config.id, config.wallHeightM])
 
-  }
+  const configRef = useRef(config)
+  configRef.current = config
 
+  useEffect(() => {
+    const widthVal = Math.max(0.1, parseFloat(widthDraft) || 0.1)
+    if (Math.abs(widthVal - configRef.current.wallWidthM) < 0.0001) return
 
+    const timer = window.setTimeout(() => {
+      const c = configRef.current
+      onChange(syncCabinetGridFromMeters({ ...c, wallWidthM: widthVal }))
+    }, METER_INPUT_DEBOUNCE_MS)
+
+    return () => window.clearTimeout(timer)
+  }, [widthDraft, onChange])
+
+  useEffect(() => {
+    const heightVal = Math.max(0.1, parseFloat(heightDraft) || 0.1)
+    if (Math.abs(heightVal - configRef.current.wallHeightM) < 0.0001) return
+
+    const timer = window.setTimeout(() => {
+      const c = configRef.current
+      onChange(syncCabinetGridFromMeters({ ...c, wallHeightM: heightVal }))
+    }, METER_INPUT_DEBOUNCE_MS)
+
+    return () => window.clearTimeout(timer)
+  }, [heightDraft, onChange])
+
+  const previewGrid = useMemo(() => {
+    const widthM = Math.max(0.1, parseFloat(widthDraft) || 0.1)
+    const heightM = Math.max(0.1, parseFloat(heightDraft) || 0.1)
+    return calcCabinetsFromMeters(
+      widthM,
+      heightM,
+      config.cabinetWidthMm,
+      config.cabinetHeightMm,
+    )
+  }, [widthDraft, heightDraft, config.cabinetWidthMm, config.cabinetHeightMm])
+
+  const isDimensionPending =
+    previewGrid.cabinetsWide !== config.cabinetsWide ||
+    previewGrid.cabinetsHigh !== config.cabinetsHigh
 
   const isPreset = config.pitchPreset !== 'custom'
 
@@ -242,13 +313,49 @@ export default function Sidebar({
 
   return (
 
-    <aside className="sidebar-print-hide flex h-full w-80 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-white">
+    <aside
 
-      <div className="border-b border-slate-100 px-5 py-4">
+      className={`sidebar-print-hide fixed inset-y-0 left-0 z-50 flex h-full w-[min(100vw,20rem)] flex-col overflow-y-auto border-r border-slate-200 bg-white transition-transform duration-300 ease-in-out md:static md:z-auto md:w-80 md:max-w-none md:shrink-0 md:translate-x-0 ${
+
+        isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+
+      }`}
+
+    >
+
+      <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
+
+        <div>
 
         <h1 className="text-lg font-bold text-slate-900">LED Cable Mapper</h1>
 
         <p className="mt-0.5 text-xs text-slate-500">Video Wall Routing &amp; Billing</p>
+
+        </div>
+
+        {onClose && (
+
+          <button
+
+            type="button"
+
+            aria-label="Закрыть меню"
+
+            onClick={onClose}
+
+            className="touch-manipulation rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 md:hidden"
+
+          >
+
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+
+              <path strokeLinecap="round" d="M6 6l12 12M18 6L6 18" />
+
+            </svg>
+
+          </button>
+
+        )}
 
       </div>
 
@@ -300,7 +407,7 @@ export default function Sidebar({
 
           <SectionTitle>Screen — {config.name}</SectionTitle>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 
             <Field label="Wall Width (m)">
 
@@ -314,9 +421,9 @@ export default function Sidebar({
 
                 className={inputClass}
 
-                value={config.wallWidthM}
+                value={widthDraft}
 
-                onChange={(e) => updateMeters('wallWidthM', e.target.value)}
+                onChange={(e) => setWidthDraft(e.target.value)}
 
               />
 
@@ -334,9 +441,9 @@ export default function Sidebar({
 
                 className={inputClass}
 
-                value={config.wallHeightM}
+                value={heightDraft}
 
-                onChange={(e) => updateMeters('wallHeightM', e.target.value)}
+                onChange={(e) => setHeightDraft(e.target.value)}
 
               />
 
@@ -345,11 +452,11 @@ export default function Sidebar({
           </div>
 
           <p className="text-[10px] text-slate-400">
-
-            → {config.cabinetsWide} × {config.cabinetsHigh} cabinets (
-
+            → {previewGrid.cabinetsWide} × {previewGrid.cabinetsHigh} cabinets (
             {config.cabinetWidthMm}×{config.cabinetHeightMm} mm)
-
+            {isDimensionPending && (
+              <span className="ml-1 text-amber-600">· расчёт через 0.4 с</span>
+            )}
           </p>
 
         </section>
@@ -394,7 +501,7 @@ export default function Sidebar({
 
             <>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 
                 <Field label="Cabinet W×H (mm)">
 
@@ -442,7 +549,7 @@ export default function Sidebar({
 
                     onClick={() => update('customDensityInput', mode)}
 
-                    className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                    className={`${toggleBtnClass} ${
 
                       config.customDensityInput === mode
 
@@ -462,7 +569,7 @@ export default function Sidebar({
 
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 
                 <Field label="Width (mm)">
 
@@ -540,7 +647,7 @@ export default function Sidebar({
 
               ) : (
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 
                   <Field label="Pixels Wide">
 
@@ -588,7 +695,7 @@ export default function Sidebar({
 
 
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 
             <Field label="Max Power / Cabinet (W)">
 
@@ -680,7 +787,7 @@ export default function Sidebar({
 
               onClick={() => update('signalBackup', !config.signalBackup)}
 
-              className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
+              className={`${switchClass} ${
 
                 config.signalBackup ? 'bg-green-500' : 'bg-slate-300'
 
@@ -690,9 +797,9 @@ export default function Sidebar({
 
               <span
 
-                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                className={`${switchKnobClass} ${
 
-                  config.signalBackup ? 'translate-x-6' : 'translate-x-1'
+                  config.signalBackup ? 'translate-x-7 sm:translate-x-6' : 'translate-x-1'
 
                 }`}
 
@@ -752,7 +859,7 @@ export default function Sidebar({
 
                   onClick={() => update('refreshRate', hz)}
 
-                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                  className={`${toggleBtnClass} ${
 
                     config.refreshRate === hz
 
@@ -796,7 +903,7 @@ export default function Sidebar({
 
                 onClick={() => onEmptyPaintModeChange(!emptyPaintMode)}
 
-                className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
+                className={`${switchClass} ${
 
                   emptyPaintMode ? 'bg-green-500' : 'bg-slate-300'
 
@@ -806,9 +913,9 @@ export default function Sidebar({
 
                 <span
 
-                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                  className={`${switchKnobClass} ${
 
-                    emptyPaintMode ? 'translate-x-6' : 'translate-x-1'
+                    emptyPaintMode ? 'translate-x-7 sm:translate-x-6' : 'translate-x-1'
 
                   }`}
 
@@ -866,7 +973,7 @@ export default function Sidebar({
 
                 onClick={() => onGridLayoutChange('side-by-side')}
 
-                className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                className={`${toggleBtnClass} ${
 
                   gridLayout === 'side-by-side'
 
@@ -888,7 +995,7 @@ export default function Sidebar({
 
                 onClick={() => onGridLayoutChange('stacked')}
 
-                className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                className={`${toggleBtnClass} ${
 
                   gridLayout === 'stacked'
 
@@ -924,7 +1031,7 @@ export default function Sidebar({
 
                   onClick={() => onShowCombinedPackingChange(!showCombinedPacking)}
 
-                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
+                  className={`${switchClass} ${
 
                     showCombinedPacking ? 'bg-blue-500' : 'bg-slate-300'
 
@@ -934,9 +1041,9 @@ export default function Sidebar({
 
                   <span
 
-                    className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                    className={`${switchKnobClass} ${
 
-                      showCombinedPacking ? 'translate-x-6' : 'translate-x-1'
+                      showCombinedPacking ? 'translate-x-7 sm:translate-x-6' : 'translate-x-1'
 
                     }`}
 
@@ -978,7 +1085,7 @@ export default function Sidebar({
 
                   onClick={() => update('chainStartEdge', edge)}
 
-                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                  className={`${toggleBtnClass} ${
 
                     config.chainStartEdge === edge
 
@@ -1020,7 +1127,7 @@ export default function Sidebar({
 
                 onClick={() => onManualModeChange(!manualMode)}
 
-                className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
+                className={`${switchClass} ${
 
                   manualMode ? 'bg-amber-500' : 'bg-slate-300'
 
@@ -1030,9 +1137,9 @@ export default function Sidebar({
 
                 <span
 
-                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                  className={`${switchKnobClass} ${
 
-                    manualMode ? 'translate-x-6' : 'translate-x-1'
+                    manualMode ? 'translate-x-7 sm:translate-x-6' : 'translate-x-1'
 
                   }`}
 

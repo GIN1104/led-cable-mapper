@@ -42,7 +42,7 @@ export default function CollapsibleSection({
         type="button"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
-        className={`no-print flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition hover:bg-slate-50/80 ${
+        className={`no-print touch-manipulation flex min-h-[48px] w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition hover:bg-slate-50/80 sm:min-h-0 sm:px-5 sm:py-3 ${
           expanded ? 'border-b border-slate-100' : ''
         }`}
       >

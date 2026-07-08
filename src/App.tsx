@@ -3,10 +3,9 @@ import type { GridLayout, ScreenConfig, ScreenRoutingState } from './types'
 import {
   createScreen,
   DEFAULT_PROJECT,
-  EMPTY_MANUAL_OVERRIDES,
   EMPTY_SCREEN_ROUTING,
 } from './types'
-import { computeRouting, buildAutoManualOverrides } from './lib/routingEngine'
+import { buildAutoManualOverrides } from './lib/routingEngine'
 import { buildCombinedPackingList } from './lib/packingList'
 import { syncCabinetGridFromMeters } from './lib/cabinetGrid'
 import {
@@ -14,12 +13,14 @@ import {
   getPowerLineLimitHint,
   getMaxPixelsPerDataPort,
 } from './lib/constants'
+import { isLargeGrid, screenRoutingKey } from './lib/screenConfigHash'
+import { useActiveRouting, useAllScreensRouting } from './hooks/useRoutingResults'
 import Sidebar from './components/Sidebar'
 import GridVisualization from './components/GridVisualization'
 import RoutingSchema from './components/RoutingSchema'
 import CableScheduleTable from './components/CableScheduleTable'
 import PackingListView from './components/PackingListView'
-
+import RoutingSpinner from './components/RoutingSpinner'
 function SummaryCard({
   label,
   value,
@@ -31,11 +32,11 @@ function SummaryCard({
 }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 sm:text-[10px]">
         {label}
       </p>
-      <p className="mt-0.5 text-xl font-bold text-slate-900">{value}</p>
-      {sub && <p className="text-[10px] text-slate-500">{sub}</p>}
+      <p className="mt-0.5 text-lg font-bold text-slate-900 sm:text-xl">{value}</p>
+      {sub && <p className="text-[10px] leading-snug text-slate-500">{sub}</p>}
     </div>
   )
 }
@@ -58,6 +59,7 @@ function pruneEmptyFromGrid(emptyCabinets: string[], wide: number, high: number)
 
 export default function App() {
   const [screens, setScreens] = useState<ScreenConfig[]>(DEFAULT_PROJECT.screens)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activeScreenId, setActiveScreenId] = useState(DEFAULT_PROJECT.activeScreenId)
   const [routingByScreen, setRoutingByScreen] = useState<Record<string, ScreenRoutingState>>({
     [DEFAULT_PROJECT.activeScreenId]: { ...EMPTY_SCREEN_ROUTING },
@@ -74,34 +76,35 @@ export default function App() {
   const activeRouting = routingByScreen[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
   const { manualMode, manualOverrides } = activeRouting
 
+  const { result, autoResult, isRouting } = useActiveRouting(activeScreen, activeRouting)
+
+  const needsAllScreens =
+    screens.length > 1 || showCombinedPacking
+  const allScreenResults = useAllScreensRouting(screens, routingByScreen, needsAllScreens)
+
+  const pendingRoutingKey = useRef(screenRoutingKey(activeScreen))
+  const [isMeterPending, setIsMeterPending] = useState(false)
+
+  useEffect(() => {
+    const nextKey = screenRoutingKey(activeScreen)
+    if (nextKey !== pendingRoutingKey.current) {
+      pendingRoutingKey.current = nextKey
+      if (isLargeGrid(activeScreen)) {
+        setIsMeterPending(true)
+      }
+    }
+  }, [activeScreen])
+
+  useEffect(() => {
+    if (result && !isRouting) {
+      setIsMeterPending(false)
+    }
+  }, [result, isRouting])
+
+  const showRoutingSpinner = isRouting || isMeterPending || result == null
+
   const prevGridSize = useRef(
     `${activeScreen.id}:${activeScreen.cabinetsWide}x${activeScreen.cabinetsHigh}`,
-  )
-
-  const autoResult = useMemo(() => computeRouting(activeScreen), [activeScreen])
-
-  const result = useMemo(
-    () =>
-      computeRouting(activeScreen, {
-        manualMode,
-        manualOverrides: manualMode ? manualOverrides : undefined,
-      }),
-    [activeScreen, manualMode, manualOverrides],
-  )
-
-  const allScreenResults = useMemo(
-    () =>
-      screens.map((screen) => {
-        const routing = routingByScreen[screen.id] ?? EMPTY_SCREEN_ROUTING
-        return {
-          screen,
-          result: computeRouting(screen, {
-            manualMode: routing.manualMode,
-            manualOverrides: routing.manualMode ? routing.manualOverrides : undefined,
-          }),
-        }
-      }),
-    [screens, routingByScreen],
   )
 
   const globalTotals = useMemo(() => {
@@ -137,17 +140,19 @@ export default function App() {
 
   useEffect(() => {
     const gridKey = `${activeScreen.id}:${activeScreen.cabinetsWide}x${activeScreen.cabinetsHigh}`
-    if (gridKey !== prevGridSize.current) {
-      prevGridSize.current = gridKey
+    if (gridKey === prevGridSize.current) return
+
+    prevGridSize.current = gridKey
+
+    const applyGridChange = () => {
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        if (!current.manualMode) return prev
         return {
           ...prev,
           [activeScreen.id]: {
             ...current,
-            manualOverrides: current.manualMode
-              ? buildAutoManualOverrides(activeScreen)
-              : EMPTY_MANUAL_OVERRIDES,
+            manualOverrides: buildAutoManualOverrides(activeScreen),
           },
         }
       })
@@ -166,6 +171,21 @@ export default function App() {
         ),
       )
     }
+
+    if (isLargeGrid(activeScreen)) {
+      const win = window as Window & {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+        cancelIdleCallback?: (id: number) => void
+      }
+      if (win.requestIdleCallback) {
+        const id = win.requestIdleCallback(applyGridChange, { timeout: 200 })
+        return () => win.cancelIdleCallback?.(id)
+      }
+      const id = window.setTimeout(applyGridChange, 0)
+      return () => window.clearTimeout(id)
+    }
+
+    applyGridChange()
   }, [activeScreen])
 
   const updateActiveScreen = useCallback((next: ScreenConfig) => {
@@ -373,25 +393,41 @@ export default function App() {
   }, [])
 
   const config = activeScreen
+  const cabinetCount = config.cabinetsWide * config.cabinetsHigh
   const maxPixelsPerPort = getMaxPixelsPerDataPort(config.refreshRate)
-  const maxCabinetsPerPort = getMaxCabinetsPerDataPort(
-    config.refreshRate,
-    result.summary.pixelsPerCabinet,
-  )
+  const maxCabinetsPerPort =
+    result != null
+      ? getMaxCabinetsPerDataPort(config.refreshRate, result.summary.pixelsPerCabinet)
+      : 0
   const powerLineLimitHint = getPowerLineLimitHint(config)
 
   const packingItems =
-    showCombinedPacking && screens.length > 1 ? combinedPackingList : result.packingList
+    showCombinedPacking && screens.length > 1
+      ? combinedPackingList
+      : result?.packingList ?? []
+  const handleSelectScreen = useCallback((id: string) => {
+    setActiveScreenId(id)
+    setSidebarOpen(false)
+  }, [])
 
   return (
     <div className="flex h-screen flex-col">
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        {sidebarOpen && (
+          <button
+            type="button"
+            aria-label="Закрыть меню"
+            className="fixed inset-0 z-40 bg-black/40 md:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
         <Sidebar
           screens={screens}
           activeScreenId={activeScreenId}
           config={activeScreen}
           onChange={updateActiveScreen}
-          onSelectScreen={setActiveScreenId}
+          onSelectScreen={handleSelectScreen}
           onAddScreen={handleAddScreen}
           onRemoveScreen={handleRemoveScreen}
           onRenameScreen={handleRenameScreen}
@@ -404,25 +440,45 @@ export default function App() {
           showCombinedPacking={showCombinedPacking}
           onShowCombinedPackingChange={setShowCombinedPacking}
           globalTotals={globalTotals}
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
         />
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="no-print flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-            <div>
-              <h2 className="text-base font-semibold text-slate-900">
+          <header className="no-print flex shrink-0 flex-col gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-6">
+            <div className="flex min-w-0 items-start gap-3">
+              <button
+                type="button"
+                aria-label="Открыть настройки"
+                aria-expanded={sidebarOpen}
+                onClick={() => setSidebarOpen(true)}
+                className="touch-manipulation shrink-0 rounded-lg border border-slate-200 p-2.5 text-slate-700 transition hover:bg-slate-50 md:hidden"
+              >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                  <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
+                </svg>
+              </button>
+              <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-semibold leading-snug text-slate-900 sm:text-base">
                 {activeScreen.name} — {config.wallWidthM}×{config.wallHeightM} m (
                 {config.cabinetsWide}×{config.cabinetsHigh} cabs) · {config.controllerModel}
               </h2>
-              <p className="text-xs text-slate-500">
-                {result.summary.totalPixels.toLocaleString()} px · {result.summary.dataPorts} data
-                port{result.summary.dataPorts !== 1 ? 's' : ''} · {result.summary.powerLines} power
-                line{result.summary.powerLines !== 1 ? 's' : ''}
-                {result.summary.emptyCabinets > 0 && (
-                  <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 font-medium text-slate-700">
-                    {result.summary.emptyCabinets} empty
-                  </span>
-                )}
-                {manualMode && (
+              <p className="mt-0.5 text-xs leading-relaxed text-slate-500 sm:mt-0">
+                {showRoutingSpinner ? (
+                  <span className="text-slate-400">Расчёт маршрутизации…</span>
+                ) : (
+                  <>
+                    {result!.summary.totalPixels.toLocaleString()} px · {result!.summary.dataPorts}{' '}
+                    data port{result!.summary.dataPorts !== 1 ? 's' : ''} ·{' '}
+                    {result!.summary.powerLines} power line
+                    {result!.summary.powerLines !== 1 ? 's' : ''}
+                    {result!.summary.emptyCabinets > 0 && (
+                      <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 font-medium text-slate-700">
+                        {result!.summary.emptyCabinets} empty
+                      </span>
+                    )}
+                  </>
+                )}                {manualMode && (
                   <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
                     Manual
                   </span>
@@ -433,11 +489,12 @@ export default function App() {
                   </span>
                 )}
               </p>
+              </div>
             </div>
             <button
               type="button"
               onClick={() => window.print()}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
+              className="touch-manipulation w-full shrink-0 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 sm:w-auto"
             >
               Print Scheme
             </button>
@@ -454,9 +511,8 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-6 py-5">
-            {result.warnings.length > 0 && (
-              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+          <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+            {result && result.warnings.length > 0 && (              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
                 <p className="text-xs font-semibold text-amber-900">
                   Routing warnings / Предупреждения
                 </p>
@@ -470,24 +526,34 @@ export default function App() {
               </div>
             )}
 
-            <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              <SummaryCard label="Cabinets" value={result.summary.totalCabinets} />
-              <SummaryCard
+            {showRoutingSpinner ? (
+              <RoutingSpinner
+                cabinetCount={cabinetCount}
+                label={
+                  isRouting
+                    ? 'Подготовка интерфейса…'
+                    : 'Расчёт маршрутизации…'
+                }
+              />
+            ) : (
+              <>
+            <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <SummaryCard label="Cabinets" value={result!.summary.totalCabinets} />              <SummaryCard
                 label="Pixels / Cabinet"
-                value={result.summary.pixelsPerCabinet.toLocaleString()}
+                value={result!.summary.pixelsPerCabinet.toLocaleString()}
               />
               <SummaryCard
                 label="Data Ports"
-                value={result.summary.dataPorts}
+                value={result!.summary.dataPorts}
                 sub={`max ${maxCabinetsPerPort} cab / ${(maxPixelsPerPort / 1000).toFixed(0)}k px @ ${config.refreshRate}Hz`}
               />
-              <SummaryCard label="Backup Ports" value={result.summary.backupPorts} />
+              <SummaryCard label="Backup Ports" value={result!.summary.backupPorts} />
               <SummaryCard
                 label="Power Lines"
-                value={result.summary.powerLines}
-                sub={`${powerLineLimitHint} · ${result.summary.cabinetsPerPowerLine} auto target`}
+                value={result!.summary.powerLines}
+                sub={`${powerLineLimitHint} · ${result!.summary.cabinetsPerPowerLine} auto target`}
               />
-              <SummaryCard label="Cables" value={result.cableSchedule.length} sub="in schedule" />
+              <SummaryCard label="Cables" value={result!.cableSchedule.length} sub="in schedule" />
             </div>
 
             <div className="space-y-6">
@@ -497,8 +563,7 @@ export default function App() {
                 }`}
               >
                 <GridVisualization
-                  result={result}
-                  wide={config.cabinetsWide}
+                  result={result!}                  wide={config.cabinetsWide}
                   high={config.cabinetsHigh}
                   mode="data"
                   chainStartEdge={config.chainStartEdge}
@@ -512,14 +577,13 @@ export default function App() {
                   onAssign={handleDataAssignment}
                   onSetStartPoint={handleDataStartPoint}
                   maxAssignable={Math.max(
-                    result.summary.dataPorts,
-                    autoResult.summary.dataPorts,
+                    result!.summary.dataPorts,
+                    autoResult?.summary.dataPorts ?? result!.summary.dataPorts,
                     1,
                   )}
                 />
                 <GridVisualization
-                  result={result}
-                  wide={config.cabinetsWide}
+                  result={result!}                  wide={config.cabinetsWide}
                   high={config.cabinetsHigh}
                   mode="power"
                   chainStartEdge={config.chainStartEdge}
@@ -533,19 +597,18 @@ export default function App() {
                   onAssign={handlePowerAssignment}
                   onSetStartPoint={handlePowerStartPoint}
                   maxAssignable={Math.max(
-                    result.summary.powerLines,
-                    autoResult.summary.powerLines,
+                    result!.summary.powerLines,
+                    autoResult?.summary.powerLines ?? result!.summary.powerLines,
                     1,
                   )}
                 />
               </div>
 
-              <RoutingSchema lines={result.routingSchema} />
+              <RoutingSchema lines={result!.routingSchema} />
 
               <div className="print-break">
-                <CableScheduleTable entries={result.cableSchedule} />
+                <CableScheduleTable entries={result!.cableSchedule} />
               </div>
-
               <PackingListView
                 items={packingItems}
                 title={
@@ -562,8 +625,9 @@ export default function App() {
                 />
               )}
             </div>
-          </div>
-        </main>
+              </>
+            )}
+          </div>        </main>
       </div>
     </div>
   )

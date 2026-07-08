@@ -19,7 +19,7 @@ export default function CableScheduleTable({
   return (
     <CollapsibleSection title={title}>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[900px] text-left text-xs">
+        <table className="w-full min-w-[640px] text-left text-xs sm:min-w-[900px]">
           <thead>
             <tr className="border-b border-slate-100 bg-slate-50 text-slate-500">
               <th className="px-4 py-2.5 font-semibold">Cable ID</th>

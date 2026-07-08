@@ -15,7 +15,7 @@ export default function PackingListView({ items, title }: PackingListViewProps) 
       }
     >
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs">
+        <table className="w-full min-w-[280px] text-left text-xs sm:min-w-0">
           <thead>
             <tr className="border-b border-slate-100 bg-slate-50 text-slate-500">
               <th className="px-4 py-2.5 font-semibold">Item</th>

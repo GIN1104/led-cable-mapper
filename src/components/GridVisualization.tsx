@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChainStartEdge, PitchPresetId, RoutingResult } from '../types'
 import { edgeToDirection } from '../lib/cabinetGrid'
 import { COLORS } from '../lib/constants'
@@ -29,21 +29,55 @@ interface GridVisualizationProps {
   pitchPreset?: PitchPresetId
 }
 
-const CELL_W = 88
-const CELL_H = 64
-const GAP = 12
-const PAD = 40
+const DESKTOP_CELL = { w: 88, h: 64, gap: 12, pad: 40 }
+const MOBILE_CELL = { w: 56, h: 44, gap: 6, pad: 24 }
+
+const ZOOM_MIN = 0.5
+const ZOOM_MAX = 3
+const ZOOM_STEP = 0.1
 
 const ARROW_STROKE = 4.5
 const ARROW_OUTLINE = 7
 const ARROW_HEAD_LEN = 14
 const ARROW_HEAD_ANGLE = Math.PI / 5.5
 
-function cabinetCenter(col: number, row: number) {
+const LARGE_GRID_THRESHOLD = 100
+
+function cabinetCenter(col: number, row: number, cellW: number, cellH: number, gap: number, pad: number) {
   return {
-    x: PAD + col * (CELL_W + GAP) + CELL_W / 2,
-    y: PAD + row * (CELL_H + GAP) + CELL_H / 2,
+    x: pad + col * (cellW + gap) + cellW / 2,
+    y: pad + row * (cellH + gap) + cellH / 2,
   }
+}
+
+function SimpleArrowPath({
+  x1,
+  y1,
+  x2,
+  y2,
+  color,
+  dashed = false,
+}: {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  color: string
+  dashed?: boolean
+}) {
+  return (
+    <line
+      x1={x1}
+      y1={y1}
+      x2={x2}
+      y2={y2}
+      stroke={color}
+      strokeWidth={2}
+      strokeDasharray={dashed ? '6 4' : undefined}
+      strokeLinecap="round"
+      pointerEvents="none"
+    />
+  )
 }
 
 function ArrowPath({
@@ -127,7 +161,7 @@ function ArrowPath({
   )
 }
 
-export default function GridVisualization({
+export default memo(function GridVisualization({
   result,
   wide,
   high,
@@ -144,6 +178,25 @@ export default function GridVisualization({
   chainStartEdge = 'left',
   pitchPreset = '3.9-small',
 }: GridVisualizationProps) {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
+  )
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 639px)')
+    const onChange = (event: MediaQueryListEvent) => setIsMobile(event.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  const { w: CELL_W, h: CELL_H, gap: GAP, pad: PAD } = isMobile ? MOBILE_CELL : DESKTOP_CELL
+  const editBtnClass =
+    'touch-manipulation min-h-[40px] rounded px-3 py-2 text-xs font-semibold transition sm:min-h-0 sm:px-2 sm:py-0.5'
+  const legendBtnClass =
+    'touch-manipulation flex min-h-[36px] items-center gap-1.5 rounded px-2 py-1.5 transition sm:min-h-0 sm:px-1 sm:py-0.5'
+  const zoomBtnClass =
+    'touch-manipulation flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50 active:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-[32px] sm:min-w-[32px] sm:text-sm'
+
   const { cabinets, dataChains, powerLines, dataLinks, backupLinks, powerLinks, warnings } =
     result
 
@@ -179,6 +232,60 @@ export default function GridVisualization({
 
   const svgW = PAD * 2 + wide * CELL_W + (wide - 1) * GAP
   const svgH = PAD * 2 + high * CELL_H + (high - 1) * GAP + 30
+
+  const gridScrollRef = useRef<HTMLDivElement>(null)
+  const [fitScale, setFitScale] = useState(1)
+  const [zoomLevel, setZoomLevel] = useState(1)
+
+  const effectiveScale = fitScale * zoomLevel
+  const zoomPercent = Math.round(zoomLevel * 100)
+  const totalCells = wide * high
+  const simplifyArrows = totalCells > LARGE_GRID_THRESHOLD || effectiveScale < 0.8
+  const simplifyLabels = totalCells > LARGE_GRID_THRESHOLD
+
+  const clampZoom = useCallback(
+    (value: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 10) / 10)),
+    [],
+  )
+
+  const calculateFitScale = useCallback(() => {
+    const container = gridScrollRef.current
+    if (!container || svgW <= 0 || svgH <= 0) return 1
+    const availableW = container.clientWidth
+    if (availableW <= 0) return 1
+    return Math.min(availableW / svgW, 1)
+  }, [svgW, svgH])
+
+  const fitToScreen = useCallback(() => {
+    setFitScale(calculateFitScale())
+    setZoomLevel(1)
+  }, [calculateFitScale])
+
+  useLayoutEffect(() => {
+    setFitScale(calculateFitScale())
+    setZoomLevel(1)
+  }, [wide, high, isMobile, calculateFitScale])
+
+  useEffect(() => {
+    const container = gridScrollRef.current
+    if (!container) return
+
+    const onResize = () => {
+      setFitScale(calculateFitScale())
+    }
+
+    const observer = new ResizeObserver(onResize)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [calculateFitScale])
+
+  const zoomIn = useCallback(() => {
+    setZoomLevel((prev) => clampZoom(prev + ZOOM_STEP))
+  }, [clampZoom])
+
+  const zoomOut = useCallback(() => {
+    setZoomLevel((prev) => clampZoom(prev - ZOOM_STEP))
+  }, [clampZoom])
 
   const assignmentMap = useMemo(() => {
     const map = new Map<string, number>()
@@ -324,21 +431,64 @@ export default function GridVisualization({
 
   return (
     <div
-      className={`overflow-x-auto rounded-xl border bg-white p-4 shadow-sm ${
+      className={`overflow-x-auto rounded-xl border bg-white p-3 shadow-sm sm:p-4 ${
         manualMode || emptyPaintMode
           ? 'border-amber-300 ring-1 ring-amber-200'
           : 'border-slate-200'
       }`}
     >
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-        {(manualMode || emptyPaintMode) && (
-          <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-            {emptyPaintMode && (!manualMode || editMode === 'empty')
-              ? 'EMPTY MODE'
-              : 'EDIT MODE'}
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+          {(manualMode || emptyPaintMode) && (
+            <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+              {emptyPaintMode && (!manualMode || editMode === 'empty')
+                ? 'EMPTY MODE'
+                : 'EDIT MODE'}
+            </span>
+          )}
+        </div>
+        <div
+          className="flex items-center gap-1"
+          role="group"
+          aria-label="Масштаб сетки"
+        >
+          <button
+            type="button"
+            onClick={zoomOut}
+            disabled={zoomLevel <= ZOOM_MIN}
+            className={zoomBtnClass}
+            aria-label="Уменьшить"
+            title="Уменьшить"
+          >
+            −
+          </button>
+          <span
+            className="min-w-[3.25rem] px-1 text-center text-xs font-semibold tabular-nums text-slate-600"
+            aria-live="polite"
+          >
+            {zoomPercent}%
           </span>
-        )}
+          <button
+            type="button"
+            onClick={zoomIn}
+            disabled={zoomLevel >= ZOOM_MAX}
+            className={zoomBtnClass}
+            aria-label="Увеличить"
+            title="Увеличить"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={fitToScreen}
+            className={`${zoomBtnClass} min-w-[3.5rem] px-2 text-xs sm:min-w-[3rem]`}
+            aria-label="Вписать в экран"
+            title="Вписать в экран"
+          >
+            Fit
+          </button>
+        </div>
       </div>
 
       {emptyPaintMode && (
@@ -360,7 +510,7 @@ export default function GridVisualization({
             <button
               type="button"
               onClick={() => setEditMode('assign')}
-              className={`rounded px-2 py-0.5 font-semibold transition ${
+              className={`${editBtnClass} ${
                 editMode === 'assign'
                   ? 'bg-amber-600 text-white'
                   : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
@@ -371,7 +521,7 @@ export default function GridVisualization({
             <button
               type="button"
               onClick={() => setEditMode('start')}
-              className={`rounded px-2 py-0.5 font-semibold transition ${
+              className={`${editBtnClass} ${
                 editMode === 'start'
                   ? 'bg-amber-600 text-white'
                   : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
@@ -382,7 +532,7 @@ export default function GridVisualization({
             <button
               type="button"
               onClick={() => setEditMode('empty')}
-              className={`rounded px-2 py-0.5 font-semibold transition ${
+              className={`${editBtnClass} ${
                 editMode === 'empty'
                   ? 'bg-green-600 text-white ring-1 ring-green-500'
                   : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
@@ -414,7 +564,7 @@ export default function GridVisualization({
                 key={`sel-${n}`}
                 type="button"
                 onClick={() => setActiveValue(n)}
-                className={`rounded px-2 py-0.5 font-semibold transition ${
+                className={`${editBtnClass} ${
                   activeValue === n
                     ? 'bg-amber-600 text-white'
                     : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
@@ -426,7 +576,7 @@ export default function GridVisualization({
             <button
               type="button"
               onClick={() => setActiveValue(maxAssignable + 1)}
-              className={`rounded px-2 py-0.5 font-semibold transition ${
+              className={`${editBtnClass} ${
                 activeValue === maxAssignable + 1
                   ? 'bg-amber-600 text-white'
                   : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
@@ -438,7 +588,7 @@ export default function GridVisualization({
               <button
                 type="button"
                 onClick={() => assignTo([...selectedLabels], activeValue)}
-                className="rounded bg-amber-600 px-2 py-0.5 font-semibold text-white hover:bg-amber-700"
+                className={`${editBtnClass} bg-amber-600 text-white hover:bg-amber-700`}
               >
                 Apply to {selectedLabels.size} selected
               </button>
@@ -453,7 +603,7 @@ export default function GridVisualization({
                 key={`start-${n}`}
                 type="button"
                 onClick={() => setActiveValue(n)}
-                className={`rounded px-2 py-0.5 font-semibold transition ${
+                className={`${editBtnClass} ${
                   activeValue === n
                     ? 'bg-amber-600 text-white'
                     : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
@@ -483,7 +633,7 @@ export default function GridVisualization({
                   type="button"
                   disabled={!manualMode}
                   onClick={() => handleLegendClick(port)}
-                  className={`flex items-center gap-1.5 rounded px-1 py-0.5 transition ${
+                  className={`${legendBtnClass} ${
                     manualMode
                       ? activeValue === port
                         ? 'bg-amber-100 ring-1 ring-amber-400'
@@ -529,7 +679,7 @@ export default function GridVisualization({
                   type="button"
                   disabled={!manualMode}
                   onClick={() => handleLegendClick(line)}
-                  className={`flex items-center gap-1.5 rounded px-1 py-0.5 transition ${
+                  className={`${legendBtnClass} ${
                     manualMode
                       ? activeValue === line
                         ? 'bg-amber-100 ring-1 ring-amber-400'
@@ -554,14 +704,26 @@ export default function GridVisualization({
         )}
       </div>
 
-      <svg
-        width={svgW}
-        height={svgH}
-        viewBox={`0 0 ${svgW} ${svgH}`}
-        className="mx-auto max-w-full"
-        role="img"
-        aria-label={isData ? 'Data port routing grid' : 'Power line routing grid'}
+      <div
+        ref={gridScrollRef}
+        className="-mx-1 overflow-x-auto px-1 pb-1 touch-pan-x"
       >
+        <div
+          className="mx-auto max-w-none"
+          style={{
+            width: svgW * effectiveScale,
+            height: svgH * effectiveScale,
+          }}
+        >
+          <svg
+            width={svgW}
+            height={svgH}
+            viewBox={`0 0 ${svgW} ${svgH}`}
+            className="block max-w-none origin-top-left"
+            style={{ transform: `scale(${effectiveScale})` }}
+            role="img"
+            aria-label={isData ? 'Data port routing grid' : 'Power line routing grid'}
+          >
         <g id="cabinets">
           {cabinets.map((cab) => {
             const x = PAD + cab.col * (CELL_W + GAP)
@@ -639,7 +801,7 @@ export default function GridVisualization({
                   </>
                 ) : (
                   <>
-                {isStart && (
+                {isStart && !simplifyLabels && (
                   <text
                     x={isRtl ? x + 8 : x + CELL_W - 8}
                     y={y + 14}
@@ -651,7 +813,7 @@ export default function GridVisualization({
                     ★
                   </text>
                 )}
-                {step != null && step > 0 && (
+                {step != null && step > 0 && !simplifyLabels && (
                   <text
                     x={isRtl ? x + CELL_W - 10 : x + 10}
                     y={y + 14}
@@ -675,7 +837,7 @@ export default function GridVisualization({
                 >
                   {cab.label}
                 </text>
-                {isStart && (
+                {isStart && !simplifyLabels && (
                   <text
                     x={x + CELL_W / 2}
                     y={y + CELL_H / 2 + 8}
@@ -688,6 +850,7 @@ export default function GridVisualization({
                     START
                   </text>
                 )}
+                {!simplifyLabels && (
                 <text
                   x={x + CELL_W / 2}
                   y={y + CELL_H / 2 + (isStart ? 18 : 10)}
@@ -699,6 +862,7 @@ export default function GridVisualization({
                 >
                   {lineLabel}
                 </text>
+                )}
                   </>
                 )}
               </g>
@@ -708,68 +872,120 @@ export default function GridVisualization({
 
         <g id="arrows">
           {!isData &&
-            powerLinks.map((link, i) => (
-              <ArrowPath
-                key={`pwr-${i}`}
-                x1={cabinetCenter(link.from.col, link.from.row).x}
-                y1={cabinetCenter(link.from.col, link.from.row).y}
-                x2={cabinetCenter(link.to.col, link.to.row).x}
-                y2={cabinetCenter(link.to.col, link.to.row).y}
-                color={powerLineColor(link.chainId).stroke}
-                offset={
-                  link.direction === 'vertical'
-                    ? isReshetPower
-                      ? 0
-                      : isRtl
-                        ? -10
-                        : 10
-                    : is29Power
+            powerLinks.map((link, i) => {
+              const from = cabinetCenter(link.from.col, link.from.row, CELL_W, CELL_H, GAP, PAD)
+              const to = cabinetCenter(link.to.col, link.to.row, CELL_W, CELL_H, GAP, PAD)
+              const color = powerLineColor(link.chainId).stroke
+              if (simplifyArrows) {
+                return (
+                  <SimpleArrowPath
+                    key={`pwr-${i}`}
+                    x1={from.x}
+                    y1={from.y}
+                    x2={to.x}
+                    y2={to.y}
+                    color={color}
+                  />
+                )
+              }
+              return (
+                <ArrowPath
+                  key={`pwr-${i}`}
+                  x1={from.x}
+                  y1={from.y}
+                  x2={to.x}
+                  y2={to.y}
+                  color={color}
+                  offset={
+                    link.direction === 'vertical'
+                      ? isReshetPower
+                        ? 0
+                        : isRtl
+                          ? -10
+                          : 10
+                      : is29Power
+                        ? isRtl
+                          ? -6
+                          : 6
+                        : 0
+                  }
+                  isVertical={link.direction === 'vertical' || isReshetPower}
+                />
+              )
+            })}
+
+          {isData &&
+            backupLinks.map((link, i) => {
+              const from = cabinetCenter(link.from.col, link.from.row, CELL_W, CELL_H, GAP, PAD)
+              const to = cabinetCenter(link.to.col, link.to.row, CELL_W, CELL_H, GAP, PAD)
+              const color = backupLineColor(link.chainId).stroke
+              if (simplifyArrows) {
+                return (
+                  <SimpleArrowPath
+                    key={`bkp-${i}`}
+                    x1={from.x}
+                    y1={from.y}
+                    x2={to.x}
+                    y2={to.y}
+                    color={color}
+                    dashed
+                  />
+                )
+              }
+              return (
+                <ArrowPath
+                  key={`bkp-${i}`}
+                  x1={from.x}
+                  y1={from.y}
+                  x2={to.x}
+                  y2={to.y}
+                  color={color}
+                  dashed
+                  offset={12}
+                  isVertical={link.direction === 'vertical'}
+                />
+              )
+            })}
+
+          {isData &&
+            dataLinks.map((link, i) => {
+              const from = cabinetCenter(link.from.col, link.from.row, CELL_W, CELL_H, GAP, PAD)
+              const to = cabinetCenter(link.to.col, link.to.row, CELL_W, CELL_H, GAP, PAD)
+              const color = dataLineColor(link.chainId).stroke
+              if (simplifyArrows) {
+                return (
+                  <SimpleArrowPath
+                    key={`dat-${i}`}
+                    x1={from.x}
+                    y1={from.y}
+                    x2={to.x}
+                    y2={to.y}
+                    color={color}
+                  />
+                )
+              }
+              return (
+                <ArrowPath
+                  key={`dat-${i}`}
+                  x1={from.x}
+                  y1={from.y}
+                  x2={to.x}
+                  y2={to.y}
+                  color={color}
+                  offset={
+                    link.direction === 'horizontal'
                       ? isRtl
-                        ? -6
-                        : 6
-                      : 0
-                }
-                isVertical={link.direction === 'vertical' || isReshetPower}
-              />
-            ))}
-
-          {isData &&
-            backupLinks.map((link, i) => (
-              <ArrowPath
-                key={`bkp-${i}`}
-                x1={cabinetCenter(link.from.col, link.from.row).x}
-                y1={cabinetCenter(link.from.col, link.from.row).y}
-                x2={cabinetCenter(link.to.col, link.to.row).x}
-                y2={cabinetCenter(link.to.col, link.to.row).y}
-                color={backupLineColor(link.chainId).stroke}
-                dashed
-                offset={12}
-                isVertical={link.direction === 'vertical'}
-              />
-            ))}
-
-          {isData &&
-            dataLinks.map((link, i) => (
-              <ArrowPath
-                key={`dat-${i}`}
-                x1={cabinetCenter(link.from.col, link.from.row).x}
-                y1={cabinetCenter(link.from.col, link.from.row).y}
-                x2={cabinetCenter(link.to.col, link.to.row).x}
-                y2={cabinetCenter(link.to.col, link.to.row).y}
-                color={dataLineColor(link.chainId).stroke}
-                offset={
-                  link.direction === 'horizontal'
-                    ? isRtl
-                      ? 12
-                      : -12
-                    : isRtl
-                      ? -8
-                      : 8
-                }
-                isVertical={link.direction === 'vertical'}
-                emphasizeHorizontal={link.direction === 'horizontal'}
-              />
-            ))}
+                        ? 12
+                        : -12
+                      : isRtl
+                        ? -8
+                        : 8
+                  }
+                  isVertical={link.direction === 'vertical'}
+                  emphasizeHorizontal={link.direction === 'horizontal'}
+                />
+              )
+            })}
         </g>
 
         <text x={PAD} y={svgH - 8} fontSize={11} fill="#94a3b8">
@@ -783,7 +999,9 @@ export default function GridVisualization({
                 ? 'Power ↑↓ вертикально (2.9)'
                 : `${isRtl ? 'RTL / справа налево' : 'LTR / слева направо'} (power)`}
         </text>
-      </svg>
+          </svg>
+        </div>
+      </div>
     </div>
   )
-}
+})
