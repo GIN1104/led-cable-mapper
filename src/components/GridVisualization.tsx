@@ -26,6 +26,7 @@ interface GridVisualizationProps {
   startPoints?: Record<number, string>
   onAssign?: (labels: string[], value: number) => void
   onSetStartPoint?: (value: number, label: string) => void
+  onClearManual?: () => void
   maxAssignable?: number
   chainStartEdge?: ChainStartEdge
   pitchPreset?: PitchPresetId
@@ -199,9 +200,9 @@ export default memo(function GridVisualization({
 
   const { w: CELL_W, h: CELL_H, gap: GAP, pad: PAD } = isMobile ? MOBILE_CELL : DESKTOP_CELL
   const editBtnClass =
-    'touch-manipulation min-h-[40px] rounded px-3 py-2 text-xs font-semibold transition sm:min-h-0 sm:px-2 sm:py-0.5'
+    'touch-manipulation min-h-[44px] rounded-md px-3 py-2 text-xs font-semibold transition active:scale-[0.98] sm:min-h-[36px] sm:px-2.5 sm:py-1'
   const legendBtnClass =
-    'touch-manipulation flex min-h-[36px] items-center gap-1.5 rounded px-2 py-1.5 transition sm:min-h-0 sm:px-1 sm:py-0.5'
+    'touch-manipulation flex min-h-[40px] items-center gap-1.5 rounded-md px-2.5 py-1.5 transition active:scale-[0.98] sm:min-h-0 sm:px-1 sm:py-0.5'
   const zoomBtnClass =
     'touch-manipulation flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50 active:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-[32px] sm:min-w-[32px] sm:text-sm'
 
@@ -536,9 +537,12 @@ export default memo(function GridVisualization({
       )}
 
       {manualMode && (
-        <div className="mb-3 space-y-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <div className="sticky top-0 z-10 mb-3 space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 shadow-sm">
+          <p className="font-semibold text-amber-950">
+            {title} — Ручная схема
+          </p>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Mode:</span>
+            <span className="font-medium">Режим:</span>
             <button
               type="button"
               onClick={() => setEditMode('assign')}
@@ -548,7 +552,7 @@ export default memo(function GridVisualization({
                   : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
               }`}
             >
-              Paint
+              Paint / Краска
             </button>
             <button
               type="button"
@@ -559,7 +563,7 @@ export default memo(function GridVisualization({
                   : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
               }`}
             >
-              Set Start
+              Set Start / Старт
             </button>
             <button
               type="button"
@@ -570,27 +574,11 @@ export default memo(function GridVisualization({
                   : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
               }`}
             >
-              Empty / Пропущенный
+              Empty / Пропуск
             </button>
           </div>
-          <p>
-            Active: <strong>{prefix}{activeValue}</strong>
-            {editMode === 'assign' ? (
-              <> — click cabinet to paint, Shift+click to multi-select.</>
-            ) : editMode === 'start' ? (
-              <> — click cabinet to set as START for {prefix}{activeValue}.</>
-            ) : (
-              <> — click cabinet to toggle empty (skip routing).</>
-            )}
-            {startLabelForActive && (
-              <span className="ml-1 font-semibold text-amber-700">
-                (start: {startLabelForActive})
-              </span>
-            )}
-          </p>
-          {editMode === 'assign' && (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Assign:</span>
+            <span className="font-medium">{prefix}-линия:</span>
             {valueNumbers.map((n) => (
               <button
                 key={`sel-${n}`}
@@ -603,6 +591,9 @@ export default memo(function GridVisualization({
                 }`}
               >
                 {prefix}{n}
+                {editMode === 'start' && effectiveStartPoints[n] && (
+                  <span className="ml-1 text-[9px] opacity-80">★{effectiveStartPoints[n]}</span>
+                )}
               </button>
             ))}
             <button
@@ -616,7 +607,7 @@ export default memo(function GridVisualization({
             >
               + New {prefix}{maxAssignable + 1}
             </button>
-            {selectedLabels.size > 0 && (
+            {editMode === 'assign' && selectedLabels.size > 0 && (
               <button
                 type="button"
                 onClick={() => assignTo([...selectedLabels], activeValue)}
@@ -626,29 +617,21 @@ export default memo(function GridVisualization({
               </button>
             )}
           </div>
-          )}
-          {editMode === 'start' && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Line:</span>
-            {valueNumbers.map((n) => (
-              <button
-                key={`start-${n}`}
-                type="button"
-                onClick={() => setActiveValue(n)}
-                className={`${editBtnClass} ${
-                  activeValue === n
-                    ? 'bg-amber-600 text-white'
-                    : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
-                }`}
-              >
-                {prefix}{n}
-                {effectiveStartPoints[n] && (
-                  <span className="ml-1 text-[9px] opacity-80">★{effectiveStartPoints[n]}</span>
-                )}
-              </button>
-            ))}
-          </div>
-          )}
+          <p className="text-amber-800/90">
+            Активно: <strong>{prefix}{activeValue}</strong>
+            {editMode === 'assign' ? (
+              <> — клик по кабинету, Shift+клик для выделения.</>
+            ) : editMode === 'start' ? (
+              <> — клик задаёт START для {prefix}{activeValue}.</>
+            ) : (
+              <> — клик помечает пустой кабинет (исключается из маршрута).</>
+            )}
+            {startLabelForActive && (
+              <span className="ml-1 font-semibold text-amber-700">
+                (старт: {startLabelForActive})
+              </span>
+            )}
+          </p>
         </div>
       )}
 
@@ -732,6 +715,26 @@ export default memo(function GridVisualization({
                 </button>
               )
             })}
+            {Object.keys(feedPointsByLine).length > 0 && (
+              <>
+                <span className="font-medium text-slate-700">Trunk:</span>
+                <span
+                  className="flex flex-wrap items-center gap-1.5"
+                  title="Пунктир от контроллерной (слева/справа) к точке подвода питания на полосе"
+                >
+                  <span
+                    className="inline-block h-0.5 w-6 border-t-[3px] border-dashed"
+                    style={{ borderColor: TRUNK_FEED_COLOR }}
+                  />
+                  <span>
+                    Магистраль питания
+                    <span className="ml-1 text-slate-500">
+                      ({powerFeedMode === 'center' ? 'Center / центр полосы' : 'Edge / край линии'})
+                    </span>
+                  </span>
+                </span>
+              </>
+            )}
           </>
         )}
       </div>
@@ -968,7 +971,6 @@ export default memo(function GridVisualization({
                 PAD,
               )
               const trunkX = isRtl ? svgW - PAD / 2 : PAD / 2
-              const color = powerLineColor(line.lineNumber).stroke
               return (
                 <g key={`trunk-${line.lineNumber}`}>
                   <line
@@ -985,7 +987,7 @@ export default memo(function GridVisualization({
                     y1={target.y}
                     x2={target.x}
                     y2={target.y}
-                    stroke={color}
+                    stroke={TRUNK_FEED_COLOR}
                     strokeWidth={3.5}
                     strokeDasharray="8 5"
                     strokeLinecap="round"
