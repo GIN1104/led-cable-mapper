@@ -270,7 +270,7 @@ function buildLinksForLine(
 }
 
 /** Старт линии по умолчанию: нижний ряд, край по chainStartEdge */
-function inferPowerLineStart(
+export function inferPowerLineStart(
   cabinets: Cabinet[],
   startEdge: ScreenConfig['chainStartEdge'],
 ): string | undefined {
@@ -507,25 +507,38 @@ function pickPChainStarts(
   return starts
 }
 
-/**
- * Фаза 1+2 для 3.9 big/small: горизонтальные полосы preferred, затем P-образный остаток.
- */
-function partitionHorizontalStripComponent(
-  component: Cabinet[],
+type ColBand = { colStart: number; colEnd: number }
+
+/** Делит ширину стены на вертикальные полосы шириной до preferred */
+function getColumnBands(
+  minCol: number,
+  maxCol: number,
+  preferred: number,
+): ColBand[] {
+  const bands: ColBand[] = []
+  for (let colStart = minCol; colStart <= maxCol; colStart += preferred) {
+    bands.push({
+      colStart,
+      colEnd: Math.min(colStart + preferred - 1, maxCol),
+    })
+  }
+  return bands
+}
+
+/** Горизонтальные полосы снизу вверх внутри полной колонковой полосы */
+function partitionBandHorizontalStrips(
+  bandCabs: Cabinet[],
   config: ScreenConfig,
 ): Cabinet[][] {
-  const preferred = getPreferredCabinetsPerPowerLine(config)
   const maxSize = getMaxCabinetsPerPowerLine(config)
   const direction = edgeToDirection(config.chainStartEdge)
   const ltr = direction === 'ltr'
 
-  const pool = new Map(component.map((c) => [c.label, c]))
+  const minRow = Math.min(...bandCabs.map((c) => c.row))
+  const maxRow = Math.max(...bandCabs.map((c) => c.row))
+  const pool = new Map(bandCabs.map((c) => [c.label, c]))
   const paths: Cabinet[][] = []
 
-  const minRow = Math.min(...component.map((c) => c.row))
-  const maxRow = Math.max(...component.map((c) => c.row))
-
-  // Фаза 1: полные горизонтальные полосы снизу вверх
   for (let row = maxRow; row >= minRow; row--) {
     const rowCabs = [...pool.values()]
       .filter((c) => c.row === row)
@@ -533,17 +546,26 @@ function partitionHorizontalStripComponent(
 
     if (rowCabs.length === 0) continue
 
-    const stripLen = Math.min(preferred, rowCabs.length)
-    const strip = rowCabs.slice(0, stripLen)
-    if (strip.length === 0) continue
-
+    const strip = rowCabs.slice(0, Math.min(maxSize, rowCabs.length))
     paths.push(strip)
     for (const cab of strip) {
       pool.delete(cab.label)
     }
   }
 
-  // Фаза 2: P-образные цепочки для восточного остатка
+  return paths
+}
+
+/** P-образные цепочки для узкой остаточной полосы (< preferred столбцов) */
+function partitionBandPShape(
+  bandCabs: Cabinet[],
+  config: ScreenConfig,
+): Cabinet[][] {
+  const maxSize = getMaxCabinetsPerPowerLine(config)
+  const direction = edgeToDirection(config.chainStartEdge)
+  const pool = new Map(bandCabs.map((c) => [c.label, c]))
+  const paths: Cabinet[][] = []
+
   while (pool.size > 0) {
     const remaining = [...pool.values()]
     const starts = pickPChainStarts(remaining, direction)
@@ -583,6 +605,37 @@ function partitionHorizontalStripComponent(
   return paths
 }
 
+/**
+ * 3.9 big/small: полосы по preferred столбцов, в каждой — горизонтальные линии
+ * снизу вверх; узкий остаток — P-образные цепочки.
+ */
+function partitionHorizontalStripComponent(
+  component: Cabinet[],
+  config: ScreenConfig,
+): Cabinet[][] {
+  const preferred = getPreferredCabinetsPerPowerLine(config)
+  const minCol = Math.min(...component.map((c) => c.col))
+  const maxCol = Math.max(...component.map((c) => c.col))
+  const bands = getColumnBands(minCol, maxCol, preferred)
+  const paths: Cabinet[][] = []
+
+  for (const band of bands) {
+    const bandCabs = component.filter(
+      (c) => c.col >= band.colStart && c.col <= band.colEnd,
+    )
+    if (bandCabs.length === 0) continue
+
+    const bandWidth = band.colEnd - band.colStart + 1
+    if (bandWidth >= preferred) {
+      paths.push(...partitionBandHorizontalStrips(bandCabs, config))
+    } else {
+      paths.push(...partitionBandPShape(bandCabs, config))
+    }
+  }
+
+  return paths
+}
+
 function partitionComponentForPreset(
   component: Cabinet[],
   config: ScreenConfig,
@@ -593,8 +646,41 @@ function partitionComponentForPreset(
   return partitionComponent(component, config)
 }
 
+/** Кабинет в геометрическом центре линии (для center feed) */
+export function getPowerLineCenterCabinet(cabinets: Cabinet[]): Cabinet {
+  if (cabinets.length === 0) {
+    throw new Error('getPowerLineCenterCabinet: empty cabinets')
+  }
+  if (cabinets.length === 1) return cabinets[0]
+
+  const minCol = Math.min(...cabinets.map((c) => c.col))
+  const maxCol = Math.max(...cabinets.map((c) => c.col))
+  const minRow = Math.min(...cabinets.map((c) => c.row))
+  const maxRow = Math.max(...cabinets.map((c) => c.row))
+  const centerCol = (minCol + maxCol) / 2
+  const centerRow = (minRow + maxRow) / 2
+
+  return [...cabinets].sort((a, b) => {
+    const distA = Math.abs(a.col - centerCol) + Math.abs(a.row - centerRow)
+    const distB = Math.abs(b.col - centerCol) + Math.abs(b.row - centerRow)
+    if (distA !== distB) return distA - distB
+    return a.label.localeCompare(b.label)
+  })[0]
+}
+
+/** Точка подключения силового trunk для линии */
+export function getPowerTrunkCabinet(
+  line: PowerLine,
+  config: ScreenConfig,
+): Cabinet {
+  if (config.powerFeedMode === 'center') {
+    return getPowerLineCenterCabinet(line.cabinets)
+  }
+  return line.cabinets[0]
+}
+
 /**
- * Авто-разбиение power: горизонтальные полосы + P-остаток (3.9 big/small),
+ * Авто-разбиение power: колонковые полосы + горизонтальные ряды (3.9 big/small),
  * вертикальный жадный обход (Reshet, 2.9).
  */
 export function buildPowerLines(

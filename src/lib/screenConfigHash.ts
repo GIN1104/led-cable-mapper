@@ -19,6 +19,7 @@ export function screenRoutingKey(screen: ScreenConfig): string {
     screen.refreshRate,
     screen.signalBackup,
     screen.chainStartEdge,
+    screen.powerFeedMode,
     screen.maxPowerPerCabinetW,
     screen.avgPowerPerCabinetW,
     screen.controllerModel,

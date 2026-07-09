@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { ChainStartEdge, PitchPresetId, RoutingResult } from '../types'
 import { edgeToDirection } from '../lib/cabinetGrid'
 import { COLORS } from '../lib/constants'
+import { inferPowerLineStart } from '../lib/powerRouting'
 import {
   backupLineColor,
   dataLineColor,
@@ -346,12 +347,14 @@ export default memo(function GridVisualization({
     } else {
       for (const line of powerLines) {
         if (line.cabinets.length > 0) {
-          map[line.lineNumber] = line.cabinets[0].label
+          map[line.lineNumber] =
+            inferPowerLineStart(line.cabinets, chainStartEdge) ??
+            line.cabinets[0].label
         }
       }
     }
     return map
-  }, [manualMode, startPoints, isData, dataChains, powerLines])
+  }, [manualMode, startPoints, isData, dataChains, powerLines, chainStartEdge])
 
   const startLabelForActive = effectiveStartPoints[activeValue]
 

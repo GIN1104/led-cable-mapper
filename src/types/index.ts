@@ -41,6 +41,9 @@ export type LineDirection = 'ltr' | 'rtl'
 
 export type ChainStartEdge = 'left' | 'right'
 
+/** Точка подвода силового trunk: край первого кабинета или центр полосы */
+export type PowerFeedMode = 'edge' | 'center'
+
 
 
 /** Режим задания плотности пикселей */
@@ -148,6 +151,10 @@ export interface ScreenConfig {
   /** Направление линии (LTR/RTL) и край старта при авто-разбиении */
 
   chainStartEdge: ChainStartEdge
+
+  /** Подвод power trunk: с края линии или в центр полосы */
+
+  powerFeedMode: PowerFeedMode
 
 }
 
@@ -420,6 +427,8 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
   refreshRate: 60,
 
   chainStartEdge: 'left',
+
+  powerFeedMode: 'edge',
 
 }
 

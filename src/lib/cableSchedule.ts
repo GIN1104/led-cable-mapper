@@ -12,6 +12,7 @@ import {
   MAX_POWER_LINK_LENGTH_M,
 } from './constants'
 import { linkLengthBetween, powerLinkLengthBetween } from './cabinetGrid'
+import { getPowerTrunkCabinet } from './powerRouting'
 
 function padId(num: number): string {
   return String(num).padStart(2, '0')
@@ -51,10 +52,20 @@ export function buildRoutingSchema(
 
   lines.push('')
   lines.push('=== POWER ROUTING ===')
+  if (config.powerFeedMode === 'center' && powerLines.length > 0) {
+    lines.push(
+      `PDU: 32A distro, ${powerLines.length} outlet${powerLines.length !== 1 ? 's' : ''} (center feed per band)`,
+    )
+  }
   for (const line of powerLines) {
     const path = line.cabinets.map((c) => c.label).join(' → ')
+    const feedCab = getPowerTrunkCabinet(line, config)
+    const feedNote =
+      config.powerFeedMode === 'center' && feedCab.label !== line.cabinets[0].label
+        ? ` [trunk @ ${feedCab.label}]`
+        : ''
     lines.push(
-      `POWER LINE ${line.lineNumber}: PDU / Distro → ${trunk} → ${path} (${line.totalPowerW}W max)`,
+      `POWER LINE ${line.lineNumber}: PDU / Distro → ${trunk} → ${path}${feedNote} (${line.totalPowerW}W max)`,
     )
   }
 
@@ -149,12 +160,12 @@ export function buildCableSchedule(
 
   for (const line of powerLines) {
     powerTrunkCount++
-    const first = line.cabinets[0]
+    const feedCab = getPowerTrunkCabinet(line, config)
     entries.push({
       cableId: `M-PWR-${padId(powerTrunkCount)}`,
       lineType: 'Power',
       source: `${screenPrefix}PDU / Power Distro`,
-      destination: `${screenPrefix}Cabinet ${first.label}`,
+      destination: `${screenPrefix}Cabinet ${feedCab.label}`,
       cableType: CABLE_TYPES.powerTrunk,
       lengthM: trunkLen,
       quantity: 1,

@@ -14,6 +14,8 @@ import type {
 
   ChainStartEdge,
 
+  PowerFeedMode,
+
   PitchPresetId,
 
   CustomDensityInput,
@@ -1156,6 +1158,48 @@ export default function Sidebar({
             <p className="mt-1 text-[10px] text-slate-500">
 
               Data и power: один горизонтальный обход в блоке, старт снизу с выбранного края.
+
+            </p>
+
+          </Field>
+
+          <Field label="Power Feed / Подвод питания">
+
+            <div className="flex rounded-lg border border-slate-200 p-0.5">
+
+              {(['edge', 'center'] as PowerFeedMode[]).map((mode) => (
+
+                <button
+
+                  key={mode}
+
+                  type="button"
+
+                  onClick={() => update('powerFeedMode', mode)}
+
+                  className={`${toggleBtnClass} ${
+
+                    config.powerFeedMode === mode
+
+                      ? 'bg-blue-600 text-white shadow-sm'
+
+                      : 'text-slate-600 hover:bg-slate-50'
+
+                  }`}
+
+                >
+
+                  {mode === 'edge' ? 'Edge / Край' : 'Center / Центр'}
+
+                </button>
+
+              ))}
+
+            </div>
+
+            <p className="mt-1 text-[10px] text-slate-500">
+
+              Center: trunk к центральному кабинету полосы; в ведомости — 32A distro.
 
             </p>
 
