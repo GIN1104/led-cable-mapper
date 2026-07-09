@@ -50,16 +50,35 @@ function cabinetCenter(col: number, row: number, cellW: number, cellH: number, g
   }
 }
 
-/** Смещение data/backup линий вдоль одного сегмента — backup всегда с противоположной стороны */
-function linkOffset(
-  direction: 'horizontal' | 'vertical',
-  isRtl: boolean,
+/** Расстояние data/backup линий от центрального пути кабинетов (px) */
+const DATA_LANE_OFFSET = 13
+
+/**
+ * Перпендикулярное смещение data/backup от центра сегмента в мировых координатах SVG.
+ * Горизонталь: data выше (меньше y), backup ниже.
+ * Вертикаль (переход между рядами): data левее, backup правее.
+ */
+function dataLaneOffset(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
   kind: 'data' | 'backup',
 ): number {
-  const mag = direction === 'horizontal' ? 12 : 8
-  const dataSign = direction === 'horizontal' ? (isRtl ? 1 : -1) : isRtl ? -1 : 1
-  const dataOffset = dataSign * mag
-  return kind === 'data' ? dataOffset : -dataOffset
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const len = Math.sqrt(dx * dx + dy * dy) || 1
+  const mag = DATA_LANE_OFFSET
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    // ny = (dx / len) * offset → data вверх (ny < 0), backup вниз (ny > 0)
+    const desiredNy = kind === 'data' ? -mag : mag
+    return (desiredNy * len) / dx
+  }
+
+  // nx = (-dy / len) * offset → data влево (nx < 0), backup вправо (nx > 0)
+  const desiredNx = kind === 'data' ? -mag : mag
+  return (desiredNx * len) / -dy
 }
 
 function ArrowPath({
@@ -901,7 +920,7 @@ export default memo(function GridVisualization({
                   x2={to.x}
                   y2={to.y}
                   color={color}
-                  offset={linkOffset(link.direction, isRtl, 'data')}
+                  offset={dataLaneOffset(from.x, from.y, to.x, to.y, 'data')}
                   isVertical={link.direction === 'vertical'}
                   emphasizeHorizontal={link.direction === 'horizontal'}
                 />
@@ -922,7 +941,7 @@ export default memo(function GridVisualization({
                   y2={to.y}
                   color={color}
                   dashed
-                  offset={linkOffset(link.direction, isRtl, 'backup')}
+                  offset={dataLaneOffset(from.x, from.y, to.x, to.y, 'backup')}
                   isVertical={link.direction === 'vertical'}
                 />
               )
