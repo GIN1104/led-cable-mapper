@@ -50,64 +50,16 @@ function cabinetCenter(col: number, row: number, cellW: number, cellH: number, g
   }
 }
 
-function SimpleArrowPath({
-  x1,
-  y1,
-  x2,
-  y2,
-  color,
-  dashed = false,
-  offset = 0,
-  emphasized = false,
-}: {
-  x1: number
-  y1: number
-  x2: number
-  y2: number
-  color: string
-  dashed?: boolean
-  offset?: number
-  /** Толстая обводка для резервных линий на больших сетках */
-  emphasized?: boolean
-}) {
-  const dx = x2 - x1
-  const dy = y2 - y1
-  const len = Math.sqrt(dx * dx + dy * dy) || 1
-  const nx = (-dy / len) * offset
-  const ny = (dx / len) * offset
-  const sx = x1 + nx
-  const sy = y1 + ny
-  const ex = x2 + nx
-  const ey = y2 + ny
-
-  const strokeW = emphasized ? ARROW_STROKE : 2
-  const outlineW = emphasized ? ARROW_OUTLINE : 0
-
-  return (
-    <g pointerEvents="none">
-      {emphasized && (
-        <line
-          x1={sx}
-          y1={sy}
-          x2={ex}
-          y2={ey}
-          stroke="#ffffff"
-          strokeWidth={outlineW}
-          strokeLinecap="round"
-        />
-      )}
-      <line
-        x1={sx}
-        y1={sy}
-        x2={ex}
-        y2={ey}
-        stroke={color}
-        strokeWidth={strokeW}
-        strokeDasharray={dashed ? '7 5' : undefined}
-        strokeLinecap="round"
-      />
-    </g>
-  )
+/** Смещение data/backup линий вдоль одного сегмента — backup всегда с противоположной стороны */
+function linkOffset(
+  direction: 'horizontal' | 'vertical',
+  isRtl: boolean,
+  kind: 'data' | 'backup',
+): number {
+  const mag = direction === 'horizontal' ? 12 : 8
+  const dataSign = direction === 'horizontal' ? (isRtl ? 1 : -1) : isRtl ? -1 : 1
+  const dataOffset = dataSign * mag
+  return kind === 'data' ? dataOffset : -dataOffset
 }
 
 function ArrowPath({
@@ -276,7 +228,6 @@ export default memo(function GridVisualization({
   const effectiveScale = fitScale * zoomLevel
   const zoomPercent = Math.round(zoomLevel * 100)
   const totalCells = wide * high
-  const simplifyArrows = totalCells > LARGE_GRID_THRESHOLD || effectiveScale < 0.8
   const simplifyLabels = totalCells > LARGE_GRID_THRESHOLD
 
   const clampZoom = useCallback(
@@ -911,18 +862,6 @@ export default memo(function GridVisualization({
               const from = cabinetCenter(link.from.col, link.from.row, CELL_W, CELL_H, GAP, PAD)
               const to = cabinetCenter(link.to.col, link.to.row, CELL_W, CELL_H, GAP, PAD)
               const color = powerLineColor(link.chainId).stroke
-              if (simplifyArrows) {
-                return (
-                  <SimpleArrowPath
-                    key={`pwr-${i}`}
-                    x1={from.x}
-                    y1={from.y}
-                    x2={to.x}
-                    y2={to.y}
-                    color={color}
-                  />
-                )
-              }
               return (
                 <ArrowPath
                   key={`pwr-${i}`}
@@ -954,27 +893,6 @@ export default memo(function GridVisualization({
               const from = cabinetCenter(link.from.col, link.from.row, CELL_W, CELL_H, GAP, PAD)
               const to = cabinetCenter(link.to.col, link.to.row, CELL_W, CELL_H, GAP, PAD)
               const color = dataLineColor(link.chainId).stroke
-              if (simplifyArrows) {
-                return (
-                  <SimpleArrowPath
-                    key={`dat-${i}`}
-                    x1={from.x}
-                    y1={from.y}
-                    x2={to.x}
-                    y2={to.y}
-                    color={color}
-                    offset={
-                      link.direction === 'horizontal'
-                        ? isRtl
-                          ? 12
-                          : -12
-                        : isRtl
-                          ? -8
-                          : 8
-                    }
-                  />
-                )
-              }
               return (
                 <ArrowPath
                   key={`dat-${i}`}
@@ -983,15 +901,7 @@ export default memo(function GridVisualization({
                   x2={to.x}
                   y2={to.y}
                   color={color}
-                  offset={
-                    link.direction === 'horizontal'
-                      ? isRtl
-                        ? 12
-                        : -12
-                      : isRtl
-                        ? -8
-                        : 8
-                  }
+                  offset={linkOffset(link.direction, isRtl, 'data')}
                   isVertical={link.direction === 'vertical'}
                   emphasizeHorizontal={link.direction === 'horizontal'}
                 />
@@ -1003,21 +913,6 @@ export default memo(function GridVisualization({
               const from = cabinetCenter(link.from.col, link.from.row, CELL_W, CELL_H, GAP, PAD)
               const to = cabinetCenter(link.to.col, link.to.row, CELL_W, CELL_H, GAP, PAD)
               const color = backupLineColor(link.chainId).stroke
-              if (simplifyArrows) {
-                return (
-                  <SimpleArrowPath
-                    key={`bkp-${i}`}
-                    x1={from.x}
-                    y1={from.y}
-                    x2={to.x}
-                    y2={to.y}
-                    color={color}
-                    dashed
-                    offset={12}
-                    emphasized
-                  />
-                )
-              }
               return (
                 <ArrowPath
                   key={`bkp-${i}`}
@@ -1027,7 +922,7 @@ export default memo(function GridVisualization({
                   y2={to.y}
                   color={color}
                   dashed
-                  offset={12}
+                  offset={linkOffset(link.direction, isRtl, 'backup')}
                   isVertical={link.direction === 'vertical'}
                 />
               )
