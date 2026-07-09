@@ -10,6 +10,40 @@ export function directionToEdge(direction: LineDirection): ChainStartEdge {
   return direction === 'ltr' ? 'left' : 'right'
 }
 
+/** Минимальный размер стены по ширине/высоте (м) */
+export const MIN_WALL_DIMENSION_M = 0.5
+
+/** Ограничивает размер стены снизу */
+export function clampWallDimensionM(value: number): number {
+  return Math.max(MIN_WALL_DIMENSION_M, value)
+}
+
+/** Допустимый ввод при наборе (пустая строка, цифры, одна десятичная точка) */
+export function isMeterDraftEditable(raw: string): boolean {
+  return raw === '' || /^\d*[.,]?\d*$/.test(raw)
+}
+
+/** Парсит черновик для commit/blur; null — неполный или пустой ввод */
+export function parseMeterDraftForCommit(raw: string): number | null {
+  const trimmed = raw.trim()
+  if (trimmed === '' || trimmed === '.' || trimmed === ',') return null
+  const normalized = trimmed.replace(',', '.')
+  if (normalized.endsWith('.')) return null
+  const val = parseFloat(normalized)
+  return Number.isNaN(val) ? null : val
+}
+
+/** Значение для превью сетки во время набора */
+export function previewMeterFromDraft(raw: string, committed: number): number {
+  const forCommit = parseMeterDraftForCommit(raw)
+  if (forCommit !== null) return clampWallDimensionM(forCommit)
+  const trimmed = raw.trim().replace(',', '.')
+  if (trimmed === '' || trimmed === '.') return committed
+  const loose = parseFloat(trimmed)
+  if (!Number.isNaN(loose)) return clampWallDimensionM(loose)
+  return committed
+}
+
 /** Считает количество кабинетов по размеру стены в метрах */
 export function calcCabinetsFromMeters(
   wallWidthM: number,

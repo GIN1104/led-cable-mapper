@@ -36,7 +36,15 @@ import {
 
 } from '../lib/pitchPresets'
 
-import { calcCabinetsFromMeters, calcPixelsPerCabinet, syncCabinetGridFromMeters } from '../lib/cabinetGrid'
+import {
+  calcCabinetsFromMeters,
+  calcPixelsPerCabinet,
+  clampWallDimensionM,
+  isMeterDraftEditable,
+  parseMeterDraftForCommit,
+  previewMeterFromDraft,
+  syncCabinetGridFromMeters,
+} from '../lib/cabinetGrid'
 
 const METER_INPUT_DEBOUNCE_MS = 400
 
@@ -254,40 +262,68 @@ export default function Sidebar({
   const configRef = useRef(config)
   configRef.current = config
 
+  const commitWidthDraft = (raw: string) => {
+    const parsed = parseMeterDraftForCommit(raw)
+    if (parsed === null) {
+      setWidthDraft(String(configRef.current.wallWidthM))
+      return
+    }
+    const clamped = clampWallDimensionM(parsed)
+    setWidthDraft(String(clamped))
+    if (Math.abs(clamped - configRef.current.wallWidthM) >= 0.0001) {
+      onChange(syncCabinetGridFromMeters({ ...configRef.current, wallWidthM: clamped }))
+    }
+  }
+
+  const commitHeightDraft = (raw: string) => {
+    const parsed = parseMeterDraftForCommit(raw)
+    if (parsed === null) {
+      setHeightDraft(String(configRef.current.wallHeightM))
+      return
+    }
+    const clamped = clampWallDimensionM(parsed)
+    setHeightDraft(String(clamped))
+    if (Math.abs(clamped - configRef.current.wallHeightM) >= 0.0001) {
+      onChange(syncCabinetGridFromMeters({ ...configRef.current, wallHeightM: clamped }))
+    }
+  }
+
   useEffect(() => {
-    const widthVal = Math.max(0.1, parseFloat(widthDraft) || 0.1)
-    if (Math.abs(widthVal - configRef.current.wallWidthM) < 0.0001) return
+    const widthVal = parseMeterDraftForCommit(widthDraft)
+    if (widthVal === null) return
+    const clamped = clampWallDimensionM(widthVal)
+    if (Math.abs(clamped - configRef.current.wallWidthM) < 0.0001) return
 
     const timer = window.setTimeout(() => {
-      const c = configRef.current
-      onChange(syncCabinetGridFromMeters({ ...c, wallWidthM: widthVal }))
+      onChange(syncCabinetGridFromMeters({ ...configRef.current, wallWidthM: clamped }))
     }, METER_INPUT_DEBOUNCE_MS)
 
     return () => window.clearTimeout(timer)
   }, [widthDraft, onChange])
 
   useEffect(() => {
-    const heightVal = Math.max(0.1, parseFloat(heightDraft) || 0.1)
-    if (Math.abs(heightVal - configRef.current.wallHeightM) < 0.0001) return
+    const heightVal = parseMeterDraftForCommit(heightDraft)
+    if (heightVal === null) return
+    const clamped = clampWallDimensionM(heightVal)
+    if (Math.abs(clamped - configRef.current.wallHeightM) < 0.0001) return
 
     const timer = window.setTimeout(() => {
-      const c = configRef.current
-      onChange(syncCabinetGridFromMeters({ ...c, wallHeightM: heightVal }))
+      onChange(syncCabinetGridFromMeters({ ...configRef.current, wallHeightM: clamped }))
     }, METER_INPUT_DEBOUNCE_MS)
 
     return () => window.clearTimeout(timer)
   }, [heightDraft, onChange])
 
   const previewGrid = useMemo(() => {
-    const widthM = Math.max(0.1, parseFloat(widthDraft) || 0.1)
-    const heightM = Math.max(0.1, parseFloat(heightDraft) || 0.1)
+    const widthM = previewMeterFromDraft(widthDraft, config.wallWidthM)
+    const heightM = previewMeterFromDraft(heightDraft, config.wallHeightM)
     return calcCabinetsFromMeters(
       widthM,
       heightM,
       config.cabinetWidthMm,
       config.cabinetHeightMm,
     )
-  }, [widthDraft, heightDraft, config.cabinetWidthMm, config.cabinetHeightMm])
+  }, [widthDraft, heightDraft, config.wallWidthM, config.wallHeightM, config.cabinetWidthMm, config.cabinetHeightMm])
 
   const isDimensionPending =
     previewGrid.cabinetsWide !== config.cabinetsWide ||
@@ -413,17 +449,22 @@ export default function Sidebar({
 
               <input
 
-                type="number"
+                type="text"
 
-                min={0.1}
+                inputMode="decimal"
 
-                step={0.1}
+                autoComplete="off"
 
                 className={inputClass}
 
                 value={widthDraft}
 
-                onChange={(e) => setWidthDraft(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value
+                  if (isMeterDraftEditable(next)) setWidthDraft(next)
+                }}
+
+                onBlur={() => commitWidthDraft(widthDraft)}
 
               />
 
@@ -433,23 +474,30 @@ export default function Sidebar({
 
               <input
 
-                type="number"
+                type="text"
 
-                min={0.1}
+                inputMode="decimal"
 
-                step={0.1}
+                autoComplete="off"
 
                 className={inputClass}
 
                 value={heightDraft}
 
-                onChange={(e) => setHeightDraft(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value
+                  if (isMeterDraftEditable(next)) setHeightDraft(next)
+                }}
+
+                onBlur={() => commitHeightDraft(heightDraft)}
 
               />
 
             </Field>
 
           </div>
+
+          <p className="text-[10px] text-slate-400">min 0.5 m</p>
 
           <p className="text-[10px] text-slate-400">
             → {previewGrid.cabinetsWide} × {previewGrid.cabinetsHigh} cabinets (
