@@ -317,6 +317,42 @@ export default function App() {
     [activeScreen.id],
   )
 
+  const handleClearDataManual = useCallback(() => {
+    setRoutingByScreen((prev) => {
+      const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+      return {
+        ...prev,
+        [activeScreen.id]: {
+          ...current,
+          manualMode: true,
+          manualOverrides: {
+            ...current.manualOverrides,
+            dataPorts: {},
+            dataStartPoints: {},
+          },
+        },
+      }
+    })
+  }, [activeScreen.id])
+
+  const handleClearPowerManual = useCallback(() => {
+    setRoutingByScreen((prev) => {
+      const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+      return {
+        ...prev,
+        [activeScreen.id]: {
+          ...current,
+          manualMode: true,
+          manualOverrides: {
+            ...current.manualOverrides,
+            powerLines: {},
+            powerStartPoints: {},
+          },
+        },
+      }
+    })
+  }, [activeScreen.id])
+
   const handlePowerStartPoint = useCallback(
     (lineNumber: number, label: string) => {
       setRoutingByScreen((prev) => {
@@ -605,6 +641,7 @@ export default function App() {
                   startPoints={manualOverrides.dataStartPoints ?? {}}
                   onAssign={handleDataAssignment}
                   onSetStartPoint={handleDataStartPoint}
+                  onClearManual={handleClearDataManual}
                   maxAssignable={Math.max(
                     result!.summary.dataPorts,
                     autoResult?.summary.dataPorts ?? result!.summary.dataPorts,
@@ -626,6 +663,7 @@ export default function App() {
                   startPoints={manualOverrides.powerStartPoints ?? {}}
                   onAssign={handlePowerAssignment}
                   onSetStartPoint={handlePowerStartPoint}
+                  onClearManual={handleClearPowerManual}
                   maxAssignable={Math.max(
                     result!.summary.powerLines,
                     autoResult?.summary.powerLines ?? result!.summary.powerLines,

@@ -182,6 +182,7 @@ export default memo(function GridVisualization({
   startPoints = {},
   onAssign,
   onSetStartPoint,
+  onClearManual,
   maxAssignable = 1,
   chainStartEdge = 'left',
   pitchPreset = '3.9-small',
@@ -462,6 +463,14 @@ export default memo(function GridVisualization({
     [manualMode, selectedLabels, assignTo],
   )
 
+  const handleClearManual = useCallback(() => {
+    if (!onClearManual) return
+    onClearManual()
+    setSelectedLabels(new Set())
+    setActiveValue(1)
+    setEditMode('assign')
+  }, [onClearManual])
+
   return (
     <div
       className={`overflow-x-auto rounded-xl border bg-white p-3 shadow-sm sm:p-4 ${
@@ -576,6 +585,20 @@ export default memo(function GridVisualization({
             >
               Empty / Пропуск
             </button>
+            {onClearManual && (
+              <button
+                type="button"
+                onClick={handleClearManual}
+                className={`${editBtnClass} ml-auto bg-white text-red-700 ring-1 ring-red-300 hover:bg-red-50`}
+                title={
+                  isData
+                    ? 'Удалить все назначения data-портов и точки старта'
+                    : 'Удалить все назначения power-линий и точки старта'
+                }
+              >
+                {isData ? 'Clear Data Lines / Сбросить data' : 'Clear Power Lines / Сбросить power'}
+              </button>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{prefix}-линия:</span>
