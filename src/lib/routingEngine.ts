@@ -22,7 +22,7 @@ import {
 
   generateCabinetGrid,
 
-  rowIndexToLetter,
+  cabinetLabel,
 
 } from './cabinetGrid'
 
@@ -69,9 +69,9 @@ function emptySetFromConfig(config: ScreenConfig): Set<string> {
 
 
 
-function isActiveFromEmpty(emptySet: Set<string>): CellActiveFn {
+function isActiveFromEmpty(emptySet: Set<string>, cabinetsHigh: number): CellActiveFn {
 
-  return (col, row) => !emptySet.has(`${rowIndexToLetter(row)}${col + 1}`)
+  return (col, row) => !emptySet.has(cabinetLabel(row, col, cabinetsHigh))
 
 }
 
@@ -93,7 +93,7 @@ export function computeRouting(
 
   const activeCabinets = filterActiveCabinets(allCabinets, emptySet)
 
-  const isActive = isActiveFromEmpty(emptySet)
+  const isActive = isActiveFromEmpty(emptySet, config.cabinetsHigh)
 
   const { totalPixels: pixelsPerCabinet } = calcPixelsPerCabinet(config)
 
@@ -305,7 +305,7 @@ export function buildAutoManualOverrides(config: ScreenConfig) {
 
   const activeCabinets = filterActiveCabinets(allCabinets, emptySet)
 
-  const isActive = isActiveFromEmpty(emptySet)
+  const isActive = isActiveFromEmpty(emptySet, config.cabinetsHigh)
 
   const { totalPixels: pixelsPerCabinet } = calcPixelsPerCabinet(config)
 

@@ -16,6 +16,7 @@ import {
 import {
   areAdjacentCabinets,
   edgeToDirection,
+  inferChainStart,
   linkDirection,
   orderPowerCabinetsFromStart,
   powerLinkLengthBetween,
@@ -274,14 +275,7 @@ export function inferPowerLineStart(
   cabinets: Cabinet[],
   startEdge: ScreenConfig['chainStartEdge'],
 ): string | undefined {
-  if (cabinets.length === 0) return undefined
-  const direction = edgeToDirection(startEdge)
-  const maxRow = Math.max(...cabinets.map((c) => c.row))
-  const bottom = cabinets.filter((c) => c.row === maxRow)
-  const start = [...bottom].sort((a, b) =>
-    direction === 'ltr' ? a.col - b.col : b.col - a.col,
-  )[0]
-  return start?.label
+  return inferChainStart(cabinets, startEdge)
 }
 
 function buildLinesFromGroups(

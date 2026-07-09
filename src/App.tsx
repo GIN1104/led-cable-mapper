@@ -42,18 +42,17 @@ function SummaryCard({
 }
 
 function pruneEmptyFromGrid(emptyCabinets: string[], wide: number, high: number): string[] {
-  const maxRow = high - 1
   const maxCol = wide - 1
   return emptyCabinets.filter((label) => {
     const match = /^([A-Z]+)(\d+)$/.exec(label)
     if (!match) return false
     const col = parseInt(match[2], 10) - 1
-    let row = 0
+    let letterIndex = 0
     for (const ch of match[1]) {
-      row = row * 26 + (ch.charCodeAt(0) - 64)
+      letterIndex = letterIndex * 26 + (ch.charCodeAt(0) - 64)
     }
-    row -= 1
-    return row >= 0 && row <= maxRow && col >= 0 && col <= maxCol
+    const row = high - 1 - (letterIndex - 1)
+    return row >= 0 && row <= high - 1 && col >= 0 && col <= maxCol
   })
 }
 

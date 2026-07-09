@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { ChainStartEdge, PitchPresetId, RoutingResult } from '../types'
 import { edgeToDirection } from '../lib/cabinetGrid'
 import { COLORS } from '../lib/constants'
+import { inferDataChainStart } from '../lib/dataRouting'
 import { inferPowerLineStart } from '../lib/powerRouting'
 import {
   backupLineColor,
@@ -341,7 +342,9 @@ export default memo(function GridVisualization({
     if (isData) {
       for (const chain of dataChains) {
         if (!chain.isBackup && chain.cabinets.length > 0) {
-          map[chain.portNumber] = chain.cabinets[0].label
+          map[chain.portNumber] =
+            inferDataChainStart(chain.cabinets, chainStartEdge) ??
+            chain.cabinets[0].label
         }
       }
     } else {
@@ -809,18 +812,6 @@ export default memo(function GridVisualization({
                   </>
                 ) : (
                   <>
-                {isStart && !simplifyLabels && (
-                  <text
-                    x={isRtl ? x + 8 : x + CELL_W - 8}
-                    y={y + 14}
-                    textAnchor={isRtl ? 'start' : 'end'}
-                    fontSize={12}
-                    fill="#ca8a04"
-                    pointerEvents="none"
-                  >
-                    ★
-                  </text>
-                )}
                 {step != null && step > 0 && !simplifyLabels && (
                   <text
                     x={isRtl ? x + CELL_W - 10 : x + 10}
@@ -836,7 +827,7 @@ export default memo(function GridVisualization({
                 )}
                 <text
                   x={x + CELL_W / 2}
-                  y={y + CELL_H / 2 - (isStart ? 2 : 6)}
+                  y={y + CELL_H / 2 - 6}
                   textAnchor="middle"
                   fontSize={14}
                   fontWeight={700}
@@ -845,23 +836,10 @@ export default memo(function GridVisualization({
                 >
                   {cab.label}
                 </text>
-                {isStart && !simplifyLabels && (
-                  <text
-                    x={x + CELL_W / 2}
-                    y={y + CELL_H / 2 + 8}
-                    textAnchor="middle"
-                    fontSize={8}
-                    fontWeight={700}
-                    fill="#ca8a04"
-                    pointerEvents="none"
-                  >
-                    START
-                  </text>
-                )}
                 {!simplifyLabels && (
                 <text
                   x={x + CELL_W / 2}
-                  y={y + CELL_H / 2 + (isStart ? 18 : 10)}
+                  y={y + CELL_H / 2 + 10}
                   textAnchor="middle"
                   fontSize={9}
                   fontWeight={600}
@@ -949,6 +927,46 @@ export default memo(function GridVisualization({
                 />
               )
             })}
+        </g>
+
+        <g id="start-markers" pointerEvents="none">
+          {cabinets.map((cab) => {
+            if (emptySet.has(cab.label) || !startLabels.has(cab.label)) return null
+            const x = PAD + cab.col * (CELL_W + GAP)
+            const y = PAD + cab.row * (CELL_H + GAP)
+            const starSize = simplifyLabels ? 10 : 12
+            const labelSize = simplifyLabels ? 7 : 8
+            return (
+              <g key={`start-${cab.label}`}>
+                <text
+                  x={isRtl ? x + 8 : x + CELL_W - 8}
+                  y={y + 14}
+                  textAnchor={isRtl ? 'start' : 'end'}
+                  fontSize={starSize}
+                  fontWeight={700}
+                  fill="#ca8a04"
+                  stroke="#ffffff"
+                  strokeWidth={simplifyLabels ? 2 : 1.5}
+                  paintOrder="stroke"
+                >
+                  ★
+                </text>
+                <text
+                  x={x + CELL_W / 2}
+                  y={y + CELL_H / 2 + (simplifyLabels ? 6 : 8)}
+                  textAnchor="middle"
+                  fontSize={labelSize}
+                  fontWeight={700}
+                  fill="#ca8a04"
+                  stroke="#ffffff"
+                  strokeWidth={simplifyLabels ? 2 : 1}
+                  paintOrder="stroke"
+                >
+                  START
+                </text>
+              </g>
+            )
+          })}
         </g>
 
         <text x={PAD} y={svgH - 8} fontSize={11} fill="#94a3b8">

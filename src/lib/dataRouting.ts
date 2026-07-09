@@ -12,6 +12,7 @@ import {
   getMaxPixelsPerDataPort,
 } from './constants'
 import {
+  inferChainStart,
   linkDirection,
   orderCabinetsFromStartSnake,
   orderRegionBySnake,
@@ -587,6 +588,14 @@ export function buildBackupChains(dataChains: DataChain[]): {
   }
 
   return { chains, links }
+}
+
+/** Старт data-цепочки по умолчанию: нижний ряд, край по chainStartEdge */
+export function inferDataChainStart(
+  cabinets: Cabinet[],
+  startEdge: ChainStartEdge = 'left',
+): string | undefined {
+  return inferChainStart(cabinets, startEdge)
 }
 
 /** Извлекает точки старта из автоматически рассчитанных цепочек */

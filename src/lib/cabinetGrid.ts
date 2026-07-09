@@ -76,7 +76,7 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
   return { ...config, cabinetsWide, cabinetsHigh }
 }
 
-/** Преобразует индекс строки в букву (0 → A, 1 → B, …) */
+/** Преобразует индекс буквы в букву (0 → A, 1 → B, …) */
 export function rowIndexToLetter(index: number): string {
   let n = index
   let result = ''
@@ -85,6 +85,40 @@ export function rowIndexToLetter(index: number): string {
     n = Math.floor(n / 26) - 1
   } while (n >= 0)
   return result
+}
+
+/** Буква ряда кабинета: row 0 = верх стены, max row = низ; A = нижний ряд */
+export function cabinetRowLetter(row: number, totalRows: number): string {
+  return rowIndexToLetter(totalRows - 1 - row)
+}
+
+/** Метка кабинета по позиции в сетке (A1 = нижний левый при chainStartEdge=left) */
+export function cabinetLabel(row: number, col: number, totalRows: number): string {
+  return `${cabinetRowLetter(row, totalRows)}${col + 1}`
+}
+
+/** Индекс строки из буквы метки (A → нижний ряд) */
+export function letterToRowIndex(letters: string, totalRows: number): number {
+  let letterIndex = 0
+  for (const ch of letters) {
+    letterIndex = letterIndex * 26 + (ch.charCodeAt(0) - 64)
+  }
+  return totalRows - 1 - (letterIndex - 1)
+}
+
+/** Старт цепочки/линии: нижний ряд, край по chainStartEdge */
+export function inferChainStart(
+  cabinets: Cabinet[],
+  startEdge: ChainStartEdge = 'left',
+): string | undefined {
+  if (cabinets.length === 0) return undefined
+  const direction = edgeToDirection(startEdge)
+  const maxRow = Math.max(...cabinets.map((c) => c.row))
+  const bottom = cabinets.filter((c) => c.row === maxRow)
+  const start = [...bottom].sort((a, b) =>
+    direction === 'ltr' ? a.col - b.col : b.col - a.col,
+  )[0]
+  return start?.label
 }
 
 /** Рассчитывает пиксели на одну кабинетку */
@@ -139,17 +173,17 @@ export function calcPixelsPerCabinet(config: ScreenConfig): {
 
 /**
  * Генерирует сетку кабинетов с метками A1, A2, B1…
- * Строки — буквы сверху вниз (row 0 = A = верх стены, max row = низ),
- * столбцы — числа слева направо. В SVG больший row — ниже по Y.
+ * row 0 = верх стены, max row = низ; A = нижний ряд, далее B, C вверх.
+ * Столбцы — числа слева направо. В SVG больший row — ниже по Y.
  */
 export function generateCabinetGrid(config: ScreenConfig): Cabinet[] {
   const { pixelsWide, pixelsHigh, totalPixels } = calcPixelsPerCabinet(config)
   const cabinets: Cabinet[] = []
 
   for (let row = 0; row < config.cabinetsHigh; row++) {
-    const rowLetter = rowIndexToLetter(row)
+    const rowLetter = cabinetRowLetter(row, config.cabinetsHigh)
     for (let col = 0; col < config.cabinetsWide; col++) {
-      const label = `${rowLetter}${col + 1}`
+      const label = cabinetLabel(row, col, config.cabinetsHigh)
       cabinets.push({
         id: label,
         label,
@@ -188,10 +222,9 @@ export function buildActiveCellMask(
 ): boolean[][] {
   const mask: boolean[][] = []
   for (let row = 0; row < high; row++) {
-    const rowLetter = rowIndexToLetter(row)
     const rowMask: boolean[] = []
     for (let col = 0; col < wide; col++) {
-      const label = `${rowLetter}${col + 1}`
+      const label = cabinetLabel(row, col, high)
       rowMask.push(!emptyCabinets.has(label))
     }
     mask.push(rowMask)
