@@ -57,6 +57,8 @@ function SimpleArrowPath({
   y2,
   color,
   dashed = false,
+  offset = 0,
+  emphasized = false,
 }: {
   x1: number
   y1: number
@@ -64,19 +66,47 @@ function SimpleArrowPath({
   y2: number
   color: string
   dashed?: boolean
+  offset?: number
+  /** Толстая обводка для резервных линий на больших сетках */
+  emphasized?: boolean
 }) {
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const len = Math.sqrt(dx * dx + dy * dy) || 1
+  const nx = (-dy / len) * offset
+  const ny = (dx / len) * offset
+  const sx = x1 + nx
+  const sy = y1 + ny
+  const ex = x2 + nx
+  const ey = y2 + ny
+
+  const strokeW = emphasized ? ARROW_STROKE : 2
+  const outlineW = emphasized ? ARROW_OUTLINE : 0
+
   return (
-    <line
-      x1={x1}
-      y1={y1}
-      x2={x2}
-      y2={y2}
-      stroke={color}
-      strokeWidth={2}
-      strokeDasharray={dashed ? '6 4' : undefined}
-      strokeLinecap="round"
-      pointerEvents="none"
-    />
+    <g pointerEvents="none">
+      {emphasized && (
+        <line
+          x1={sx}
+          y1={sy}
+          x2={ex}
+          y2={ey}
+          stroke="#ffffff"
+          strokeWidth={outlineW}
+          strokeLinecap="round"
+        />
+      )}
+      <line
+        x1={sx}
+        y1={sy}
+        x2={ex}
+        y2={ey}
+        stroke={color}
+        strokeWidth={strokeW}
+        strokeDasharray={dashed ? '7 5' : undefined}
+        strokeLinecap="round"
+      />
+    </g>
   )
 }
 
@@ -920,39 +950,6 @@ export default memo(function GridVisualization({
             })}
 
           {isData &&
-            backupLinks.map((link, i) => {
-              const from = cabinetCenter(link.from.col, link.from.row, CELL_W, CELL_H, GAP, PAD)
-              const to = cabinetCenter(link.to.col, link.to.row, CELL_W, CELL_H, GAP, PAD)
-              const color = backupLineColor(link.chainId).stroke
-              if (simplifyArrows) {
-                return (
-                  <SimpleArrowPath
-                    key={`bkp-${i}`}
-                    x1={from.x}
-                    y1={from.y}
-                    x2={to.x}
-                    y2={to.y}
-                    color={color}
-                    dashed
-                  />
-                )
-              }
-              return (
-                <ArrowPath
-                  key={`bkp-${i}`}
-                  x1={from.x}
-                  y1={from.y}
-                  x2={to.x}
-                  y2={to.y}
-                  color={color}
-                  dashed
-                  offset={12}
-                  isVertical={link.direction === 'vertical'}
-                />
-              )
-            })}
-
-          {isData &&
             dataLinks.map((link, i) => {
               const from = cabinetCenter(link.from.col, link.from.row, CELL_W, CELL_H, GAP, PAD)
               const to = cabinetCenter(link.to.col, link.to.row, CELL_W, CELL_H, GAP, PAD)
@@ -966,6 +963,15 @@ export default memo(function GridVisualization({
                     x2={to.x}
                     y2={to.y}
                     color={color}
+                    offset={
+                      link.direction === 'horizontal'
+                        ? isRtl
+                          ? 12
+                          : -12
+                        : isRtl
+                          ? -8
+                          : 8
+                    }
                   />
                 )
               }
@@ -988,6 +994,41 @@ export default memo(function GridVisualization({
                   }
                   isVertical={link.direction === 'vertical'}
                   emphasizeHorizontal={link.direction === 'horizontal'}
+                />
+              )
+            })}
+
+          {isData &&
+            backupLinks.map((link, i) => {
+              const from = cabinetCenter(link.from.col, link.from.row, CELL_W, CELL_H, GAP, PAD)
+              const to = cabinetCenter(link.to.col, link.to.row, CELL_W, CELL_H, GAP, PAD)
+              const color = backupLineColor(link.chainId).stroke
+              if (simplifyArrows) {
+                return (
+                  <SimpleArrowPath
+                    key={`bkp-${i}`}
+                    x1={from.x}
+                    y1={from.y}
+                    x2={to.x}
+                    y2={to.y}
+                    color={color}
+                    dashed
+                    offset={12}
+                    emphasized
+                  />
+                )
+              }
+              return (
+                <ArrowPath
+                  key={`bkp-${i}`}
+                  x1={from.x}
+                  y1={from.y}
+                  x2={to.x}
+                  y2={to.y}
+                  color={color}
+                  dashed
+                  offset={12}
+                  isVertical={link.direction === 'vertical'}
                 />
               )
             })}
