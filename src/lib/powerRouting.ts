@@ -662,12 +662,17 @@ export function getPowerLineCenterCabinet(cabinets: Cabinet[]): Cabinet {
   })[0]
 }
 
+/** Подпись источника силового trunk в ведомости */
+export function getPowerTrunkSourceLabel(feedMode: ScreenConfig['powerFeedMode']): string {
+  return feedMode === 'center' ? '32A Robot / PDU Distro' : 'PDU / Power Distro'
+}
+
 /** Точка подключения силового trunk для линии */
 export function getPowerTrunkCabinet(
   line: PowerLine,
-  config: ScreenConfig,
+  feedMode: ScreenConfig['powerFeedMode'],
 ): Cabinet {
-  if (config.powerFeedMode === 'center') {
+  if (feedMode === 'center') {
     return getPowerLineCenterCabinet(line.cabinets)
   }
   return line.cabinets[0]

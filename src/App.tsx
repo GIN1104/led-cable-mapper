@@ -617,6 +617,7 @@ export default function App() {
                   mode="power"
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
+                  powerFeedMode={config.powerFeedMode}
                   manualMode={manualMode}
                   emptyCabinets={activeScreen.emptyCabinets}
                   emptyPaintMode={emptyPaintMode}

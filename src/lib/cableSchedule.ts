@@ -12,7 +12,7 @@ import {
   MAX_POWER_LINK_LENGTH_M,
 } from './constants'
 import { linkLengthBetween, powerLinkLengthBetween } from './cabinetGrid'
-import { getPowerTrunkCabinet } from './powerRouting'
+import { getPowerTrunkCabinet, getPowerTrunkSourceLabel } from './powerRouting'
 
 function padId(num: number): string {
   return String(num).padStart(2, '0')
@@ -52,20 +52,20 @@ export function buildRoutingSchema(
 
   lines.push('')
   lines.push('=== POWER ROUTING ===')
-  if (config.powerFeedMode === 'center' && powerLines.length > 0) {
+  const feedModeLabel =
+    config.powerFeedMode === 'center' ? 'center feed per band' : 'edge feed (line start)'
+  if (powerLines.length > 0) {
     lines.push(
-      `PDU: 32A distro, ${powerLines.length} outlet${powerLines.length !== 1 ? 's' : ''} (center feed per band)`,
+      `Feed mode: ${feedModeLabel} · ${getPowerTrunkSourceLabel(config.powerFeedMode)}`,
     )
   }
   for (const line of powerLines) {
     const path = line.cabinets.map((c) => c.label).join(' → ')
-    const feedCab = getPowerTrunkCabinet(line, config)
-    const feedNote =
-      config.powerFeedMode === 'center' && feedCab.label !== line.cabinets[0].label
-        ? ` [trunk @ ${feedCab.label}]`
-        : ''
+    const feedCab = getPowerTrunkCabinet(line, config.powerFeedMode)
+    const feedTag =
+      config.powerFeedMode === 'center' ? 'center feed' : 'edge feed'
     lines.push(
-      `POWER LINE ${line.lineNumber}: PDU / Distro → ${trunk} → ${path}${feedNote} (${line.totalPowerW}W max)`,
+      `POWER LINE ${line.lineNumber}: ${getPowerTrunkSourceLabel(config.powerFeedMode)} → ${trunk} → ${feedCab.label} (${feedTag}) · chain ${path} (${line.totalPowerW}W max)`,
     )
   }
 
@@ -158,13 +158,15 @@ export function buildCableSchedule(
     }
   }
 
+  const powerTrunkSource = `${screenPrefix}${getPowerTrunkSourceLabel(config.powerFeedMode)}`
+
   for (const line of powerLines) {
     powerTrunkCount++
-    const feedCab = getPowerTrunkCabinet(line, config)
+    const feedCab = getPowerTrunkCabinet(line, config.powerFeedMode)
     entries.push({
       cableId: `M-PWR-${padId(powerTrunkCount)}`,
       lineType: 'Power',
-      source: `${screenPrefix}PDU / Power Distro`,
+      source: powerTrunkSource,
       destination: `${screenPrefix}Cabinet ${feedCab.label}`,
       cableType: CABLE_TYPES.powerTrunk,
       lengthM: trunkLen,

@@ -1,9 +1,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ChainStartEdge, PitchPresetId, RoutingResult } from '../types'
+import type { ChainStartEdge, PitchPresetId, PowerFeedMode, RoutingResult } from '../types'
 import { edgeToDirection } from '../lib/cabinetGrid'
 import { COLORS } from '../lib/constants'
 import { inferDataChainStart } from '../lib/dataRouting'
-import { inferPowerLineStart } from '../lib/powerRouting'
+import { getPowerTrunkCabinet, inferPowerLineStart } from '../lib/powerRouting'
 import {
   backupLineColor,
   dataLineColor,
@@ -29,6 +29,7 @@ interface GridVisualizationProps {
   maxAssignable?: number
   chainStartEdge?: ChainStartEdge
   pitchPreset?: PitchPresetId
+  powerFeedMode?: PowerFeedMode
 }
 
 const DESKTOP_CELL = { w: 88, h: 64, gap: 12, pad: 40 }
@@ -42,6 +43,9 @@ const ARROW_STROKE = 4.5
 const ARROW_OUTLINE = 7
 const ARROW_HEAD_LEN = 14
 const ARROW_HEAD_ANGLE = Math.PI / 5.5
+
+const TRUNK_FEED_COLOR = '#ea580c'
+const TRUNK_FEED_STROKE = '#ffffff'
 
 const LARGE_GRID_THRESHOLD = 100
 
@@ -180,6 +184,7 @@ export default memo(function GridVisualization({
   maxAssignable = 1,
   chainStartEdge = 'left',
   pitchPreset = '3.9-small',
+  powerFeedMode = 'edge',
 }: GridVisualizationProps) {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
@@ -368,6 +373,21 @@ export default memo(function GridVisualization({
     }
     return set
   }, [effectiveStartPoints])
+
+  const feedPointsByLine = useMemo(() => {
+    if (isData) return {} as Record<number, string>
+    const map: Record<number, string> = {}
+    for (const line of powerLines) {
+      if (line.cabinets.length > 0) {
+        map[line.lineNumber] = getPowerTrunkCabinet(line, powerFeedMode).label
+      }
+    }
+    return map
+  }, [isData, powerLines, powerFeedMode])
+
+  const feedLabels = useMemo(() => {
+    return new Set(Object.values(feedPointsByLine))
+  }, [feedPointsByLine])
 
   const warnedIds = useMemo(() => {
     const type = isData ? 'data' : 'power'
@@ -743,6 +763,7 @@ export default memo(function GridVisualization({
             const lineNum = isEmpty ? 0 : (assignmentMap.get(cab.label) ?? 0)
             const isSelected = selectedLabels.has(cab.label)
             const isStart = !isEmpty && startLabels.has(cab.label)
+            const isFeed = !isEmpty && !isData && feedLabels.has(cab.label)
             const step = sequenceStepMap.get(cab.label)
 
             const dataColors = dataLineColor(lineNum)
@@ -773,16 +794,18 @@ export default memo(function GridVisualization({
                   stroke={
                     isEmpty
                       ? '#94a3b8'
-                      : isStart
-                        ? '#eab308'
-                        : isSelected
-                          ? '#f59e0b'
-                          : lineNum > 0
-                            ? lineColors.stroke
-                            : COLORS.cabinetStroke
+                      : isFeed
+                        ? TRUNK_FEED_COLOR
+                        : isStart
+                          ? '#eab308'
+                          : isSelected
+                            ? '#f59e0b'
+                            : lineNum > 0
+                              ? lineColors.stroke
+                              : COLORS.cabinetStroke
                   }
                   strokeWidth={
-                    isEmpty ? 2 : isStart ? 4 : isSelected ? 3.5 : lineNum > 0 ? 2.5 : 1.5
+                    isEmpty ? 2 : isFeed ? 4 : isStart ? 4 : isSelected ? 3.5 : lineNum > 0 ? 2.5 : 1.5
                   }
                   strokeDasharray={isEmpty ? '6 4' : undefined}
                 />
@@ -929,6 +952,57 @@ export default memo(function GridVisualization({
             })}
         </g>
 
+        <g id="trunk-feed" pointerEvents="none">
+          {!isData &&
+            powerLines.map((line) => {
+              const feedLabel = feedPointsByLine[line.lineNumber]
+              if (!feedLabel) return null
+              const feedCab = line.cabinets.find((c) => c.label === feedLabel)
+              if (!feedCab) return null
+              const target = cabinetCenter(
+                feedCab.col,
+                feedCab.row,
+                CELL_W,
+                CELL_H,
+                GAP,
+                PAD,
+              )
+              const trunkX = isRtl ? svgW - PAD / 2 : PAD / 2
+              const color = powerLineColor(line.lineNumber).stroke
+              return (
+                <g key={`trunk-${line.lineNumber}`}>
+                  <line
+                    x1={trunkX}
+                    y1={target.y}
+                    x2={target.x}
+                    y2={target.y}
+                    stroke="#ffffff"
+                    strokeWidth={6}
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={trunkX}
+                    y1={target.y}
+                    x2={target.x}
+                    y2={target.y}
+                    stroke={color}
+                    strokeWidth={3.5}
+                    strokeDasharray="8 5"
+                    strokeLinecap="round"
+                  />
+                  <circle
+                    cx={target.x}
+                    cy={target.y}
+                    r={7}
+                    fill={TRUNK_FEED_COLOR}
+                    stroke={TRUNK_FEED_STROKE}
+                    strokeWidth={2}
+                  />
+                </g>
+              )
+            })}
+        </g>
+
         <g id="start-markers" pointerEvents="none">
           {cabinets.map((cab) => {
             if (emptySet.has(cab.label) || !startLabels.has(cab.label)) return null
@@ -969,6 +1043,34 @@ export default memo(function GridVisualization({
           })}
         </g>
 
+        <g id="feed-markers" pointerEvents="none">
+          {!isData &&
+            cabinets.map((cab) => {
+              if (emptySet.has(cab.label) || !feedLabels.has(cab.label)) return null
+              const x = PAD + cab.col * (CELL_W + GAP)
+              const y = PAD + cab.row * (CELL_H + GAP)
+              const labelSize = simplifyLabels ? 7 : 8
+              const isAlsoStart = startLabels.has(cab.label)
+              return (
+                <g key={`feed-${cab.label}`}>
+                  <text
+                    x={x + CELL_W / 2}
+                    y={y + CELL_H - 6}
+                    textAnchor="middle"
+                    fontSize={labelSize}
+                    fontWeight={700}
+                    fill={TRUNK_FEED_COLOR}
+                    stroke="#ffffff"
+                    strokeWidth={simplifyLabels ? 2 : 1.5}
+                    paintOrder="stroke"
+                  >
+                    {isAlsoStart ? 'FEED/START' : 'FEED'}
+                  </text>
+                </g>
+              )
+            })}
+        </g>
+
         <text x={PAD} y={svgH - 8} fontSize={11} fill="#94a3b8">
           {isRtl ? 'Controller / PDU (control room side) →' : '← Controller / PDU (control room side)'}
           {' · '}
@@ -979,6 +1081,14 @@ export default memo(function GridVisualization({
               : is29Power
                 ? 'Power ↑↓ вертикально (2.9)'
                 : `${isRtl ? 'RTL / справа налево' : 'LTR / слева направо'} (power)`}
+          {!isData && (
+            <>
+              {' · '}
+              {powerFeedMode === 'center'
+                ? 'Trunk → центр полосы (оранж. FEED)'
+                : 'Trunk → край линии (оранж. FEED/START)'}
+            </>
+          )}
         </text>
           </svg>
         </div>
