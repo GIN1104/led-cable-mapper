@@ -46,7 +46,6 @@ const ARROW_HEAD_LEN = 14
 const ARROW_HEAD_ANGLE = Math.PI / 5.5
 
 const TRUNK_FEED_COLOR = '#ea580c'
-const TRUNK_FEED_STROKE = '#ffffff'
 
 const LARGE_GRID_THRESHOLD = 100
 
@@ -95,6 +94,7 @@ function ArrowPath({
   y2,
   color,
   dashed = false,
+  solid = false,
   offset = 0,
   isVertical = false,
   emphasizeHorizontal = false,
@@ -105,6 +105,7 @@ function ArrowPath({
   y2: number
   color: string
   dashed?: boolean
+  solid?: boolean
   offset?: number
   isVertical?: boolean
   emphasizeHorizontal?: boolean
@@ -154,7 +155,9 @@ function ArrowPath({
         strokeWidth={
           emphasizeHorizontal ? ARROW_STROKE + 1 : isVertical ? ARROW_STROKE - 1 : ARROW_STROKE
         }
-        strokeDasharray={dashed || (isVertical && !emphasizeHorizontal) ? '7 5' : undefined}
+        strokeDasharray={
+          solid ? undefined : dashed || (isVertical && !emphasizeHorizontal) ? '7 5' : undefined
+        }
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -738,26 +741,6 @@ export default memo(function GridVisualization({
                 </button>
               )
             })}
-            {Object.keys(feedPointsByLine).length > 0 && (
-              <>
-                <span className="font-medium text-slate-700">Trunk:</span>
-                <span
-                  className="flex flex-wrap items-center gap-1.5"
-                  title="Пунктир от контроллерной (слева/справа) к точке подвода питания на полосе"
-                >
-                  <span
-                    className="inline-block h-0.5 w-6 border-t-[3px] border-dashed"
-                    style={{ borderColor: TRUNK_FEED_COLOR }}
-                  />
-                  <span>
-                    Магистраль питания
-                    <span className="ml-1 text-slate-500">
-                      ({powerFeedMode === 'center' ? 'Center / центр полосы' : 'Edge / край линии'})
-                    </span>
-                  </span>
-                </span>
-              </>
-            )}
           </>
         )}
       </div>
@@ -933,6 +916,7 @@ export default memo(function GridVisualization({
                         : 0
                   }
                   isVertical={link.direction === 'vertical' || isReshetPower}
+                  solid
                 />
               )
             })}
@@ -974,56 +958,6 @@ export default memo(function GridVisualization({
                   offset={dataLaneOffset(from.x, from.y, to.x, to.y, 'backup')}
                   isVertical={link.direction === 'vertical'}
                 />
-              )
-            })}
-        </g>
-
-        <g id="trunk-feed" pointerEvents="none">
-          {!isData &&
-            powerLines.map((line) => {
-              const feedLabel = feedPointsByLine[line.lineNumber]
-              if (!feedLabel) return null
-              const feedCab = line.cabinets.find((c) => c.label === feedLabel)
-              if (!feedCab) return null
-              const target = cabinetCenter(
-                feedCab.col,
-                feedCab.row,
-                CELL_W,
-                CELL_H,
-                GAP,
-                PAD,
-              )
-              const trunkX = isRtl ? svgW - PAD / 2 : PAD / 2
-              return (
-                <g key={`trunk-${line.lineNumber}`}>
-                  <line
-                    x1={trunkX}
-                    y1={target.y}
-                    x2={target.x}
-                    y2={target.y}
-                    stroke="#ffffff"
-                    strokeWidth={6}
-                    strokeLinecap="round"
-                  />
-                  <line
-                    x1={trunkX}
-                    y1={target.y}
-                    x2={target.x}
-                    y2={target.y}
-                    stroke={TRUNK_FEED_COLOR}
-                    strokeWidth={3.5}
-                    strokeDasharray="8 5"
-                    strokeLinecap="round"
-                  />
-                  <circle
-                    cx={target.x}
-                    cy={target.y}
-                    r={7}
-                    fill={TRUNK_FEED_COLOR}
-                    stroke={TRUNK_FEED_STROKE}
-                    strokeWidth={2}
-                  />
-                </g>
               )
             })}
         </g>
