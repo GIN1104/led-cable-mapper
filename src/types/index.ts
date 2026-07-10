@@ -3,12 +3,26 @@
 import { syncCabinetGridFromMeters } from '../lib/cabinetGrid'
 
 export type ControllerModel =
-
+  | 'TB60'
   | 'NovaStar VX1000'
-
+  | 'NovaStar VX2000'
+  | 'NovaStar 600'
+  | 'NovaStar H2'
   | 'NovaStar MCTRL4K'
-
+  | 'Linsn'
   | 'Generic 1G Controller'
+
+/** Все модели контроллеров — единый список для UI */
+export const CONTROLLER_MODELS: ControllerModel[] = [
+  'TB60',
+  'NovaStar VX1000',
+  'NovaStar VX2000',
+  'NovaStar 600',
+  'NovaStar H2',
+  'NovaStar MCTRL4K',
+  'Linsn',
+  'Generic 1G Controller',
+]
 
 
 

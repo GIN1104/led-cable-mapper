@@ -22,7 +22,7 @@ import type {
 
 } from '../types'
 
-import { createScreen } from '../types'
+import { CONTROLLER_MODELS, createScreen } from '../types'
 
 import { getPowerLineLimitHint } from '../lib/constants'
 
@@ -105,18 +105,6 @@ interface SidebarProps {
   onClose?: () => void
 
 }
-
-
-
-const CONTROLLERS: ControllerModel[] = [
-
-  'NovaStar VX1000',
-
-  'NovaStar MCTRL4K',
-
-  'Generic 1G Controller',
-
-]
 
 
 
@@ -811,7 +799,7 @@ export default function Sidebar({
 
             >
 
-              {CONTROLLERS.map((c) => (
+              {CONTROLLER_MODELS.map((c) => (
 
                 <option key={c} value={c}>
 

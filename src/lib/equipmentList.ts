@@ -1,9 +1,10 @@
-import type { CableScheduleEntry, PackingListItem, RoutingResult, ScreenConfig } from '../types'
+import type { CableScheduleEntry, ControllerModel, PackingListItem, RoutingResult, ScreenConfig } from '../types'
 
 /** Ключи строк, для которых количество можно вывести из маршрутизации */
 export type EquipmentAutoKey =
   | 'screenSummary'
   | 'controllers'
+  | 'ledCard'
   | 'dataCables'
   | 'powerTrunks'
   | 'robot32a'
@@ -46,7 +47,7 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'sprays', hebrew: 'שפרייצים', russian: 'Шпрайцы' },
   { id: 'computer', hebrew: 'מחשב', russian: 'Компьютер' },
   { id: 'processor', hebrew: 'פרוצסור', russian: 'Процессор', autoKey: 'controllers' },
-  { id: 'led-card', hebrew: 'כרטיס לד', russian: 'Картис Лед' },
+  { id: 'led-card', hebrew: 'כרטיס לד', russian: 'Картис Лед', autoKey: 'ledCard' },
   {
     id: 'comm-cable',
     hebrew: 'קבל תקשורת',
@@ -124,6 +125,44 @@ function findPackingQty(items: PackingListItem[], needle: string): number | unde
   return item?.quantity
 }
 
+/**
+ * Соответствие модели контроллера типу output-карты (כרטיס לד).
+ * Количество по умолчанию: 1 карта на активный экран (как процессор).
+ */
+export const LED_CARD_BY_CONTROLLER: Record<ControllerModel, string> = {
+  TB60: 'TB60 output card',
+  'NovaStar VX1000': 'NovaStar VX output card',
+  'NovaStar VX2000': 'NovaStar VX2000 output card',
+  'NovaStar 600': 'MCTRL600 output card',
+  'NovaStar H2': 'NovaStar H2 output card',
+  'NovaStar MCTRL4K': 'NovaStar 4K output card',
+  Linsn: 'Linsn sending card',
+  'Generic 1G Controller': 'Generic output card',
+}
+
+/** Агрегирует כרטיס לד по экранам: количество и описание типа карты */
+export function aggregateLedCards(screens: ScreenConfig[]): {
+  quantity: number
+  russian: string
+} {
+  if (screens.length === 0) {
+    return { quantity: 0, russian: 'Картис Лед' }
+  }
+
+  const byCard = new Map<string, number>()
+  for (const screen of screens) {
+    const cardName = LED_CARD_BY_CONTROLLER[screen.controllerModel]
+    byCard.set(cardName, (byCard.get(cardName) ?? 0) + 1)
+  }
+
+  const russian =
+    byCard.size === 1
+      ? [...byCard.keys()][0]
+      : [...byCard.entries()].map(([name, qty]) => `${name} ×${qty}`).join('; ')
+
+  return { quantity: screens.length, russian }
+}
+
 /** Описание экрана: «Screen 1: 10×3m (60 cab, 10 cases)» */
 export function buildScreenSummaryLine(
   screen: ScreenConfig,
@@ -159,6 +198,8 @@ export function resolveEquipmentAutoQuantity(
       return results.length > 0 ? buildScreenSummary(results) : undefined
     case 'controllers':
       return screens.length
+    case 'ledCard':
+      return screens.length > 0 ? screens.length : undefined
     case 'dataCables':
       return countDataTrunkAndLinkCables(cableSchedule)
     case 'powerTrunks':
@@ -205,9 +246,11 @@ export function buildEquipmentListState(
 
     const quantityManual = previous?.quantityManual ?? false
     const footprintManual = previous?.footprintManual ?? false
+    const ledCardAuto = template.id === 'led-card' ? aggregateLedCards(screens) : undefined
 
     return {
       ...template,
+      russian: ledCardAuto?.russian ?? template.russian,
       quantity:
         quantityManual && previous
           ? previous.quantity
