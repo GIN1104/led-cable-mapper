@@ -36,9 +36,20 @@ export interface EquipmentListMeta {
   contact: string
 }
 
+/** Строка, добавленная пользователем в конец списка (не из шаблона) */
+export interface EquipmentCustomRow {
+  id: string
+  hebrew: string
+  russian: string
+  quantity: string
+  footprint: string
+}
+
 export interface EquipmentListState {
   meta: EquipmentListMeta
   rows: EquipmentListRow[]
+  /** Пользовательские строки в конце списка — сохраняются при пересчёте маршрутизации */
+  customRows: EquipmentCustomRow[]
 }
 
 /** Шаблон листа «לדים» из Excel */
@@ -80,6 +91,30 @@ export const EMPTY_EQUIPMENT_META: EquipmentListMeta = {
   location: '',
   hours: '',
   contact: '',
+}
+
+/** Создаёт пустую пользовательскую строку с уникальным id */
+export function createEmptyCustomRow(): EquipmentCustomRow {
+  const id =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? `custom-${crypto.randomUUID()}`
+      : `custom-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  return { id, hebrew: '', russian: '', quantity: '', footprint: '' }
+}
+
+/** Все строки для отображения и экспорта: шаблон + пользовательские */
+export function getEquipmentListExportRows(
+  state: EquipmentListState,
+): { hebrew: string; russian: string; quantity: string; footprint: string }[] {
+  return [
+    ...state.rows.map((row) => ({
+      hebrew: row.hebrew,
+      russian: row.russian,
+      quantity: row.quantity,
+      footprint: row.footprint,
+    })),
+    ...state.customRows,
+  ]
 }
 
 /** Кабинетов в кейсе: 500×500 → 8, 500×1000 → 6 */
@@ -267,6 +302,7 @@ export function buildEquipmentListState(
   return {
     meta: prev?.meta ?? { ...EMPTY_EQUIPMENT_META },
     rows,
+    customRows: prev?.customRows ?? [],
   }
 }
 
@@ -279,7 +315,7 @@ export function equipmentListToCsv(state: EquipmentListState): string {
     'ציוד,Оборудование,כמויות,תופסות',
   ]
 
-  for (const row of state.rows) {
+  for (const row of getEquipmentListExportRows(state)) {
     const escape = (value: string) => `"${value.replace(/"/g, '""')}"`
     lines.push(
       [row.hebrew, row.russian, row.quantity, row.footprint].map(escape).join(','),
@@ -330,7 +366,12 @@ export async function equipmentListToXlsxBlob(state: EquipmentListState): Promis
     ['שם האירוע', state.meta.eventName],
     [],
     ['ציוד', 'Оборудование', 'כמויות', 'תופסות'],
-    ...state.rows.map((row) => [row.hebrew, row.russian, row.quantity, row.footprint]),
+    ...getEquipmentListExportRows(state).map((row) => [
+      row.hebrew,
+      row.russian,
+      row.quantity,
+      row.footprint,
+    ]),
     [],
     ['מיקום:', state.meta.location],
     ['שעות:', state.meta.hours],

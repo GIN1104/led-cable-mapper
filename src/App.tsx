@@ -169,14 +169,17 @@ export default function App() {
 
   const handleRefreshEquipmentList = useCallback(() => {
     if (!result) return
-    setEquipmentList(
-      buildEquipmentListState(
+    setEquipmentList((prev) => {
+      const customRows = prev?.customRows ?? []
+      const next = buildEquipmentListState(
         screens,
         allScreenResults,
         equipmentCableSchedule,
         equipmentPackingList,
-      ),
-    )
+        prev ? { meta: prev.meta, rows: [], customRows } : undefined,
+      )
+      return { ...next, customRows }
+    })
   }, [result, screens, allScreenResults, equipmentCableSchedule, equipmentPackingList])
 
   useEffect(() => {

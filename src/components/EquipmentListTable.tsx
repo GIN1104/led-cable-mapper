@@ -1,6 +1,11 @@
 import { useCallback } from 'react'
-import type { EquipmentListMeta, EquipmentListRow, EquipmentListState } from '../lib/equipmentList'
-import { downloadEquipmentListXlsx } from '../lib/equipmentList'
+import type {
+  EquipmentCustomRow,
+  EquipmentListMeta,
+  EquipmentListRow,
+  EquipmentListState,
+} from '../lib/equipmentList'
+import { createEmptyCustomRow, downloadEquipmentListXlsx } from '../lib/equipmentList'
 import CollapsibleSection from './CollapsibleSection'
 
 interface EquipmentListTableProps {
@@ -53,12 +58,44 @@ export default function EquipmentListTable({
     [onChange, state],
   )
 
+  const updateCustomRow = useCallback(
+    (id: string, patch: Partial<EquipmentCustomRow>) => {
+      onChange({
+        ...state,
+        customRows: state.customRows.map((row) =>
+          row.id === id ? { ...row, ...patch } : row,
+        ),
+      })
+    },
+    [onChange, state],
+  )
+
+  const handleAddCustomRow = useCallback(() => {
+    onChange({
+      ...state,
+      customRows: [...state.customRows, createEmptyCustomRow()],
+    })
+  }, [onChange, state])
+
+  const handleRemoveCustomRow = useCallback(
+    (id: string) => {
+      onChange({
+        ...state,
+        customRows: state.customRows.filter((row) => row.id !== id),
+      })
+    },
+    [onChange, state],
+  )
+
   const handleExportXlsx = useCallback(() => {
     void downloadEquipmentListXlsx(state)
   }, [state])
 
   const xlsxButtonClass =
     'touch-manipulation rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100'
+
+  const cellInputClass =
+    'w-full rounded border border-slate-200 px-2 py-1 text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400'
 
   return (
     <CollapsibleSection
@@ -120,6 +157,7 @@ export default function EquipmentListTable({
                 <th className="px-3 py-2.5 font-semibold">Оборудование</th>
                 <th className="w-40 px-3 py-2.5 font-semibold">כמויות</th>
                 <th className="w-28 px-3 py-2.5 font-semibold">תופסות</th>
+                <th className="w-10 px-2 py-2.5" aria-label="Действия" />
               </tr>
             </thead>
             <tbody>
@@ -180,16 +218,88 @@ export default function EquipmentListTable({
                             footprintManual: true,
                           })
                         }
-                        className="w-full rounded border border-slate-200 px-2 py-1 text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        className={cellInputClass}
                         dir="rtl"
                       />
                     </td>
+                    <td className="px-2 py-1.5" />
                   </tr>
                 )
               })}
+              {state.customRows.map((row) => (
+                <tr
+                  key={row.id}
+                  className="border-b border-slate-50 bg-amber-50/30 hover:bg-amber-50/50"
+                >
+                  <td className="px-3 py-1.5">
+                    <input
+                      type="text"
+                      value={row.hebrew}
+                      onChange={(e) => updateCustomRow(row.id, { hebrew: e.target.value })}
+                      placeholder="ציוד"
+                      className={cellInputClass}
+                      dir="rtl"
+                    />
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <input
+                      type="text"
+                      value={row.russian}
+                      onChange={(e) => updateCustomRow(row.id, { russian: e.target.value })}
+                      placeholder="Оборудование"
+                      className={cellInputClass}
+                    />
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <input
+                      type="text"
+                      value={row.quantity}
+                      onChange={(e) => updateCustomRow(row.id, { quantity: e.target.value })}
+                      className={cellInputClass}
+                    />
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <input
+                      type="text"
+                      value={row.footprint}
+                      onChange={(e) => updateCustomRow(row.id, { footprint: e.target.value })}
+                      className={cellInputClass}
+                      dir="rtl"
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 text-center">
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCustomRow(row.id)}
+                      className="rounded p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                      title="Удалить строку / מחק שורה"
+                      aria-label="Удалить строку"
+                    >
+                      <svg
+                        className="h-4 w-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        aria-hidden
+                      >
+                        <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
+
+        <button
+          type="button"
+          onClick={handleAddCustomRow}
+          className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+        >
+          הוסף שורה / Add row / Добавить строку
+        </button>
 
         <div className="grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-3">
           <MetaField
