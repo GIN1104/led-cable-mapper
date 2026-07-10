@@ -296,6 +296,31 @@ export function equipmentListToCsv(state: EquipmentListState): string {
   return `\uFEFF${lines.join('\r\n')}`
 }
 
+/** Имя файла: equipment-list-{событие или дата}.xlsx */
+export function getEquipmentListXlsxFilename(meta: EquipmentListMeta): string {
+  const sanitize = (value: string) =>
+    value
+      .trim()
+      .replace(/[<>:"/\\|?*]+/g, '-')
+      .replace(/\s+/g, '-')
+      .slice(0, 80)
+
+  const eventPart = sanitize(meta.eventName)
+  const datePart = sanitize(meta.eventDate) || new Date().toISOString().slice(0, 10)
+  return `equipment-list-${eventPart || datePart}.xlsx`
+}
+
+/** Скачать .xlsx в браузере */
+export async function downloadEquipmentListXlsx(state: EquipmentListState): Promise<void> {
+  const blob = await equipmentListToXlsxBlob(state)
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = getEquipmentListXlsxFilename(state.meta)
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
 /** Экспорт в .xlsx (лист «לדים») */
 export async function equipmentListToXlsxBlob(state: EquipmentListState): Promise<Blob> {
   const XLSX = await import('xlsx')

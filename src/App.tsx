@@ -22,7 +22,7 @@ import CableScheduleTable from './components/CableScheduleTable'
 import PackingListView from './components/PackingListView'
 import EquipmentListTable from './components/EquipmentListTable'
 import RoutingSpinner from './components/RoutingSpinner'
-import { buildEquipmentListState } from './lib/equipmentList'
+import { buildEquipmentListState, downloadEquipmentListXlsx } from './lib/equipmentList'
 import type { EquipmentListState } from './lib/equipmentList'
 function SummaryCard({
   label,
@@ -587,13 +587,25 @@ export default function App() {
               </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="touch-manipulation w-full shrink-0 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 sm:w-auto"
-            >
-              Print Scheme
-            </button>
+            <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
+              {equipmentList && (
+                <button
+                  type="button"
+                  onClick={() => void downloadEquipmentListXlsx(equipmentList)}
+                  className="touch-manipulation rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-800 shadow-sm transition hover:bg-emerald-100"
+                  title="Сохранить רשימת ציוד в Excel"
+                >
+                  שמור xlsx
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="touch-manipulation rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
+              >
+                Print Scheme
+              </button>
+            </div>
           </header>
 
           <div className="print-only border-b border-slate-300 px-6 py-4">

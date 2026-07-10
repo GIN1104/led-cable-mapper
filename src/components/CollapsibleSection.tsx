@@ -3,6 +3,8 @@ import { useState, type ReactNode } from 'react'
 interface CollapsibleSectionProps {
   title: string
   titleExtra?: ReactNode
+  /** Кнопки в заголовке секции (видны даже при свёрнутой секции) */
+  headerActions?: ReactNode
   defaultExpanded?: boolean
   children: ReactNode
   className?: string
@@ -30,6 +32,7 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
 export default function CollapsibleSection({
   title,
   titleExtra,
+  headerActions,
   defaultExpanded = true,
   children,
   className = '',
@@ -46,11 +49,14 @@ export default function CollapsibleSection({
           expanded ? 'border-b border-slate-100' : ''
         }`}
       >
-        <h3 className="text-sm font-semibold text-slate-900">
+        <h3 className="min-w-0 text-sm font-semibold text-slate-900">
           {title}
           {titleExtra}
         </h3>
-        <ChevronIcon expanded={expanded} />
+        <div className="flex shrink-0 items-center gap-2">
+          {headerActions}
+          <ChevronIcon expanded={expanded} />
+        </div>
       </button>
 
       <div className="print-only border-b border-slate-100 px-5 py-3">

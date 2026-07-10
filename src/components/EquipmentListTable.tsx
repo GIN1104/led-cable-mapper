@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import type { EquipmentListMeta, EquipmentListRow, EquipmentListState } from '../lib/equipmentList'
-import { equipmentListToXlsxBlob } from '../lib/equipmentList'
+import { downloadEquipmentListXlsx } from '../lib/equipmentList'
 import CollapsibleSection from './CollapsibleSection'
 
 interface EquipmentListTableProps {
@@ -53,21 +53,31 @@ export default function EquipmentListTable({
     [onChange, state],
   )
 
-  const handleExportXlsx = useCallback(async () => {
-    const blob = await equipmentListToXlsxBlob(state)
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `equipment-list-${state.meta.eventName || 'event'}.xlsx`
-    anchor.click()
-    URL.revokeObjectURL(url)
+  const handleExportXlsx = useCallback(() => {
+    void downloadEquipmentListXlsx(state)
   }, [state])
+
+  const xlsxButtonClass =
+    'touch-manipulation rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100'
 
   return (
     <CollapsibleSection
       title="רשימת ציוד לאירוע"
       titleExtra={
         <span className="font-normal text-slate-400"> (לדים · LED equipment)</span>
+      }
+      headerActions={
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            handleExportXlsx()
+          }}
+          className={xlsxButtonClass}
+          title="Сохранить список оборудования в Excel"
+        >
+          שמור xlsx
+        </button>
       }
       defaultExpanded={false}
     >
@@ -95,10 +105,10 @@ export default function EquipmentListTable({
           </button>
           <button
             type="button"
-            onClick={() => void handleExportXlsx()}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+            onClick={handleExportXlsx}
+            className={xlsxButtonClass}
           >
-            Экспорт Excel (.xlsx)
+            Сохранить Excel (.xlsx)
           </button>
         </div>
 
