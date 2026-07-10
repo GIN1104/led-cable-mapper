@@ -20,7 +20,10 @@ import GridVisualization from './components/GridVisualization'
 import RoutingSchema from './components/RoutingSchema'
 import CableScheduleTable from './components/CableScheduleTable'
 import PackingListView from './components/PackingListView'
+import EquipmentListTable from './components/EquipmentListTable'
 import RoutingSpinner from './components/RoutingSpinner'
+import { buildEquipmentListState } from './lib/equipmentList'
+import type { EquipmentListState } from './lib/equipmentList'
 function SummaryCard({
   label,
   value,
@@ -66,6 +69,7 @@ export default function App() {
   const [emptyPaintMode, setEmptyPaintMode] = useState(false)
   const [gridLayout, setGridLayout] = useState<GridLayout>('side-by-side')
   const [showCombinedPacking, setShowCombinedPacking] = useState(false)
+  const [equipmentList, setEquipmentList] = useState<EquipmentListState | null>(null)
 
   const activeScreen = useMemo(
     () => screens.find((s) => s.id === activeScreenId) ?? screens[0],
@@ -138,6 +142,42 @@ export default function App() {
     }
     return entries
   }, [allScreenResults])
+
+  const equipmentCableSchedule = useMemo(
+    () =>
+      screens.length > 1 ? combinedCableSchedule : (result?.cableSchedule ?? []),
+    [screens.length, combinedCableSchedule, result],
+  )
+
+  const equipmentPackingList = useMemo(
+    () => (screens.length > 1 ? combinedPackingList : (result?.packingList ?? [])),
+    [screens.length, combinedPackingList, result],
+  )
+
+  useEffect(() => {
+    if (!result) return
+    setEquipmentList((prev) =>
+      buildEquipmentListState(
+        screens,
+        allScreenResults,
+        equipmentCableSchedule,
+        equipmentPackingList,
+        prev ?? undefined,
+      ),
+    )
+  }, [result, screens, allScreenResults, equipmentCableSchedule, equipmentPackingList])
+
+  const handleRefreshEquipmentList = useCallback(() => {
+    if (!result) return
+    setEquipmentList(
+      buildEquipmentListState(
+        screens,
+        allScreenResults,
+        equipmentCableSchedule,
+        equipmentPackingList,
+      ),
+    )
+  }, [result, screens, allScreenResults, equipmentCableSchedule, equipmentPackingList])
 
   useEffect(() => {
     const gridKey = `${activeScreen.id}:${activeScreen.cabinetsWide}x${activeScreen.cabinetsHigh}`
@@ -690,6 +730,14 @@ export default function App() {
                 <CableScheduleTable
                   entries={combinedCableSchedule}
                   title="Combined Cable Schedule"
+                />
+              )}
+
+              {equipmentList && (
+                <EquipmentListTable
+                  state={equipmentList}
+                  onChange={setEquipmentList}
+                  onRefreshFromRouting={handleRefreshEquipmentList}
                 />
               )}
             </div>
