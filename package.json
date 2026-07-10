@@ -10,7 +10,8 @@
     "verify:power": "tsx scripts/verify-power-routing.mts",
     "verify:feed": "tsx scripts/verify-power-feed.mts",
     "verify:data": "tsx scripts/verify-data-routing.mts",
-    "verify:manual": "tsx scripts/verify-manual-routing.mts"
+    "verify:manual": "tsx scripts/verify-manual-routing.mts",
+    "verify:equipment": "tsx scripts/verify-equipment-list.mts"
   },
   "dependencies": {
     "react": "^19.1.0",

@@ -157,14 +157,71 @@ function sumPowerLines(results: { result: RoutingResult }[]): number {
   return results.reduce((sum, { result }) => sum + result.summary.powerLines, 0)
 }
 
+function sumTotalCabinets(results: { result: RoutingResult }[]): number {
+  return results.reduce((sum, { result }) => sum + result.summary.totalCabinets, 0)
+}
+
+/**
+ * Результаты маршрутизации для листа оборудования.
+ * Для одного экрана `allScreenResults` часто пуст (ленивый хук) — подставляем активный экран.
+ */
+export function resolveEquipmentScreenResults(
+  allScreenResults: { screen: ScreenConfig; result: RoutingResult }[],
+  fallback?: { screen: ScreenConfig; result: RoutingResult } | null,
+): { screen: ScreenConfig; result: RoutingResult }[] {
+  if (allScreenResults.length > 0) return allScreenResults
+  if (fallback) return [fallback]
+  return []
+}
+
+/** Пороги для אזיקונים (пачки) — можно скорректировать вручную после автозаполнения */
+const AZIKONS_VERY_LARGE_CABINETS = 200
+const AZIKONS_LARGE_CABINETS = 100
+/** Суммарная площадь всех экранов, м² — ориентир «очень большой стены» (~14×3) */
+const AZIKONS_LARGE_WALL_AREA_M2 = 42
+/** Ширина одного экрана, м — крупный одноэкранный (например 15×3) */
+const AZIKONS_LARGE_SINGLE_WIDTH_M = 14
+/** Суммарная ширина всех экранов, м — несколько широких стен в ряд */
+const AZIKONS_VERY_LARGE_COMBINED_WIDTH_M = 20
+
+/** אזיקונים: 1 по умолчанию; 2 — крупный/несколько экранов; 3 — очень крупный */
+export function resolveCableTiesPacks(
+  screens: ScreenConfig[],
+  results: { screen: ScreenConfig; result: RoutingResult }[],
+): number | undefined {
+  if (screens.length === 0 || results.length === 0) return undefined
+
+  const totalCabinets = sumTotalCabinets(results)
+  const combinedWidthM = screens.reduce((sum, s) => sum + s.wallWidthM, 0)
+  const maxSingleWidthM = Math.max(...screens.map((s) => s.wallWidthM))
+  const totalWallAreaM2 = screens.reduce(
+    (sum, s) => sum + s.wallWidthM * s.wallHeightM,
+    0,
+  )
+
+  if (
+    totalCabinets > AZIKONS_VERY_LARGE_CABINETS ||
+    screens.length >= 3 ||
+    combinedWidthM > AZIKONS_VERY_LARGE_COMBINED_WIDTH_M
+  ) {
+    return 3
+  }
+
+  if (
+    totalCabinets > AZIKONS_LARGE_CABINETS ||
+    totalWallAreaM2 > AZIKONS_LARGE_WALL_AREA_M2 ||
+    maxSingleWidthM > AZIKONS_LARGE_SINGLE_WIDTH_M ||
+    screens.length >= 2
+  ) {
+    return 2
+  }
+
+  return 1
+}
+
 /** Шпрайцы: ceil(ширина экрана в м) + 1 на каждый экран */
 function sumSprayers(screens: ScreenConfig[]): number {
   return screens.reduce((sum, screen) => sum + Math.ceil(screen.wallWidthM) + 1, 0)
-}
-
-function findPackingQty(items: PackingListItem[], needle: string): number | undefined {
-  const item = items.find((row) => row.item.toLowerCase().includes(needle.toLowerCase()))
-  return item?.quantity
 }
 
 /**
@@ -233,7 +290,7 @@ export function resolveEquipmentAutoQuantity(
   screens: ScreenConfig[],
   results: { screen: ScreenConfig; result: RoutingResult }[],
   cableSchedule: CableScheduleEntry[],
-  packingList: PackingListItem[],
+  _packingList?: PackingListItem[],
 ): string | number | undefined {
   switch (key) {
     case 'screenSummary':
@@ -257,7 +314,7 @@ export function resolveEquipmentAutoQuantity(
       return results.length > 0 ? Math.max(1, Math.ceil(powerLines / 6)) : undefined
     }
     case 'cableTies':
-      return findPackingQty(packingList, 'Cable Ties')
+      return resolveCableTiesPacks(screens, results)
     default:
       return undefined
   }

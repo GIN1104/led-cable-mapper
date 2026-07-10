@@ -22,7 +22,11 @@ import CableScheduleTable from './components/CableScheduleTable'
 import PackingListView from './components/PackingListView'
 import EquipmentListTable from './components/EquipmentListTable'
 import RoutingSpinner from './components/RoutingSpinner'
-import { buildEquipmentListState, downloadEquipmentListXlsx } from './lib/equipmentList'
+import {
+  buildEquipmentListState,
+  downloadEquipmentListXlsx,
+  resolveEquipmentScreenResults,
+} from './lib/equipmentList'
 import type { EquipmentListState } from './lib/equipmentList'
 function SummaryCard({
   label,
@@ -154,18 +158,27 @@ export default function App() {
     [screens.length, combinedPackingList, result],
   )
 
+  const equipmentScreenResults = useMemo(
+    () =>
+      resolveEquipmentScreenResults(
+        allScreenResults,
+        result ? { screen: activeScreen, result } : null,
+      ),
+    [allScreenResults, result, activeScreen],
+  )
+
   useEffect(() => {
     if (!result) return
     setEquipmentList((prev) =>
       buildEquipmentListState(
         screens,
-        allScreenResults,
+        equipmentScreenResults,
         equipmentCableSchedule,
         equipmentPackingList,
         prev ?? undefined,
       ),
     )
-  }, [result, screens, allScreenResults, equipmentCableSchedule, equipmentPackingList])
+  }, [result, screens, equipmentScreenResults, equipmentCableSchedule, equipmentPackingList])
 
   const handleRefreshEquipmentList = useCallback(() => {
     if (!result) return
@@ -173,14 +186,14 @@ export default function App() {
       const customRows = prev?.customRows ?? []
       const next = buildEquipmentListState(
         screens,
-        allScreenResults,
+        equipmentScreenResults,
         equipmentCableSchedule,
         equipmentPackingList,
         prev ? { meta: prev.meta, rows: [], customRows } : undefined,
       )
       return { ...next, customRows }
     })
-  }, [result, screens, allScreenResults, equipmentCableSchedule, equipmentPackingList])
+  }, [result, screens, equipmentScreenResults, equipmentCableSchedule, equipmentPackingList])
 
   useEffect(() => {
     const gridKey = `${activeScreen.id}:${activeScreen.cabinetsWide}x${activeScreen.cabinetsHigh}`
