@@ -6,7 +6,9 @@ export type EquipmentAutoKey =
   | 'controllers'
   | 'ledCard'
   | 'dataCables'
+  | 'speakons'
   | 'powerTrunks'
+  | 'sprayers'
   | 'robot32a'
   | 'cableTies'
 
@@ -55,7 +57,7 @@ export interface EquipmentListState {
 /** Шаблон листа «לדים» из Excel */
 export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'screen', hebrew: 'מסך', russian: 'Экран', autoKey: 'screenSummary' },
-  { id: 'sprays', hebrew: 'שפרייצים', russian: 'Шпрайцы' },
+  { id: 'sprays', hebrew: 'שפרייצים', russian: 'Шпрайцы', autoKey: 'sprayers' },
   { id: 'computer', hebrew: 'מחשב', russian: 'Компьютер' },
   { id: 'processor', hebrew: 'פרוצסור', russian: 'Процессор', autoKey: 'controllers' },
   { id: 'led-card', hebrew: 'כרטיס לד', russian: 'Картис Лед', autoKey: 'ledCard' },
@@ -66,7 +68,7 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
     autoKey: 'dataCables',
     defaultFootprint: 'A',
   },
-  { id: 'speakon', hebrew: 'ספיקונים', russian: 'Спикон' },
+  { id: 'speakon', hebrew: 'ספיקונים', russian: 'Спикон', autoKey: 'speakons' },
   { id: 'power-ext', hebrew: 'כבל חשמל', russian: 'Удлинитель электрический', autoKey: 'powerTrunks' },
   { id: 'robot-32a', hebrew: 'רובוט', russian: 'Робот 32А', autoKey: 'robot32a' },
   { id: 'three-phase', hebrew: 'תלת פאזי', russian: 'Кабель 32А (трёхфазный)' },
@@ -155,6 +157,11 @@ function sumPowerLines(results: { result: RoutingResult }[]): number {
   return results.reduce((sum, { result }) => sum + result.summary.powerLines, 0)
 }
 
+/** Шпрайцы: ceil(ширина экрана в м) + 1 на каждый экран */
+function sumSprayers(screens: ScreenConfig[]): number {
+  return screens.reduce((sum, screen) => sum + Math.ceil(screen.wallWidthM) + 1, 0)
+}
+
 function findPackingQty(items: PackingListItem[], needle: string): number | undefined {
   const item = items.find((row) => row.item.toLowerCase().includes(needle.toLowerCase()))
   return item?.quantity
@@ -237,11 +244,17 @@ export function resolveEquipmentAutoQuantity(
       return screens.length > 0 ? screens.length : undefined
     case 'dataCables':
       return countDataTrunkAndLinkCables(cableSchedule)
+    case 'speakons': {
+      const powerLines = sumPowerLines(results)
+      return powerLines > 0 ? powerLines : undefined
+    }
     case 'powerTrunks':
       return countTrunks(cableSchedule, 'Power')
+    case 'sprayers':
+      return screens.length > 0 ? sumSprayers(screens) : undefined
     case 'robot32a': {
       const powerLines = sumPowerLines(results)
-      return powerLines > 0 ? Math.ceil(powerLines / 6) : undefined
+      return results.length > 0 ? Math.max(1, Math.ceil(powerLines / 6)) : undefined
     }
     case 'cableTies':
       return findPackingQty(packingList, 'Cable Ties')
