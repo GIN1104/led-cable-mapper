@@ -377,8 +377,9 @@ export function resolveEquipmentAutoQuantity(
       return dataLines + 2
     }
     case 'speakons': {
-      const powerLines = sumPowerLines(results)
-      return powerLines > 0 ? powerLines : undefined
+      // Кол-во спиконов: сумма электрических линий + 2
+      if (results.length === 0) return undefined
+      return sumPowerLines(results) + 2
     }
     case 'powerTrunks':
       return countTrunks(cableSchedule, 'Power')

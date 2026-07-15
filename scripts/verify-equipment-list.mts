@@ -116,7 +116,7 @@ assertEq(
     equipmentResults,
     result10x3.cableSchedule,
   ),
-  result10x3.summary.powerLines,
+  result10x3.summary.powerLines + 2,
 )
 assertEq(
   'robot32a (fallback)',
@@ -135,7 +135,7 @@ const state10x3 = buildEquipmentListState(
   result10x3.cableSchedule,
   result10x3.packingList,
 )
-assertEq('speakon row', qtyById(state10x3, 'speakon'), result10x3.summary.powerLines)
+assertEq('speakon row', qtyById(state10x3, 'speakon'), result10x3.summary.powerLines + 2)
 assertEq(
   'robot row',
   qtyById(state10x3, 'robot-32a'),
@@ -176,7 +176,7 @@ assertEq('cable-ties 2 screens', qtyById(stateMulti, 'cable-ties'), '+')
 assertEq(
   'speakons multi',
   resolveEquipmentAutoQuantity('speakons', [s1, s2], multiResults, []),
-  r1.summary.powerLines + r2.summary.powerLines,
+  r1.summary.powerLines + r2.summary.powerLines + 2,
 )
 
 // --- 15×3: אזיקונים тоже "+" (без автоформулы) ---
