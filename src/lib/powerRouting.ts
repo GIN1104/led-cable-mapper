@@ -123,27 +123,12 @@ function sortNeighborsForPowerGrowth(
   })
 }
 
-type StartStrategy = 'leaf-bottom' | 'bottom-edge'
-
-/** Выбирает стартовую точку для новой power-линии */
+/** Выбирает стартовую точку: нижний ряд, край по chainStartEdge */
 function selectPathStart(
   remaining: Cabinet[],
   config: ScreenConfig,
-  strategy: StartStrategy,
 ): Cabinet {
   const direction = edgeToDirection(config.chainStartEdge)
-
-  if (strategy === 'leaf-bottom') {
-    const leaves = remaining.filter(
-      (c) => getPowerNeighbors(c, remaining, config).length <= 1,
-    )
-    const pool = leaves.length > 0 ? leaves : remaining
-    return [...pool].sort((a, b) => {
-      if (b.row !== a.row) return b.row - a.row
-      return direction === 'ltr' ? a.col - b.col : b.col - a.col
-    })[0]
-  }
-
   return [...remaining].sort((a, b) => {
     if (b.row !== a.row) return b.row - a.row
     return direction === 'ltr' ? a.col - b.col : b.col - a.col
@@ -182,32 +167,10 @@ function growPowerPath(
   return path
 }
 
-/** Жадное разбиение одной компоненты связности на power-линии */
-function partitionComponentGreedy(
-  component: Cabinet[],
-  config: ScreenConfig,
-  maxSize: number,
-  strategy: StartStrategy,
-): Cabinet[][] {
-  const remaining = new Map(component.map((c) => [c.label, c]))
-  const paths: Cabinet[][] = []
-
-  while (remaining.size > 0) {
-    const pool = [...remaining.values()]
-    const start = selectPathStart(pool, config, strategy)
-    const path = growPowerPath(pool, start, config, maxSize)
-    paths.push(path)
-    for (const cab of path) {
-      remaining.delete(cab.label)
-    }
-  }
-
-  return paths
-}
-
 /**
  * Разбивает компоненту связности на минимальное число power-линий.
- * Пробует несколько эвристик старта и выбирает план с меньшим числом линий.
+ * Старт всегда с нижнего края по chainStartEdge (не из середины ряда).
+ * fillTarget = preferred; при остатке < preferred добираем до max.
  */
 function partitionComponent(
   component: Cabinet[],
@@ -215,28 +178,26 @@ function partitionComponent(
 ): Cabinet[][] {
   if (component.length === 0) return []
 
+  const preferred = getPreferredCabinetsPerPowerLine(config)
   const maxSize = getMaxCabinetsPerPowerLine(config)
-  const strategies: StartStrategy[] = ['leaf-bottom', 'bottom-edge']
-  let best: Cabinet[][] = partitionComponentGreedy(
-    component,
-    config,
-    maxSize,
-    strategies[0],
-  )
+  const remaining = new Map(component.map((c) => [c.label, c]))
+  const paths: Cabinet[][] = []
 
-  for (let i = 1; i < strategies.length; i++) {
-    const candidate = partitionComponentGreedy(
-      component,
-      config,
-      maxSize,
-      strategies[i],
-    )
-    if (candidate.length < best.length) {
-      best = candidate
+  while (remaining.size > 0) {
+    const pool = [...remaining.values()]
+    const start = selectPathStart(pool, config)
+    const target =
+      remaining.size >= preferred
+        ? Math.min(preferred, maxSize)
+        : Math.min(remaining.size, maxSize)
+    const path = growPowerPath(pool, start, config, target)
+    paths.push(path)
+    for (const cab of path) {
+      remaining.delete(cab.label)
     }
   }
 
-  return best
+  return paths
 }
 
 function buildLinksForLine(
@@ -503,18 +464,32 @@ function pickPChainStarts(
 
 type ColBand = { colStart: number; colEnd: number }
 
-/** Делит ширину стены на вертикальные полосы шириной до preferred */
+/**
+ * Делит ширину стены на вертикальные полосы шириной до preferred.
+ * LTR: полные полосы слева, узкий остаток справа.
+ * RTL: полные полосы справа, узкий остаток слева (порядок обхода — от края направления).
+ */
 function getColumnBands(
   minCol: number,
   maxCol: number,
   preferred: number,
+  direction: LineDirection,
 ): ColBand[] {
   const bands: ColBand[] = []
-  for (let colStart = minCol; colStart <= maxCol; colStart += preferred) {
-    bands.push({
-      colStart,
-      colEnd: Math.min(colStart + preferred - 1, maxCol),
-    })
+  if (direction === 'ltr') {
+    for (let colStart = minCol; colStart <= maxCol; colStart += preferred) {
+      bands.push({
+        colStart,
+        colEnd: Math.min(colStart + preferred - 1, maxCol),
+      })
+    }
+    return bands
+  }
+
+  for (let colEnd = maxCol; colEnd >= minCol; colEnd -= preferred) {
+    const colStart = Math.max(minCol, colEnd - preferred + 1)
+    bands.push({ colStart, colEnd })
+    if (colStart <= minCol) break
   }
   return bands
 }
@@ -524,7 +499,9 @@ function partitionBandHorizontalStrips(
   bandCabs: Cabinet[],
   config: ScreenConfig,
 ): Cabinet[][] {
+  const preferred = getPreferredCabinetsPerPowerLine(config)
   const maxSize = getMaxCabinetsPerPowerLine(config)
+  const fillTarget = Math.min(preferred, maxSize)
   const direction = edgeToDirection(config.chainStartEdge)
   const ltr = direction === 'ltr'
 
@@ -540,9 +517,22 @@ function partitionBandHorizontalStrips(
 
     if (rowCabs.length === 0) continue
 
-    const strip = rowCabs.slice(0, Math.min(maxSize, rowCabs.length))
+    // От края направления: LTR — слева, RTL — справа; набиваем до preferred
+    const strip = rowCabs.slice(0, Math.min(fillTarget, rowCabs.length))
     paths.push(strip)
     for (const cab of strip) {
+      pool.delete(cab.label)
+    }
+  }
+
+  // Остаток ряда (редко) — отдельные отрезки от того же края, не превышая max
+  while (pool.size > 0) {
+    const remaining = [...pool.values()]
+    const start = selectPathStart(remaining, config)
+    const path = growPowerPath(remaining, start, config, maxSize)
+    if (path.length === 0) break
+    paths.push(path)
+    for (const cab of path) {
       pool.delete(cab.label)
     }
   }
@@ -577,7 +567,7 @@ function partitionBandPShape(
     }
 
     if (!grew) {
-      const fallbackStart = selectPathStart(remaining, config, 'bottom-edge')
+      const fallbackStart = selectPathStart(remaining, config)
       const path = growPShapeChain(fallbackStart, pool, config, maxSize)
       if (path.length === 0) {
         const single = pool.get(fallbackStart.label)
@@ -600,17 +590,18 @@ function partitionBandPShape(
 }
 
 /**
- * 3.9 big/small: полосы по preferred столбцов, в каждой — горизонтальные линии
- * снизу вверх; узкий остаток — P-образные цепочки.
+ * 3.9 big/small: полосы по preferred столбцов (от края Line Direction),
+ * в каждой — горизонтальные линии снизу вверх; узкий остаток — P-цепочки.
  */
 function partitionHorizontalStripComponent(
   component: Cabinet[],
   config: ScreenConfig,
 ): Cabinet[][] {
   const preferred = getPreferredCabinetsPerPowerLine(config)
+  const direction = edgeToDirection(config.chainStartEdge)
   const minCol = Math.min(...component.map((c) => c.col))
   const maxCol = Math.max(...component.map((c) => c.col))
-  const bands = getColumnBands(minCol, maxCol, preferred)
+  const bands = getColumnBands(minCol, maxCol, preferred, direction)
   const paths: Cabinet[][] = []
 
   for (const band of bands) {

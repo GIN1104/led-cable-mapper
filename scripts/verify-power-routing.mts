@@ -1,8 +1,8 @@
 /**
- * Проверка авто-маршрутизации power: 7×3 м и 10×3 м, 3.9 Big.
+ * Проверка авто-маршрутизации power: 7×3 м и 10×3 м, 3.9 Big, LTR и RTL.
  * Запуск: npm run verify:power
  */
-import type { ScreenConfig } from '../src/types/index.ts'
+import type { ChainStartEdge, ScreenConfig } from '../src/types/index.ts'
 import { applyPitchPreset } from '../src/lib/pitchPresets.ts'
 import { buildPowerLines } from '../src/lib/powerRouting.ts'
 import {
@@ -11,7 +11,11 @@ import {
   syncCabinetGridFromMeters,
 } from '../src/lib/cabinetGrid.ts'
 
-function makeConfig(wallWidthM: number, wallHeightM: number): ScreenConfig {
+function makeConfig(
+  wallWidthM: number,
+  wallHeightM: number,
+  chainStartEdge: ChainStartEdge = 'left',
+): ScreenConfig {
   const base = syncCabinetGridFromMeters({
     id: 'test',
     name: 'Test',
@@ -36,7 +40,7 @@ function makeConfig(wallWidthM: number, wallHeightM: number): ScreenConfig {
     signalBackup: true,
     trunkLengthM: 15,
     refreshRate: 60,
-    chainStartEdge: 'left',
+    chainStartEdge,
     powerFeedMode: 'edge',
     hangMount: false,
   })
@@ -46,14 +50,17 @@ function makeConfig(wallWidthM: number, wallHeightM: number): ScreenConfig {
 function runCase(
   wallWidthM: number,
   wallHeightM: number,
+  chainStartEdge: ChainStartEdge,
   label: string,
   expected: string[][],
 ): boolean {
-  const config = makeConfig(wallWidthM, wallHeightM)
+  const config = makeConfig(wallWidthM, wallHeightM, chainStartEdge)
   const cabs = filterActiveCabinets(generateCabinetGrid(config), new Set())
   const { lines } = buildPowerLines(cabs, config)
 
-  console.log(`\n=== ${label} (${config.cabinetsWide}×${config.cabinetsHigh} = ${cabs.length} cabs) ===`)
+  console.log(
+    `\n=== ${label} (${config.cabinetsWide}×${config.cabinetsHigh} = ${cabs.length} cabs) ===`,
+  )
   console.log('Lines:', lines.length)
   for (const line of lines) {
     console.log(
@@ -82,7 +89,7 @@ function runCase(
   return ok
 }
 
-const ok7 = runCase(7, 3, '7m×3m 3.9 Big LTR', [
+const ok7Ltr = runCase(7, 3, 'left', '7m×3m 3.9 Big LTR', [
   ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10'],
   ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10'],
   ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10'],
@@ -90,7 +97,7 @@ const ok7 = runCase(7, 3, '7m×3m 3.9 Big LTR', [
   ['A13', 'B13', 'C13', 'C14', 'B14', 'A14'],
 ])
 
-const ok10 = runCase(10, 3, '10m×3m 3.9 Big LTR', [
+const ok10Ltr = runCase(10, 3, 'left', '10m×3m 3.9 Big LTR', [
   ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10'],
   ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10'],
   ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10'],
@@ -99,6 +106,23 @@ const ok10 = runCase(10, 3, '10m×3m 3.9 Big LTR', [
   ['C11', 'C12', 'C13', 'C14', 'C15', 'C16', 'C17', 'C18', 'C19', 'C20'],
 ])
 
-const allOk = ok7 && ok10
+const ok7Rtl = runCase(7, 3, 'right', '7m×3m 3.9 Big RTL', [
+  ['A14', 'A13', 'A12', 'A11', 'A10', 'A9', 'A8', 'A7', 'A6', 'A5'],
+  ['B14', 'B13', 'B12', 'B11', 'B10', 'B9', 'B8', 'B7', 'B6', 'B5'],
+  ['C14', 'C13', 'C12', 'C11', 'C10', 'C9', 'C8', 'C7', 'C6', 'C5'],
+  ['A4', 'B4', 'C4', 'C3', 'B3', 'A3'],
+  ['A2', 'B2', 'C2', 'C1', 'B1', 'A1'],
+])
+
+const ok10Rtl = runCase(10, 3, 'right', '10m×3m 3.9 Big RTL', [
+  ['A20', 'A19', 'A18', 'A17', 'A16', 'A15', 'A14', 'A13', 'A12', 'A11'],
+  ['B20', 'B19', 'B18', 'B17', 'B16', 'B15', 'B14', 'B13', 'B12', 'B11'],
+  ['C20', 'C19', 'C18', 'C17', 'C16', 'C15', 'C14', 'C13', 'C12', 'C11'],
+  ['A10', 'A9', 'A8', 'A7', 'A6', 'A5', 'A4', 'A3', 'A2', 'A1'],
+  ['B10', 'B9', 'B8', 'B7', 'B6', 'B5', 'B4', 'B3', 'B2', 'B1'],
+  ['C10', 'C9', 'C8', 'C7', 'C6', 'C5', 'C4', 'C3', 'C2', 'C1'],
+])
+
+const allOk = ok7Ltr && ok10Ltr && ok7Rtl && ok10Rtl
 console.log(`\n${allOk ? 'ALL PASS' : 'SOME FAILED'}`)
 process.exit(allOk ? 0 : 1)
