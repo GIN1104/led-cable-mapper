@@ -7,6 +7,7 @@ import { applyPitchPreset } from '../src/lib/pitchPresets.ts'
 import { getPowerTrunkCabinet } from '../src/lib/powerRouting.ts'
 import { syncCabinetGridFromMeters } from '../src/lib/cabinetGrid.ts'
 import { computeRouting } from '../src/lib/routingEngine.ts'
+import { buildEquipmentListState } from '../src/lib/equipmentList.ts'
 
 function makeConfig(powerFeedMode: PowerFeedMode): ScreenConfig {
   const base = syncCabinetGridFromMeters({
@@ -87,6 +88,27 @@ const schema = result.routingSchema.join('\n')
 if (!schema.includes('center feed') || !schema.includes('32A Robot')) {
   ok = false
   console.error('Routing schema missing center feed / 32A Robot labels')
+}
+if (!schema.includes('chain start ★')) {
+  ok = false
+  console.error('Routing schema missing chain start marker for center feed')
+}
+
+const packing = result.packingList.find((item) => item.item.includes('Power Trunk'))
+if (!packing?.notes.includes('32A PDU distro') || !packing.notes.includes('6 outlet')) {
+  ok = false
+  console.error('Packing list missing center feed distro notes:', packing?.notes)
+}
+
+const robotRow = buildEquipmentListState(
+  [config],
+  [{ screen: config, result }],
+  result.cableSchedule,
+  result.packingList,
+).rows.find((row) => row.id === 'robot-32a')
+if (!robotRow?.russian.includes('center feed')) {
+  ok = false
+  console.error('Equipment robot row missing center feed note:', robotRow?.russian)
 }
 
 console.log(ok ? 'PASS' : 'FAIL')

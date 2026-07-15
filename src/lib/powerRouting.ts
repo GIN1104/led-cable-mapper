@@ -806,7 +806,11 @@ function partitionComponentForPreset(
   return partitionComponent(component, config)
 }
 
-/** Кабинет в геометрическом центре линии (для center feed) */
+/**
+ * Кабинет подвода trunk в режиме center feed.
+ * Горизонтальная полоса → средний столбец, нижний ряд полосы;
+ * вертикальная полоса → центр по высоте.
+ */
 export function getPowerLineCenterCabinet(cabinets: Cabinet[]): Cabinet {
   if (cabinets.length === 0) {
     throw new Error('getPowerLineCenterCabinet: empty cabinets')
@@ -817,13 +821,16 @@ export function getPowerLineCenterCabinet(cabinets: Cabinet[]): Cabinet {
   const maxCol = Math.max(...cabinets.map((c) => c.col))
   const minRow = Math.min(...cabinets.map((c) => c.row))
   const maxRow = Math.max(...cabinets.map((c) => c.row))
-  const centerCol = (minCol + maxCol) / 2
-  const centerRow = (minRow + maxRow) / 2
+  const bandWidth = maxCol - minCol + 1
+  const bandHeight = maxRow - minRow + 1
+  const targetCol = (minCol + maxCol) / 2
+  const targetRow = bandWidth >= bandHeight ? minRow : (minRow + maxRow) / 2
 
   return [...cabinets].sort((a, b) => {
-    const distA = Math.abs(a.col - centerCol) + Math.abs(a.row - centerRow)
-    const distB = Math.abs(b.col - centerCol) + Math.abs(b.row - centerRow)
+    const distA = Math.abs(a.col - targetCol) + Math.abs(a.row - targetRow)
+    const distB = Math.abs(b.col - targetCol) + Math.abs(b.row - targetRow)
     if (distA !== distB) return distA - distB
+    if (a.row !== b.row) return a.row - b.row
     return a.label.localeCompare(b.label)
   })[0]
 }

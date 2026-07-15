@@ -90,11 +90,16 @@ export function buildPackingList(
     )
   }
 
+  const powerTrunkNotes =
+    config.powerFeedMode === 'center' && powerTrunks > 0
+      ? `32A PDU distro (center feed), ${powerTrunks} outlet(s); 3×2.5mm² + PowerCON TRUE1`
+      : '3×2.5mm² + PowerCON TRUE1'
+
   items.push(
     {
       item: `Power Trunk Cables (${config.trunkLengthM}m)`,
       quantity: withSpare(powerTrunks),
-      notes: '3×2.5mm² + PowerCON TRUE1',
+      notes: powerTrunkNotes,
     },
     {
       item: 'Power Link Cables',

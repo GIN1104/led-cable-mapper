@@ -213,6 +213,23 @@ function resolveRobot32aCount(
   return robotCount >= 1 ? robotCount : undefined
 }
 
+/** Авто-описание робота 32А при center feed на одном или нескольких экранах */
+function aggregateRobot32aRussian(
+  screens: ScreenConfig[],
+  results: { screen: ScreenConfig; result: RoutingResult }[],
+): string | undefined {
+  const centerScreens = screens.filter((screen) => screen.powerFeedMode === 'center')
+  if (centerScreens.length === 0) return undefined
+
+  const centerIds = new Set(centerScreens.map((screen) => screen.id))
+  const outletCount = results
+    .filter(({ screen }) => centerIds.has(screen.id))
+    .reduce((sum, { result }) => sum + result.summary.powerLines, 0)
+
+  if (outletCount <= 0) return undefined
+  return `Робот 32А + PDU distro (center feed), ${outletCount} outlet(s)`
+}
+
 /**
  * Результаты маршрутизации для листа оборудования.
  * Для одного экрана `allScreenResults` часто пуст (ленивый хук) — подставляем активный экран.
@@ -465,7 +482,9 @@ export function buildEquipmentListState(
     const russianManual = previous?.russianManual ?? false
     const ledCardAuto = template.id === 'led-card' ? aggregateLedCards(screens) : undefined
     const cvtAuto = template.id === 'cvt' ? aggregateCvtOptical(results) : undefined
-    const autoRussian = ledCardAuto?.russian ?? cvtAuto?.russian
+    const robotAuto =
+      template.id === 'robot-32a' ? aggregateRobot32aRussian(screens, results) : undefined
+    const autoRussian = ledCardAuto?.russian ?? cvtAuto?.russian ?? robotAuto
 
     return {
       ...template,

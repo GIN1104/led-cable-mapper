@@ -61,12 +61,17 @@ export function buildRoutingSchema(
   }
   for (const line of powerLines) {
     const path = line.cabinets.map((c) => c.label).join(' → ')
+    const chainStart = line.cabinets[0]?.label ?? '?'
     const feedCab = getPowerTrunkCabinet(line, config.powerFeedMode)
-    const feedTag =
-      config.powerFeedMode === 'center' ? 'center feed' : 'edge feed'
-    lines.push(
-      `POWER LINE ${line.lineNumber}: ${getPowerTrunkSourceLabel(config.powerFeedMode)} → ${trunk} → ${feedCab.label} (${feedTag}) · chain ${path} (${line.totalPowerW}W max)`,
-    )
+    if (config.powerFeedMode === 'center') {
+      lines.push(
+        `POWER LINE ${line.lineNumber}: ${getPowerTrunkSourceLabel(config.powerFeedMode)} → ${trunk} → ${feedCab.label} (center feed) · chain start ★ ${chainStart}: ${path} (${line.totalPowerW}W max)`,
+      )
+    } else {
+      lines.push(
+        `POWER LINE ${line.lineNumber}: ${getPowerTrunkSourceLabel(config.powerFeedMode)} → ${trunk} → ${feedCab.label} (edge feed = chain start) · chain ${path} (${line.totalPowerW}W max)`,
+      )
+    }
   }
 
   return lines
@@ -163,6 +168,10 @@ export function buildCableSchedule(
   for (const line of powerLines) {
     powerTrunkCount++
     const feedCab = getPowerTrunkCabinet(line, config.powerFeedMode)
+    const trunkColorAdvice =
+      config.powerFeedMode === 'center'
+        ? `${COLOR_ADVICE.power}; center feed trunk → ${feedCab.label}`
+        : `${COLOR_ADVICE.power}; edge feed trunk (chain start ${feedCab.label})`
     entries.push({
       cableId: `M-PWR-${padId(powerTrunkCount)}`,
       lineType: 'Power',
@@ -171,7 +180,7 @@ export function buildCableSchedule(
       cableType: CABLE_TYPES.powerTrunk,
       lengthM: trunkLen,
       quantity: 1,
-      colorAdvice: COLOR_ADVICE.power,
+      colorAdvice: trunkColorAdvice,
     })
 
     for (let i = 0; i < line.cabinets.length - 1; i++) {

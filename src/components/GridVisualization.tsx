@@ -837,6 +837,25 @@ export default memo(function GridVisualization({
                 </button>
               )
             })}
+            <span className="flex items-center gap-1.5 text-slate-600">
+              <span
+                className="inline-block h-3 w-3 rounded-sm border-[3px]"
+                style={{ borderColor: '#ca8a04' }}
+              />
+              ★ START (цепь)
+            </span>
+            <span className="flex items-center gap-1.5 text-slate-600">
+              <span
+                className="inline-block h-3 w-3 rounded-sm border-[3px]"
+                style={{ borderColor: TRUNK_FEED_COLOR }}
+              />
+              FEED (trunk)
+            </span>
+            <span className="text-slate-500">
+              {powerFeedMode === 'center'
+                ? 'Center: trunk → центр полосы, цепь с края'
+                : 'Edge: trunk = START с края'}
+            </span>
           </>
         )}
       </div>
@@ -1137,6 +1156,16 @@ export default memo(function GridVisualization({
               const isAlsoStart = startLabels.has(cab.label)
               return (
                 <g key={`feed-${cab.label}`}>
+                  {!isAlsoStart && (
+                    <circle
+                      cx={x + CELL_W / 2}
+                      cy={y + 10}
+                      r={simplifyLabels ? 4 : 5}
+                      fill={TRUNK_FEED_COLOR}
+                      stroke="#ffffff"
+                      strokeWidth={1.5}
+                    />
+                  )}
                   <text
                     x={x + CELL_W / 2}
                     y={y + CELL_H - 6}

@@ -1200,7 +1200,7 @@ export default function Sidebar({
 
             <p className="mt-1 text-[10px] text-slate-500">
 
-              Center: trunk к центральному кабинету полосы; в ведомости — 32A distro.
+              Edge: trunk на первый кабинет цепи (FEED/START). Center: trunk в центр полосы (оранж. FEED), цепь с края (★ START).
 
             </p>
 
