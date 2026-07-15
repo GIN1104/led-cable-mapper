@@ -437,7 +437,7 @@ assertEq('order: hangers before rigging', hangersIdx === spraysIdx + 1 ? 1 : 0, 
 assertEq('order: rigging after hangers', hangersIdx + 1 === riggingIdx ? 1 : 0, 1)
 assertEq('order: hang gear before computer', hangersIdx < computerIdx ? 1 : 0, 1)
 
-// --- Тикшорет: округление вверх до 20; Тикшорет Длинный = dataPorts + 2 ---
+// --- Тикшорет: округление вверх до 20; Тикшорет Длинный = ceil(dataPorts×2×1.1) ---
 console.log('\n=== Tikshoret rounding + long row ===')
 assertEq('roundUp 0 → 0', roundUpToNext20(0), 0)
 assertEq('roundUp 1 → 20', roundUpToNext20(1), 20)
@@ -465,9 +465,9 @@ assertEq(
 )
 assertEq('comm-cable row rounded', qtyById(state10x3, 'comm-cable'), expectedTikshoret)
 
-const expectedLong = result10x3.summary.dataPorts + 2
+const expectedLong = Math.ceil(result10x3.summary.dataPorts * 2 * 1.1)
 assertEq(
-  'commCableLong = dataPorts+2',
+  'commCableLong = ceil(dataPorts*2*1.1)',
   resolveEquipmentAutoQuantity(
     'commCableLong',
     [screen10x3],
@@ -478,13 +478,24 @@ assertEq(
 )
 assertEq('comm-cable-long row', qtyById(state10x3, 'comm-cable-long'), expectedLong)
 
+// Примеры формулы: 6→14, 5→11, 1→3; при 0 — пусто
+assertEq('commCableLong example 6→14', Math.ceil(6 * 2 * 1.1), 14)
+assertEq('commCableLong example 5→11', Math.ceil(5 * 2 * 1.1), 11)
+assertEq('commCableLong example 1→3', Math.ceil(1 * 2 * 1.1), 3)
+assertEq(
+  'commCableLong empty results → empty',
+  resolveEquipmentAutoQuantity('commCableLong', [], [], []),
+  '',
+)
+
 const multiDataPorts = r1.summary.dataPorts + r2.summary.dataPorts
+const expectedLongMulti = Math.ceil(multiDataPorts * 2 * 1.1)
 assertEq(
   'commCableLong multi screens',
   resolveEquipmentAutoQuantity('commCableLong', [s1, s2], multiResults, []),
-  multiDataPorts + 2,
+  expectedLongMulti,
 )
-assertEq('comm-cable-long multi row', qtyById(stateMulti, 'comm-cable-long'), multiDataPorts + 2)
+assertEq('comm-cable-long multi row', qtyById(stateMulti, 'comm-cable-long'), expectedLongMulti)
 
 const commIdx = state10x3.rows.findIndex((r) => r.id === 'comm-cable')
 const commLongIdx = state10x3.rows.findIndex((r) => r.id === 'comm-cable-long')

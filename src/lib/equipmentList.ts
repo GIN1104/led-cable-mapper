@@ -372,9 +372,11 @@ export function resolveEquipmentAutoQuantity(
       return roundUpToNext20(raw)
     }
     case 'commCableLong': {
+      // Кол-во дата-линий × 2 + 10% (с округлением вверх)
       if (results.length === 0) return undefined
       const dataLines = sumDataPorts(results)
-      return dataLines + 2
+      if (dataLines === 0) return undefined
+      return Math.ceil(dataLines * 2 * 1.1)
     }
     case 'speakons': {
       // Кол-во спиконов: сумма электрических линий + 2
