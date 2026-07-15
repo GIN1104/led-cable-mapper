@@ -19,6 +19,7 @@ import {
   inferChainStart,
   linkDirection,
   orderPowerCabinetsFromStart,
+  orderPowerRegionByPreset,
   powerLinkLengthBetween,
 } from './cabinetGrid'
 import type { CellActiveFn } from './rectangularPartition'
@@ -168,9 +169,8 @@ function growPowerPath(
 }
 
 /**
- * Разбивает компоненту связности на минимальное число power-линий.
- * Старт всегда с нижнего края по chainStartEdge (не из середины ряда).
- * Цель заполнения: preferred при чистом плане ≤6 линий, иначе max.
+ * Разбивает компоненту связности жадным обходом (не 2.9 / Reshet).
+ * Старт с нижнего края по chainStartEdge.
  */
 function partitionComponent(
   component: Cabinet[],
@@ -206,6 +206,97 @@ function partitionComponent(
       remaining.delete(cab.label)
     }
   }
+
+  return paths
+}
+
+/** Упорядочивает набор кабинетов линии по пресету (прямоугольный блок столбцов). */
+function orderPackedVerticalLine(
+  cabinets: Cabinet[],
+  config: ScreenConfig,
+): Cabinet[] {
+  if (cabinets.length === 0) return []
+  const minCol = Math.min(...cabinets.map((c) => c.col))
+  const maxCol = Math.max(...cabinets.map((c) => c.col))
+  const minRow = Math.min(...cabinets.map((c) => c.row))
+  const maxRow = Math.max(...cabinets.map((c) => c.row))
+  const ordered = orderPowerRegionByPreset(
+    cabinets,
+    minCol,
+    minRow,
+    maxCol - minCol + 1,
+    maxRow - minRow + 1,
+    config.pitchPreset,
+    edgeToDirection(config.chainStartEdge),
+    config.cabinetWidthMm,
+    config.cabinetHeightMm,
+  )
+  if (ordered.length === cabinets.length) return ordered
+  // Дырявая форма — жадный обход от нижнего края
+  const start = selectPathStart(cabinets, config)
+  return growPowerPath(cabinets, start, config, cabinets.length)
+}
+
+/**
+ * Вертикальная упаковка для 2.9 / Reshet: целые столбцы снизу вверх
+ * в порядке Line Direction, пока не наберётся max кабинетов.
+ * При cabinetsHigh ≤ max никогда не режет столбец посередине —
+ * следующая линия начинается на границе столбца.
+ * Если высота столбца > max — режем только внутри этого столбца.
+ */
+function partitionVerticalColumnPack(
+  component: Cabinet[],
+  config: ScreenConfig,
+): Cabinet[][] {
+  if (component.length === 0) return []
+
+  const maxSize = getMaxCabinetsPerPowerLine(config)
+  const direction = edgeToDirection(config.chainStartEdge)
+  const ltr = direction === 'ltr'
+
+  const byCol = new Map<number, Cabinet[]>()
+  for (const cab of component) {
+    const list = byCol.get(cab.col) ?? []
+    list.push(cab)
+    byCol.set(cab.col, list)
+  }
+
+  const cols = [...byCol.keys()].sort((a, b) => (ltr ? a - b : b - a))
+  for (const col of cols) {
+    byCol.get(col)!.sort((a, b) => b.row - a.row) // снизу вверх
+  }
+
+  const paths: Cabinet[][] = []
+  let current: Cabinet[] = []
+
+  const flush = () => {
+    if (current.length === 0) return
+    paths.push(orderPackedVerticalLine(current, config))
+    current = []
+  }
+
+  for (const col of cols) {
+    const colCabs = byCol.get(col) ?? []
+    if (colCabs.length === 0) continue
+
+    // Столбец выше лимита — единственный случай разреза внутри столбца
+    if (colCabs.length > maxSize) {
+      flush()
+      let i = 0
+      while (i < colCabs.length) {
+        const chunk = colCabs.slice(i, i + maxSize)
+        paths.push(orderPackedVerticalLine(chunk, config))
+        i += maxSize
+      }
+      continue
+    }
+
+    if (current.length + colCabs.length > maxSize) {
+      flush()
+    }
+    current.push(...colCabs)
+  }
+  flush()
 
   return paths
 }
@@ -783,8 +874,14 @@ function partitionComponentForPreset(
   if (component.length === 0) return []
 
   const maxSize = getMaxCabinetsPerPowerLine(config)
+  const verticalPack =
+    config.pitchPreset === '2.9' || config.pitchPreset === '3.9-reshet'
+
   // Вся стена/компонента ≤ max — одна линия (не режем по рядам/полосам)
   if (component.length <= maxSize) {
+    if (verticalPack) {
+      return partitionVerticalColumnPack(component, config)
+    }
     const start = selectPathStart(component, config)
     const path = growPowerPath(component, start, config, maxSize)
     if (path.length === component.length) {
@@ -793,15 +890,17 @@ function partitionComponentForPreset(
     // Жадный обход застрял на дырявой форме — добираем остаток отдельно
     const used = new Set(path.map((c) => c.label))
     const rest = component.filter((c) => !used.has(c.label))
-    const restPaths =
-      useHorizontalStripAlgorithm(config)
-        ? partitionHorizontalStripComponent(rest, config)
-        : partitionComponent(rest, config)
+    const restPaths = useHorizontalStripAlgorithm(config)
+      ? partitionHorizontalStripComponent(rest, config)
+      : partitionComponent(rest, config)
     return path.length > 0 ? [path, ...restPaths] : restPaths
   }
 
   if (useHorizontalStripAlgorithm(config)) {
     return partitionHorizontalStripComponent(component, config)
+  }
+  if (verticalPack) {
+    return partitionVerticalColumnPack(component, config)
   }
   return partitionComponent(component, config)
 }
@@ -854,7 +953,7 @@ export function getPowerTrunkCabinet(
 /**
  * Авто-разбиение power: если кабинетов ≤ max — одна линия;
  * иначе колонковые полосы + горизонтальные ряды (3.9 big/small),
- * вертикальный жадный обход (Reshet, 2.9).
+ * упаковка целыми столбцами без разреза посередине (Reshet, 2.9).
  */
 export function buildPowerLines(
   cabinets: Cabinet[],

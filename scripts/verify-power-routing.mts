@@ -1,9 +1,9 @@
 /**
  * Проверка авто-маршрутизации power: 3×2 м (1 линия), 7×3 м, 10×3 м, 14×8 м,
- * кейс где max(12) лучше.
+ * кейс где max(12) лучше; 2.9 — упаковка целыми столбцами без mid-column split.
  * Запуск: npm run verify:power
  */
-import type { ChainStartEdge, ScreenConfig } from '../src/types/index.ts'
+import type { ChainStartEdge, PitchPresetId, ScreenConfig } from '../src/types/index.ts'
 import { applyPitchPreset } from '../src/lib/pitchPresets.ts'
 import {
   buildPowerLines,
@@ -23,6 +23,7 @@ function makeConfig(
   wallWidthM: number,
   wallHeightM: number,
   chainStartEdge: ChainStartEdge = 'left',
+  preset: PitchPresetId = '3.9-big',
 ): ScreenConfig {
   const base = syncCabinetGridFromMeters({
     id: 'test',
@@ -38,7 +39,7 @@ function makeConfig(
     totalResolutionWidth: 3840,
     totalResolutionHeight: 2160,
     pixelPitchMm: 3.9,
-    pitchPreset: '3.9-big',
+    pitchPreset: preset,
     customDensityInput: 'pitch',
     customPixelsWide: 128,
     customPixelsHigh: 256,
@@ -52,7 +53,8 @@ function makeConfig(
     powerFeedMode: 'edge',
     hangMount: false,
   })
-  return applyPitchPreset(base, '3.9-big')
+  // Как в UI: после пресета пересчитываем сетку из метров (2.9 = 500×500)
+  return syncCabinetGridFromMeters(applyPitchPreset(base, preset))
 }
 
 function runCase(
@@ -61,8 +63,9 @@ function runCase(
   chainStartEdge: ChainStartEdge,
   label: string,
   expected: string[][],
+  preset: PitchPresetId = '3.9-big',
 ): boolean {
-  const config = makeConfig(wallWidthM, wallHeightM, chainStartEdge)
+  const config = makeConfig(wallWidthM, wallHeightM, chainStartEdge, preset)
   const cabs = filterActiveCabinets(generateCabinetGrid(config), new Set())
   const { lines } = buildPowerLines(cabs, config)
 
@@ -95,6 +98,111 @@ function runCase(
   }
   console.log(ok ? 'PASS' : 'FAIL')
   return ok
+}
+
+/**
+ * Проверяет, что при высоте ≤ max линии 2.9 не режут столбцы посередине:
+ * каждый столбец стены целиком принадлежит одной линии; столбцы линии смежны.
+ */
+function assertNoMidColumnSplits(
+  wallWidthM: number,
+  wallHeightM: number,
+  chainStartEdge: ChainStartEdge,
+  label: string,
+): boolean {
+  const config = makeConfig(wallWidthM, wallHeightM, chainStartEdge, '2.9')
+  const cabs = filterActiveCabinets(generateCabinetGrid(config), new Set())
+  const { lines } = buildPowerLines(cabs, config)
+  const maxSize = getMaxCabinetsPerPowerLine(config)
+  const high = config.cabinetsHigh
+
+  console.log(
+    `\n=== ${label} (${config.cabinetsWide}×${high} = ${cabs.length} cabs, max ${maxSize}) ===`,
+  )
+  for (const line of lines) {
+    console.log(
+      `P${line.lineNumber} (${line.cabinets.length}):`,
+      line.cabinets.map((c) => c.label).join(' -> '),
+    )
+  }
+
+  let ok = true
+  if (high > maxSize) {
+    console.log('SKIP mid-column rule (height > max)')
+    console.log('PASS')
+    return true
+  }
+
+  const colOwner = new Map<number, number>()
+  for (const line of lines) {
+    if (line.cabinets.length > maxSize) {
+      ok = false
+      console.error(`P${line.lineNumber}: ${line.cabinets.length} > max ${maxSize}`)
+    }
+    const colsInLine = new Map<number, number>()
+    for (const cab of line.cabinets) {
+      colsInLine.set(cab.col, (colsInLine.get(cab.col) ?? 0) + 1)
+    }
+    const sortedCols = [...colsInLine.keys()].sort((a, b) => a - b)
+    for (let i = 1; i < sortedCols.length; i++) {
+      if (sortedCols[i] !== sortedCols[i - 1] + 1) {
+        ok = false
+        console.error(
+          `P${line.lineNumber}: non-contiguous columns ${sortedCols.join(',')}`,
+        )
+      }
+    }
+    for (const [col, count] of colsInLine) {
+      if (count !== high) {
+        ok = false
+        console.error(
+          `P${line.lineNumber}: mid-column split at col ${col} (${count}/${high})`,
+        )
+      }
+      const prev = colOwner.get(col)
+      if (prev != null && prev !== line.lineNumber) {
+        ok = false
+        console.error(
+          `col ${col} split across P${prev} and P${line.lineNumber}`,
+        )
+      }
+      colOwner.set(col, line.lineNumber)
+    }
+  }
+
+  // Полное покрытие: каждый столбец стены ровно в одной линии
+  for (let col = 0; col < config.cabinetsWide; col++) {
+    if (!colOwner.has(col)) {
+      ok = false
+      console.error(`col ${col} missing from all lines`)
+    }
+  }
+
+  console.log(ok ? 'PASS' : 'FAIL')
+  return ok
+}
+
+/** Вертикальная змейка по столбцам fromCol..toCol (1-based), letters снизу вверх */
+function vertSnakeCols(
+  fromCol: number,
+  toCol: number,
+  letters: string[],
+  rtl = false,
+): string[] {
+  const cols: number[] = []
+  if (rtl) {
+    for (let c = toCol; c >= fromCol; c--) cols.push(c)
+  } else {
+    for (let c = fromCol; c <= toCol; c++) cols.push(c)
+  }
+  const out: string[] = []
+  for (let i = 0; i < cols.length; i++) {
+    const col = cols[i]
+    const goUp = i % 2 === 0
+    const seq = goUp ? letters : [...letters].reverse()
+    for (const L of seq) out.push(`${L}${col}`)
+  }
+  return out
 }
 
 function assertPackWidth(
@@ -226,6 +334,41 @@ const okDecisions =
   assertPackWidth(20, 4, pref, max, 12, '10m×4m preferred would be 8 lines → max') &&
   assertPackWidth(28, 8, pref, max, 12, '14m×8m rem → max')
 
+/*
+ * 2.9: 5m×4m = 10×8, max 40 → 2 линии по 5 полных столбцов (40), без mid-column.
+ * Порядок — вертикальная змейка (короткие кабели между столбцами).
+ */
+const letters8_29 = rowLetters(8)
+const ok29_5x4 = runCase(
+  5,
+  4,
+  'left',
+  '5m×4m 2.9 LTR (full columns×5)',
+  [
+    vertSnakeCols(1, 5, letters8_29),
+    vertSnakeCols(6, 10, letters8_29),
+  ],
+  '2.9',
+)
+
+/*
+ * 2.9: 6m×3m = 12×6; 40 не делится на 6 → по floor(40/6)=6 столбцов (36),
+ * не 40 с разрезом посередине 7-го столбца.
+ */
+const ok29_noMid = assertNoMidColumnSplits(
+  6,
+  3,
+  'left',
+  '6m×3m 2.9 LTR (no mid-column splits)',
+)
+
+const ok29_10x5 = assertNoMidColumnSplits(
+  10,
+  5,
+  'left',
+  '10m×5m 2.9 LTR (no mid-column splits)',
+)
+
 const allOk =
   ok3x2Ltr &&
   ok3x2Rtl &&
@@ -235,6 +378,9 @@ const allOk =
   ok10Rtl &&
   ok6Ltr &&
   ok14x8 &&
-  okDecisions
+  okDecisions &&
+  ok29_5x4 &&
+  ok29_noMid &&
+  ok29_10x5
 console.log(`\n${allOk ? 'ALL PASS' : 'SOME FAILED'}`)
 process.exit(allOk ? 0 : 1)
