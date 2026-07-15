@@ -462,7 +462,7 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
 
   trunkLengthM: 50,
 
-  refreshRate: 60,
+  refreshRate: 50,
 
   chainStartEdge: 'left',
 
