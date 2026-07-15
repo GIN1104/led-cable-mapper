@@ -156,7 +156,7 @@ function assertHorizontalDataFlow(
 
 let ok = true
 
-// 10m × 5m @60Hz → 20×5, maxCabs=19 → 8 портов (было 10: по сегменту на ряд)
+// 10m × 5m @60Hz → 20×5, maxCabs=19 → 6 портов (теор. минимум ceil(100/19))
 const r10x5_60 = runCase(10, 5, '10m×5m 3.9 Big', 60)
 const bottomRow = r10x5_60.config.cabinetsHigh - 1
 const d1 = r10x5_60.chains[0]
@@ -169,9 +169,9 @@ if (!d1) {
     ok = false
     console.error(`FAIL: D1 should include bottom row ${bottomRow}, got rows ${[...d1Rows]}`)
   }
-  if (r10x5_60.chains.length !== 8) {
+  if (r10x5_60.chains.length !== 6) {
     ok = false
-    console.error(`FAIL 10×5@60Hz: expected 8 ports (min packing), got ${r10x5_60.chains.length}`)
+    console.error(`FAIL 10×5@60Hz: expected 6 ports (min packing), got ${r10x5_60.chains.length}`)
   }
   if (!assertChainLimits(r10x5_60.chains, r10x5_60.maxCabs, r10x5_60.maxPixels, '10×5@60')) {
     ok = false
@@ -235,6 +235,32 @@ if (r8x3.chains.length !== 3) {
   console.error(`FAIL 8×3: expected 3 ports, got ${r8x3.chains.length}`)
 }
 if (!assertChainLimits(r8x3.chains, r8x3.maxCabs, r8x3.maxPixels, '8×3')) {
+  ok = false
+}
+
+// 14m × 8m @50Hz → 28×8, maxCabs=23 → 10 портов (теор. минимум ceil(224/23))
+const r14x8_50 = runCase(14, 8, '14m×8m 3.9 Big', 50)
+if (r14x8_50.chains.length !== 10) {
+  ok = false
+  console.error(`FAIL 14×8@50Hz: expected 10 ports, got ${r14x8_50.chains.length}`)
+}
+if (!assertChainLimits(r14x8_50.chains, r14x8_50.maxCabs, r14x8_50.maxPixels, '14×8@50')) {
+  ok = false
+}
+if (!assertHorizontalDataFlow(r14x8_50.chains, '14×8@50')) {
+  ok = false
+}
+
+// 14m × 8m @60Hz → 28×8, maxCabs=19 → 12 портов (теор. минимум ceil(224/19))
+const r14x8_60 = runCase(14, 8, '14m×8m 3.9 Big', 60)
+if (r14x8_60.chains.length !== 12) {
+  ok = false
+  console.error(`FAIL 14×8@60Hz: expected 12 ports, got ${r14x8_60.chains.length}`)
+}
+if (!assertChainLimits(r14x8_60.chains, r14x8_60.maxCabs, r14x8_60.maxPixels, '14×8@60')) {
+  ok = false
+}
+if (!assertHorizontalDataFlow(r14x8_60.chains, '14×8@60')) {
   ok = false
 }
 

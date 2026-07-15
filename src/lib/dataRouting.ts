@@ -140,11 +140,21 @@ function countActiveInRowSpan(
   return count
 }
 
-/** Целевой размер горизонтального сегмента при переполненном ряду */
-function balancedSegmentTarget(activeCount: number, maxCabs: number): number {
-  if (activeCount <= maxCabs) return maxCabs
-  const numSegments = Math.ceil(activeCount / maxCabs)
-  return Math.ceil(activeCount / numSegments)
+/** Считает активные ячейки в прямоугольном регионе */
+function countActiveInRect(
+  colStart: number,
+  rowStart: number,
+  width: number,
+  height: number,
+  isActive: CellActiveFn,
+): number {
+  let count = 0
+  for (let r = rowStart; r < rowStart + height; r++) {
+    for (let c = colStart; c < colStart + width; c++) {
+      if (isActive(c, r)) count++
+    }
+  }
+  return count
 }
 
 /** Горизонтальный отрезок ряда, содержащий (col, row) */
@@ -231,6 +241,7 @@ function isBetterDataRegion(
   bestHeight: number,
   bestCount: number,
 ): boolean {
+  if (count !== bestCount) return count > bestCount
   const score = scoreDataRegionShape(width, height, count)
   const bestScore = scoreDataRegionShape(bestWidth, bestHeight, bestCount)
   return score > bestScore
@@ -276,12 +287,7 @@ function pickBestRegionAt(
   const maxHeight = anchorRow + 1
   const maxWidth = cabinetsWide - anchorCol
 
-  const singleRowSegmentTarget =
-    remainingInRun > maxCabs
-      ? balancedSegmentTarget(remainingInRun, maxCabs)
-      : maxCabs
-
-  // Горизонтально-первая упаковка: ширина (от большей к меньшей), затем высота
+  // Горизонтально-первая упаковка: максимальное заполнение порта, затем форма блока
   for (let h = 1; h <= maxHeight; h++) {
     const regionRowStart = anchorRow - h + 1
     for (let w = maxWidth; w >= 1; w--) {
@@ -297,17 +303,6 @@ function pickBestRegionAt(
       if (count > maxCabs) continue
       // Data идёт по рядам — не допускаем вертикально-доминантные блоки
       if (h > w) continue
-
-      if (h === 1 && remainingInRun > maxCabs) {
-        const rowOnlyCount = remainingActiveInRowSpan(
-          anchorRow,
-          anchorCol,
-          anchorCol + w,
-          isActive,
-          uncovered,
-        )
-        if (rowOnlyCount > singleRowSegmentTarget) continue
-      }
 
       if (isBetterDataRegion(w, h, count, best.width, best.height, best.count)) {
         best = { width: w, height: h, count }
@@ -378,6 +373,120 @@ function planHorizontalScore(regions: RectRegion[]): number {
   )
 }
 
+/**
+ * Рекурсивно находит разбиение прямоугольника на минимальное число data-портов.
+ * Первый блок — с нижнего левого угла текущего прямоугольника.
+ */
+function minPortsForRect(
+  colStart: number,
+  rowStart: number,
+  width: number,
+  height: number,
+  maxCabs: number,
+  isActive: CellActiveFn,
+  memo: Map<string, RectRegion[]>,
+): RectRegion[] {
+  const area = countActiveInRect(colStart, rowStart, width, height, isActive)
+  if (area === 0) return []
+  if (area <= maxCabs) {
+    return [{ colStart, rowStart, width, height }]
+  }
+
+  const key = `${colStart},${rowStart},${width},${height},${maxCabs}`
+  const cached = memo.get(key)
+  if (cached) return cached
+
+  const lowerBound = Math.ceil(area / maxCabs)
+  const anchorCol = colStart
+  const anchorRow = rowStart + height - 1
+
+  let best: RectRegion[] | null = null
+
+  type Candidate = { width: number; height: number; count: number }
+  const candidates: Candidate[] = []
+  for (let h = 1; h <= height; h++) {
+    const regionRowStart = anchorRow - h + 1
+    for (let w = 1; w <= width; w++) {
+      const count = countActiveInRect(anchorCol, regionRowStart, w, h, isActive)
+      if (count > 0 && count <= maxCabs) {
+        candidates.push({ width: w, height: h, count })
+      }
+    }
+  }
+  candidates.sort((a, b) => b.count - a.count)
+
+  for (const { width: w, height: h } of candidates) {
+    if (best && best.length <= lowerBound) break
+
+    const regionRowStart = anchorRow - h + 1
+    const first: RectRegion = {
+      colStart: anchorCol,
+      rowStart: regionRowStart,
+      width: w,
+      height: h,
+    }
+
+    const subs: RectRegion[] = []
+    if (w < width) {
+      subs.push({
+        colStart: anchorCol + w,
+        rowStart: regionRowStart,
+        width: width - w,
+        height: h,
+      })
+    }
+    if (regionRowStart > rowStart) {
+      subs.push({ colStart, rowStart, width, height: regionRowStart - rowStart })
+    }
+
+    const plan: RectRegion[] = [first]
+    for (const sub of subs) {
+      plan.push(
+        ...minPortsForRect(
+          sub.colStart,
+          sub.rowStart,
+          sub.width,
+          sub.height,
+          maxCabs,
+          isActive,
+          memo,
+        ),
+      )
+    }
+
+    if (!best || plan.length < best.length) {
+      best = plan
+      if (best.length === lowerBound) break
+    }
+  }
+
+  const result = best ?? [{ colStart, rowStart, width, height }]
+  memo.set(key, result)
+  return result
+}
+
+/** Минимальное разбиение всей сетки (без пропусков внутри прямоугольника) */
+function minPortsPartition(
+  cabinetsWide: number,
+  cabinetsHigh: number,
+  maxCabs: number,
+  isActive: CellActiveFn,
+): RectRegion[] {
+  return minPortsForRect(0, 0, cabinetsWide, cabinetsHigh, maxCabs, isActive, new Map())
+}
+
+/** Прямоугольная сетка без «дыр» — DP даёт точный минимум портов */
+function isSolidRectGrid(
+  cabinetsWide: number,
+  cabinetsHigh: number,
+  isActive: CellActiveFn,
+): boolean {
+  return (
+    countActiveInRect(0, 0, cabinetsWide, cabinetsHigh, isActive) ===
+    cabinetsWide * cabinetsHigh
+  )
+}
+
 function greedyPartition(
   cabinetsWide: number,
   cabinetsHigh: number,
@@ -435,9 +544,13 @@ export function partitionDataGreedyMinPorts(
 ): RectRegion[] {
   const maxCabs = maxCabinetsPerBlock(pixelsPerCabinet, refreshRate)
 
-  const candidates: RectRegion[][] = [
-    greedyPartition(cabinetsWide, cabinetsHigh, maxCabs, isActive),
-  ]
+  const candidates: RectRegion[][] = []
+
+  if (isSolidRectGrid(cabinetsWide, cabinetsHigh, isActive)) {
+    candidates.push(minPortsPartition(cabinetsWide, cabinetsHigh, maxCabs, isActive))
+  }
+
+  candidates.push(greedyPartition(cabinetsWide, cabinetsHigh, maxCabs, isActive))
 
   // Grid-стратегии — запасной вариант, если жадная даёт больше портов
   const strategies: PartitionStrategy[] = ['horizontal', 'balanced', 'compact']
