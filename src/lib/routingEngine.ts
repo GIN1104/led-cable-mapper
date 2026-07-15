@@ -97,7 +97,11 @@ export function computeRouting(
 
   const { totalPixels: pixelsPerCabinet } = calcPixelsPerCabinet(config)
 
-  const { manualMode = false, manualOverrides } = options
+  const {
+    manualModeData = false,
+    manualModePower = false,
+    manualOverrides,
+  } = options
 
 
 
@@ -109,7 +113,7 @@ export function computeRouting(
 
 
 
-  if (manualMode && manualOverrides) {
+  if (manualModeData && manualOverrides) {
 
     const manual = buildDataChainsFromManual(
 
@@ -165,7 +169,7 @@ export function computeRouting(
 
 
 
-  if (manualMode && manualOverrides) {
+  if (manualModePower && manualOverrides) {
 
     const manual = buildPowerLinesFromManual(
 
@@ -365,9 +369,14 @@ export function computeAllScreensRouting(
 
       computeRouting(screen, {
 
-        manualMode: routing.manualMode,
+        manualModeData: routing.manualModeData,
 
-        manualOverrides: routing.manualMode ? routing.manualOverrides : undefined,
+        manualModePower: routing.manualModePower,
+
+        manualOverrides:
+          routing.manualModeData || routing.manualModePower
+            ? routing.manualOverrides
+            : undefined,
 
       }),
 

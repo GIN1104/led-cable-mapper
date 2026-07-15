@@ -394,7 +394,13 @@ export interface RoutingValidationWarning {
 
 export interface RoutingOptions {
 
-  manualMode?: boolean
+  /** Ручная схема data-портов независима от power */
+
+  manualModeData?: boolean
+
+  /** Ручная схема power-линий независима от data */
+
+  manualModePower?: boolean
 
   manualOverrides?: ManualRoutingOverrides
 
@@ -536,7 +542,9 @@ export const DEFAULT_PROJECT: ProjectState = {
 
 export interface ScreenRoutingState {
 
-  manualMode: boolean
+  manualModeData: boolean
+
+  manualModePower: boolean
 
   manualOverrides: ManualRoutingOverrides
 
@@ -560,7 +568,9 @@ export const EMPTY_MANUAL_OVERRIDES: ManualRoutingOverrides = {
 
 export const EMPTY_SCREEN_ROUTING: ScreenRoutingState = {
 
-  manualMode: false,
+  manualModeData: false,
+
+  manualModePower: false,
 
   manualOverrides: EMPTY_MANUAL_OVERRIDES,
 

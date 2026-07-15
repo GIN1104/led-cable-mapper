@@ -10,8 +10,12 @@ function computeForScreen(
   routing: ScreenRoutingState,
 ): RoutingResult {
   return computeRouting(screen, {
-    manualMode: routing.manualMode,
-    manualOverrides: routing.manualMode ? routing.manualOverrides : undefined,
+    manualModeData: routing.manualModeData,
+    manualModePower: routing.manualModePower,
+    manualOverrides:
+      routing.manualModeData || routing.manualModePower
+        ? routing.manualOverrides
+        : undefined,
   })
 }
 
@@ -31,6 +35,7 @@ export function useActiveRouting(
   const afterPaint = useAfterFirstPaint()
   const routingKey = fullRoutingKey(screen, routing)
   const screenKey = screenRoutingKey(screen)
+  const anyManual = routing.manualModeData || routing.manualModePower
 
   const result = useMemo(() => {
     if (!afterPaint) return null
@@ -40,10 +45,10 @@ export function useActiveRouting(
 
   const autoResult = useMemo(() => {
     if (!afterPaint) return null
-    if (!routing.manualMode) return result
+    if (!anyManual) return result
     return computeRouting(screen)
     // autoResult зависит только от конфигурации экрана, не от ручных правок
-  }, [afterPaint, screenKey, screen, routing.manualMode, result])
+  }, [afterPaint, screenKey, screen, anyManual, result])
 
   return {
     result,

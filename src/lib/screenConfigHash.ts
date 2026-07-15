@@ -29,35 +29,42 @@ export function screenRoutingKey(screen: ScreenConfig): string {
   ].join('|')
 }
 
+function sortedRecordKey(record: Record<string, number> | Record<number, string>): string {
+  return Object.entries(record)
+    .sort(([a], [b]) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+    .map(([k, v]) => `${k}:${v}`)
+    .join(',')
+}
+
 export function routingOptionsKey(
-  manualMode: boolean,
+  manualModeData: boolean,
+  manualModePower: boolean,
   manualOverrides?: ManualRoutingOverrides,
 ): string {
-  if (!manualMode || !manualOverrides) return 'auto'
-  const dataPorts = Object.entries(manualOverrides.dataPorts)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}:${v}`)
-    .join(',')
-  const powerLines = Object.entries(manualOverrides.powerLines)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}:${v}`)
-    .join(',')
-  const dataStarts = Object.entries(manualOverrides.dataStartPoints ?? {})
-    .sort(([a], [b]) => Number(a) - Number(b))
-    .map(([k, v]) => `${k}:${v}`)
-    .join(',')
-  const powerStarts = Object.entries(manualOverrides.powerStartPoints ?? {})
-    .sort(([a], [b]) => Number(a) - Number(b))
-    .map(([k, v]) => `${k}:${v}`)
-    .join(',')
-  return `manual|${dataPorts}|${powerLines}|${dataStarts}|${powerStarts}`
+  if (!manualModeData && !manualModePower) return 'auto'
+
+  const dataKey =
+    manualModeData && manualOverrides
+      ? `data|${sortedRecordKey(manualOverrides.dataPorts)}|${sortedRecordKey(manualOverrides.dataStartPoints ?? {})}`
+      : 'auto-data'
+
+  const powerKey =
+    manualModePower && manualOverrides
+      ? `power|${sortedRecordKey(manualOverrides.powerLines)}|${sortedRecordKey(manualOverrides.powerStartPoints ?? {})}`
+      : 'auto-power'
+
+  return `manual|${dataKey}|${powerKey}`
 }
 
 export function fullRoutingKey(
   screen: ScreenConfig,
   routing: ScreenRoutingState,
 ): string {
-  return `${screenRoutingKey(screen)}::${routingOptionsKey(routing.manualMode, routing.manualOverrides)}`
+  return `${screenRoutingKey(screen)}::${routingOptionsKey(
+    routing.manualModeData,
+    routing.manualModePower,
+    routing.manualOverrides,
+  )}`
 }
 
 /** Ключ маршрутизации для всех экранов — для мемоизации сводного расчёта */

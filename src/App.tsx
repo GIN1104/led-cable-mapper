@@ -81,7 +81,8 @@ export default function App() {
   )
 
   const activeRouting = routingByScreen[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
-  const { manualMode, manualOverrides } = activeRouting
+  const { manualModeData, manualModePower, manualOverrides } = activeRouting
+  const anyManual = manualModeData || manualModePower
 
   const { result, autoResult, isRouting } = useActiveRouting(activeScreen, activeRouting)
 
@@ -204,12 +205,26 @@ export default function App() {
     const applyGridChange = () => {
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
-        if (!current.manualMode) return prev
+        if (!current.manualModeData && !current.manualModePower) return prev
+        const auto = buildAutoManualOverrides(activeScreen)
         return {
           ...prev,
           [activeScreen.id]: {
             ...current,
-            manualOverrides: buildAutoManualOverrides(activeScreen),
+            manualOverrides: {
+              dataPorts: current.manualModeData
+                ? auto.dataPorts
+                : current.manualOverrides.dataPorts,
+              dataStartPoints: current.manualModeData
+                ? auto.dataStartPoints
+                : current.manualOverrides.dataStartPoints,
+              powerLines: current.manualModePower
+                ? auto.powerLines
+                : current.manualOverrides.powerLines,
+              powerStartPoints: current.manualModePower
+                ? auto.powerStartPoints
+                : current.manualOverrides.powerStartPoints,
+            },
           },
         }
       })
@@ -250,7 +265,8 @@ export default function App() {
   }, [])
 
   const cloneScreenRouting = (state: ScreenRoutingState): ScreenRoutingState => ({
-    manualMode: state.manualMode,
+    manualModeData: state.manualModeData,
+    manualModePower: state.manualModePower,
     manualOverrides: {
       dataPorts: { ...state.manualOverrides.dataPorts },
       powerLines: { ...state.manualOverrides.powerLines },
@@ -272,15 +288,53 @@ export default function App() {
     [activeScreen.id],
   )
 
-  const handleManualModeChange = useCallback(
+  const handleManualModeDataChange = useCallback(
     (enabled: boolean) => {
       if (enabled) {
-        setActiveRouting({
-          manualMode: true,
-          manualOverrides: buildAutoManualOverrides(activeScreen),
+        const auto = buildAutoManualOverrides(activeScreen)
+        setRoutingByScreen((prev) => {
+          const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+          return {
+            ...prev,
+            [activeScreen.id]: {
+              ...cloneScreenRouting(current),
+              manualModeData: true,
+              manualOverrides: {
+                ...current.manualOverrides,
+                dataPorts: auto.dataPorts,
+                dataStartPoints: auto.dataStartPoints,
+              },
+            },
+          }
         })
       } else {
-        setActiveRouting({ manualMode: false })
+        setActiveRouting({ manualModeData: false })
+      }
+    },
+    [activeScreen, setActiveRouting],
+  )
+
+  const handleManualModePowerChange = useCallback(
+    (enabled: boolean) => {
+      if (enabled) {
+        const auto = buildAutoManualOverrides(activeScreen)
+        setRoutingByScreen((prev) => {
+          const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+          return {
+            ...prev,
+            [activeScreen.id]: {
+              ...cloneScreenRouting(current),
+              manualModePower: true,
+              manualOverrides: {
+                ...current.manualOverrides,
+                powerLines: auto.powerLines,
+                powerStartPoints: auto.powerStartPoints,
+              },
+            },
+          }
+        })
+      } else {
+        setActiveRouting({ manualModePower: false })
       }
     },
     [activeScreen, setActiveRouting],
@@ -307,7 +361,7 @@ export default function App() {
           ...prev,
           [activeScreen.id]: {
             ...current,
-            manualMode: true,
+            manualModeData: true,
             manualOverrides: {
               ...current.manualOverrides,
               dataPorts,
@@ -341,7 +395,7 @@ export default function App() {
           ...prev,
           [activeScreen.id]: {
             ...current,
-            manualMode: true,
+            manualModePower: true,
             manualOverrides: {
               ...current.manualOverrides,
               powerLines,
@@ -380,7 +434,7 @@ export default function App() {
         ...prev,
         [activeScreen.id]: {
           ...current,
-          manualMode: true,
+          manualModeData: true,
           manualOverrides: {
             ...current.manualOverrides,
             dataPorts: {},
@@ -398,7 +452,7 @@ export default function App() {
         ...prev,
         [activeScreen.id]: {
           ...current,
-          manualMode: true,
+          manualModePower: true,
           manualOverrides: {
             ...current.manualOverrides,
             powerLines: {},
@@ -418,7 +472,7 @@ export default function App() {
           ...prev,
           [activeScreen.id]: {
             ...current,
-            manualMode: true,
+            manualModePower: true,
             manualOverrides: {
               ...current.manualOverrides,
               powerLines:
@@ -443,7 +497,7 @@ export default function App() {
         ? activeScreen.emptyCabinets.filter((l) => l !== label)
         : [...activeScreen.emptyCabinets, label]
       updateActiveScreen({ ...activeScreen, emptyCabinets: nextEmpty })
-      if (manualMode) {
+      if (anyManual) {
         setRoutingByScreen((prev) => {
           const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
           const dataPorts = { ...current.manualOverrides.dataPorts }
@@ -473,7 +527,7 @@ export default function App() {
         })
       }
     },
-    [activeScreen, updateActiveScreen, manualMode],
+    [activeScreen, updateActiveScreen, anyManual],
   )
 
   const handleAddScreen = useCallback(() => {
@@ -543,8 +597,6 @@ export default function App() {
           onAddScreen={handleAddScreen}
           onRemoveScreen={handleRemoveScreen}
           onRenameScreen={handleRenameScreen}
-          manualMode={manualMode}
-          onManualModeChange={handleManualModeChange}
           emptyPaintMode={emptyPaintMode}
           onEmptyPaintModeChange={setEmptyPaintMode}
           gridLayout={gridLayout}
@@ -590,9 +642,15 @@ export default function App() {
                       </span>
                     )}
                   </>
-                )}                {manualMode && (
+                )}
+                {manualModeData && (
                   <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
-                    Manual
+                    Manual Data
+                  </span>
+                )}
+                {manualModePower && (
+                  <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
+                    Manual Power
                   </span>
                 )}
                 {screens.length > 1 && (
@@ -701,7 +759,8 @@ export default function App() {
                   mode="data"
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
-                  manualMode={manualMode}
+                  manualMode={manualModeData}
+                  onManualModeChange={handleManualModeDataChange}
                   emptyCabinets={activeScreen.emptyCabinets}
                   emptyPaintMode={emptyPaintMode}
                   onToggleEmpty={handleToggleEmpty}
@@ -723,7 +782,8 @@ export default function App() {
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
                   powerFeedMode={config.powerFeedMode}
-                  manualMode={manualMode}
+                  manualMode={manualModePower}
+                  onManualModeChange={handleManualModePowerChange}
                   emptyCabinets={activeScreen.emptyCabinets}
                   emptyPaintMode={emptyPaintMode}
                   onToggleEmpty={handleToggleEmpty}

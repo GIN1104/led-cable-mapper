@@ -72,10 +72,6 @@ interface SidebarProps {
 
   onRenameScreen: (id: string, name: string) => void
 
-  manualMode: boolean
-
-  onManualModeChange: (enabled: boolean) => void
-
   emptyPaintMode: boolean
 
   onEmptyPaintModeChange: (enabled: boolean) => void
@@ -195,10 +191,6 @@ export default function Sidebar({
   onRemoveScreen,
 
   onRenameScreen,
-
-  manualMode,
-
-  onManualModeChange,
 
   emptyPaintMode,
 
@@ -1211,50 +1203,6 @@ export default function Sidebar({
               Center: trunk к центральному кабинету полосы; в ведомости — 32A distro.
 
             </p>
-
-          </Field>
-
-          <Field label="Manual Routing / Ручная схема">
-
-            <div className="flex items-center">
-
-              <button
-
-                type="button"
-
-                role="switch"
-
-                aria-checked={manualMode}
-
-                onClick={() => onManualModeChange(!manualMode)}
-
-                className={`${switchClass} ${
-
-                  manualMode ? 'bg-amber-500' : 'bg-slate-300'
-
-                }`}
-
-              >
-
-                <span
-
-                  className={`${switchKnobClass} ${
-
-                    manualMode ? 'translate-x-7 sm:translate-x-6' : 'translate-x-1'
-
-                  }`}
-
-                />
-
-              </button>
-
-              <span className="ml-2 text-xs text-slate-500">
-
-                {manualMode ? 'Paint / Set Start / Empty on grid' : 'Auto rectangular blocks'}
-
-              </span>
-
-            </div>
 
           </Field>
 

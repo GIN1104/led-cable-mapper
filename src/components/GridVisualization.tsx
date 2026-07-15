@@ -19,6 +19,7 @@ interface GridVisualizationProps {
   high: number
   mode: GridVisualizationMode
   manualMode?: boolean
+  onManualModeChange?: (enabled: boolean) => void
   emptyCabinets?: string[]
   emptyPaintMode?: boolean
   onToggleEmpty?: (label: string) => void
@@ -178,6 +179,7 @@ export default memo(function GridVisualization({
   high,
   mode,
   manualMode = false,
+  onManualModeChange,
   emptyCabinets = [],
   emptyPaintMode = false,
   onToggleEmpty,
@@ -483,7 +485,7 @@ export default memo(function GridVisualization({
       }`}
     >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
           {(manualMode || emptyPaintMode) && (
             <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
@@ -491,6 +493,22 @@ export default memo(function GridVisualization({
                 ? 'EMPTY MODE'
                 : 'EDIT MODE'}
             </span>
+          )}
+          {onManualModeChange && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={manualMode}
+              aria-label={`Manual Routing / Ручная схема (${isData ? 'Data' : 'Power'})`}
+              onClick={() => onManualModeChange(!manualMode)}
+              className={`${editBtnClass} ${
+                manualMode
+                  ? 'bg-amber-500 text-white hover:bg-amber-600'
+                  : 'bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              Manual Routing / Ручная схема ({isData ? 'Data' : 'Power'})
+            </button>
           )}
         </div>
         <div
