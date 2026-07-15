@@ -3,14 +3,17 @@ import type { CableScheduleEntry, ControllerModel, PackingListItem, RoutingResul
 /** Ключи строк, для которых количество можно вывести из маршрутизации */
 export type EquipmentAutoKey =
   | 'screenSummary'
-  | 'controllers'
   | 'ledCard'
+  | 'cvtOptical'
   | 'dataCables'
   | 'speakons'
   | 'powerTrunks'
   | 'sprayers'
   | 'robot32a'
   | 'cableTies'
+
+/** Модель оптического конвертера CVT */
+export type CvtModel = 'CVT10' | 'CVT16'
 
 export interface EquipmentListRowTemplate {
   id: string
@@ -59,7 +62,8 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'screen', hebrew: 'מסך', russian: 'Экран', autoKey: 'screenSummary' },
   { id: 'sprays', hebrew: 'שפרייצים', russian: 'Шпрайцы', autoKey: 'sprayers' },
   { id: 'computer', hebrew: 'מחשב', russian: 'Компьютер' },
-  { id: 'processor', hebrew: 'פרוצסור', russian: 'Процессор', autoKey: 'controllers' },
+  /** Процессор по умолчанию не нужен — без autoKey, количество пустое */
+  { id: 'processor', hebrew: 'פרוצסור', russian: 'Процессор' },
   { id: 'led-card', hebrew: 'כרטיס לד', russian: 'Картис Лед', autoKey: 'ledCard' },
   {
     id: 'comm-cable',
@@ -74,6 +78,12 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'three-phase', hebrew: 'תלת פאזי', russian: 'Кабель 32А (трёхфазный)' },
   { id: 'sdi', hebrew: 'כבל SDI', russian: 'Кабель SDI' },
   { id: 'fiber', hebrew: 'כבל אופטי', russian: 'Оптический кабель' },
+  {
+    id: 'cvt',
+    hebrew: 'CVT / ממיר אופטי',
+    russian: 'CVT / оптический конвертер',
+    autoKey: 'cvtOptical',
+  },
   { id: 'tv', hebrew: 'TV', russian: 'ТВ' },
   { id: 'adapters', hebrew: 'הופכים חשמל', russian: 'Переходники: 63→32, 32→16' },
   { id: 'rigging-wire', hebrew: 'רצועות תלייה (wire)', russian: 'Тросы для подвеса + подвес' },
@@ -225,21 +235,21 @@ function sumSprayers(screens: ScreenConfig[]): number {
 }
 
 /**
- * Соответствие модели контроллера типу output-карты (כרטיס לד).
- * Количество по умолчанию: 1 карта на активный экран (как процессор).
+ * Соответствие модели контроллера строке כרטיס לד.
+ * В описании — то же имя, что в Sidebar (Controller Model).
  */
 export const LED_CARD_BY_CONTROLLER: Record<ControllerModel, string> = {
-  TB60: 'TB60 output card',
-  'NovaStar VX1000': 'NovaStar VX output card',
-  'NovaStar VX2000': 'NovaStar VX2000 output card',
-  'NovaStar 600': 'MCTRL600 output card',
-  'NovaStar H2': 'NovaStar H2 output card',
-  'NovaStar MCTRL4K': 'NovaStar 4K output card',
-  Linsn: 'Linsn sending card',
-  'Generic 1G Controller': 'Generic output card',
+  TB60: 'TB60',
+  'NovaStar VX1000': 'NovaStar VX1000',
+  'NovaStar VX2000': 'NovaStar VX2000',
+  'NovaStar 600': 'NovaStar 600',
+  'NovaStar H2': 'NovaStar H2',
+  'NovaStar MCTRL4K': 'NovaStar MCTRL4K',
+  Linsn: 'Linsn',
+  'Generic 1G Controller': 'Generic 1G Controller',
 }
 
-/** Агрегирует כרטיס לד по экранам: количество и описание типа карты */
+/** Агрегирует כרטיס לד по экранам: 1 карта на экран, имя = controllerModel */
 export function aggregateLedCards(screens: ScreenConfig[]): {
   quantity: number
   russian: string
@@ -260,6 +270,55 @@ export function aggregateLedCards(screens: ScreenConfig[]): {
       : [...byCard.entries()].map(([name, qty]) => `${name} ×${qty}`).join('; ')
 
   return { quantity: screens.length, russian }
+}
+
+/**
+ * Количество CVT на один экран:
+ * - dataPortCount > 6 → 2
+ * - иначе trunkLengthM > 30 → 1
+ * - иначе 0
+ */
+export function resolveCvtQtyForScreen(trunkLengthM: number, dataPortCount: number): number {
+  if (dataPortCount > 6) return 2
+  if (trunkLengthM > 30) return 1
+  return 0
+}
+
+/** MCTRL4K → CVT16, остальные контроллеры → CVT10 */
+export function resolveCvtModel(controllerModel: ControllerModel): CvtModel {
+  return controllerModel === 'NovaStar MCTRL4K' ? 'CVT16' : 'CVT10'
+}
+
+/**
+ * Агрегирует CVT по экранам (модель + количество).
+ * При смешанных моделях: описание «CVT10 ×N; CVT16 ×M», quantity = сумма.
+ */
+export function aggregateCvtOptical(
+  results: { screen: ScreenConfig; result: RoutingResult }[],
+): { quantity: number; russian: string } {
+  const byModel = new Map<CvtModel, number>()
+
+  for (const { screen, result } of results) {
+    const qty = resolveCvtQtyForScreen(screen.trunkLengthM, result.summary.dataPorts)
+    if (qty <= 0) continue
+    const model = resolveCvtModel(screen.controllerModel)
+    byModel.set(model, (byModel.get(model) ?? 0) + qty)
+  }
+
+  if (byModel.size === 0) {
+    return { quantity: 0, russian: 'CVT / оптический конвертер' }
+  }
+
+  const totalQty = [...byModel.values()].reduce((sum, n) => sum + n, 0)
+  const russian =
+    byModel.size === 1
+      ? [...byModel.keys()][0]
+      : [...byModel.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([name, qty]) => `${name} ×${qty}`)
+          .join('; ')
+
+  return { quantity: totalQty, russian }
 }
 
 /** Описание экрана: «Screen 1: 10×3m (60 cab, 10 cases)» */
@@ -295,10 +354,12 @@ export function resolveEquipmentAutoQuantity(
   switch (key) {
     case 'screenSummary':
       return results.length > 0 ? buildScreenSummary(results) : undefined
-    case 'controllers':
-      return screens.length
     case 'ledCard':
       return screens.length > 0 ? screens.length : undefined
+    case 'cvtOptical': {
+      const cvt = aggregateCvtOptical(results)
+      return cvt.quantity > 0 ? cvt.quantity : undefined
+    }
     case 'dataCables':
       return countDataTrunkAndLinkCables(cableSchedule)
     case 'speakons': {
@@ -352,10 +413,12 @@ export function buildEquipmentListState(
     const quantityManual = previous?.quantityManual ?? false
     const footprintManual = previous?.footprintManual ?? false
     const ledCardAuto = template.id === 'led-card' ? aggregateLedCards(screens) : undefined
+    const cvtAuto = template.id === 'cvt' ? aggregateCvtOptical(results) : undefined
+    const autoRussian = ledCardAuto?.russian ?? cvtAuto?.russian
 
     return {
       ...template,
-      russian: ledCardAuto?.russian ?? template.russian,
+      russian: autoRussian ?? template.russian,
       quantity:
         quantityManual && previous
           ? previous.quantity
