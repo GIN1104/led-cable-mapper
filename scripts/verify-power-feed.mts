@@ -1,5 +1,6 @@
 /**
  * Проверка powerFeedMode: edge vs center на 10×3 м, 3.9 Big.
+ * Center: chain START = FEED = центр полосы; стрелки (links) от центра.
  * Запуск: npm run verify:feed
  */
 import type { PowerFeedMode, ScreenConfig } from '../src/types/index.ts'
@@ -72,14 +73,54 @@ if (JSON.stringify(edge) === JSON.stringify(center)) {
   console.error('Edge and center produce identical trunk destinations')
 }
 
+const edgeResult = computeRouting(makeConfig('edge'))
+const edgeStarts = edgeResult.powerLines.map((l) => l.cabinets[0]?.label)
+console.log('Edge chain starts:', edgeStarts.join(', '))
+if (JSON.stringify(edgeStarts) !== JSON.stringify(expectedEdge)) {
+  ok = false
+  console.error('Edge chain starts mismatch: expected', expectedEdge, 'got', edgeStarts)
+}
+
 const config = makeConfig('center')
 const result = computeRouting(config)
+const centerStarts = result.powerLines.map((l) => l.cabinets[0]?.label)
+console.log('Center chain starts:', centerStarts.join(', '))
+if (JSON.stringify(centerStarts) !== JSON.stringify(expectedCenter)) {
+  ok = false
+  console.error(
+    'Center chain starts mismatch: expected',
+    expectedCenter,
+    'got',
+    centerStarts,
+  )
+}
+
 for (const line of result.powerLines) {
   const feed = getPowerTrunkCabinet(line, 'center')
-  if (feed.label === line.cabinets[0].label && line.cabinets.length > 2) {
+  const start = line.cabinets[0]
+  if (!start || feed.label !== start.label) {
     ok = false
     console.error(
-      `P${line.lineNumber}: center feed should differ from path start for multi-cab lines`,
+      `P${line.lineNumber}: center feed (${feed.label}) must equal chain start (${start?.label})`,
+    )
+  }
+}
+
+// Стрелки: от центра должны уходить к обоим соседям на полосе из ≥3 кабинетов
+for (const line of result.powerLines) {
+  if (line.cabinets.length < 3) continue
+  const start = line.cabinets[0].label
+  const out = result.powerLinks.filter(
+    (l) => l.chainId === line.lineNumber && l.from.label === start,
+  )
+  if (out.length < 2) {
+    ok = false
+    console.error(
+      `P${line.lineNumber}: expected ≥2 outgoing links from center ${start}, got ${out.length}`,
+    )
+  } else {
+    console.log(
+      `P${line.lineNumber}: ${start} → ${out.map((l) => l.to.label).join(', ')}`,
     )
   }
 }

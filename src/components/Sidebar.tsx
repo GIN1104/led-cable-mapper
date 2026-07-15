@@ -1200,7 +1200,7 @@ export default function Sidebar({
 
             <p className="mt-1 text-[10px] text-slate-500">
 
-              Edge: trunk на первый кабинет цепи (FEED/START). Center: trunk в центр полосы (оранж. FEED), цепь с края (★ START).
+              Edge: подвод на краю полосы (FEED/START). Center: подвод в центре полосы — P★ и стрелки от центра.
 
             </p>
 

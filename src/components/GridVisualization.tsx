@@ -376,14 +376,24 @@ export default memo(function GridVisualization({
       for (const line of powerLines) {
         if (line.cabinets.length === 0) continue
         if (map[line.lineNumber]) continue
-        map[line.lineNumber] = manualMode
-          ? line.cabinets[0].label
-          : (inferPowerLineStart(line.cabinets, chainStartEdge) ??
-            line.cabinets[0].label)
+        // Auto / ручная цепь: старт = cabinets[0]; в center feed это центр полосы
+        map[line.lineNumber] =
+          manualMode || powerFeedMode === 'center'
+            ? line.cabinets[0].label
+            : (inferPowerLineStart(line.cabinets, chainStartEdge, powerFeedMode) ??
+              line.cabinets[0].label)
       }
     }
     return map
-  }, [manualMode, startPoints, isData, dataChains, powerLines, chainStartEdge])
+  }, [
+    manualMode,
+    startPoints,
+    isData,
+    dataChains,
+    powerLines,
+    chainStartEdge,
+    powerFeedMode,
+  ])
 
   const startLabelForActive = effectiveStartPoints[activeValue]
 
@@ -853,8 +863,8 @@ export default memo(function GridVisualization({
             </span>
             <span className="text-slate-500">
               {powerFeedMode === 'center'
-                ? 'Center: trunk → центр полосы, цепь с края'
-                : 'Edge: trunk = START с края'}
+                ? 'Center: FEED/START в центре полосы, стрелки от центра'
+                : 'Edge: FEED/START на краю полосы (по Line Direction)'}
             </span>
           </>
         )}
@@ -1198,8 +1208,8 @@ export default memo(function GridVisualization({
             <>
               {' · '}
               {powerFeedMode === 'center'
-                ? 'Trunk → центр полосы (оранж. FEED)'
-                : 'Trunk → край линии (оранж. FEED/START)'}
+                ? 'Center: подвод в центре полосы (P★ FEED/START)'
+                : 'Edge: подвод на краю линии (P★ FEED/START)'}
             </>
           )}
         </text>

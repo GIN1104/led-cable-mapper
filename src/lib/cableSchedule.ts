@@ -12,7 +12,11 @@ import {
   MAX_POWER_LINK_LENGTH_M,
 } from './constants'
 import { linkLengthBetween, powerLinkLengthBetween } from './cabinetGrid'
-import { getPowerTrunkCabinet, getPowerTrunkSourceLabel } from './powerRouting'
+import {
+  buildSpanningTreeLinksFromStart,
+  getPowerTrunkCabinet,
+  getPowerTrunkSourceLabel,
+} from './powerRouting'
 
 function padId(num: number): string {
   return String(num).padStart(2, '0')
@@ -65,7 +69,7 @@ export function buildRoutingSchema(
     const feedCab = getPowerTrunkCabinet(line, config.powerFeedMode)
     if (config.powerFeedMode === 'center') {
       lines.push(
-        `POWER LINE ${line.lineNumber}: ${getPowerTrunkSourceLabel(config.powerFeedMode)} → ${trunk} → ${feedCab.label} (center feed) · chain start ★ ${chainStart}: ${path} (${line.totalPowerW}W max)`,
+        `POWER LINE ${line.lineNumber}: ${getPowerTrunkSourceLabel(config.powerFeedMode)} → ${trunk} → ${feedCab.label} (center feed = chain start ★ ${chainStart}): ${path} (${line.totalPowerW}W max)`,
       )
     } else {
       lines.push(
@@ -183,10 +187,18 @@ export function buildCableSchedule(
       colorAdvice: trunkColorAdvice,
     })
 
-    for (let i = 0; i < line.cabinets.length - 1; i++) {
+    const powerHops =
+      config.powerFeedMode === 'center'
+        ? buildSpanningTreeLinksFromStart(line.cabinets, line.lineNumber, config).map(
+            (link) => ({ from: link.from, to: link.to }),
+          )
+        : line.cabinets.slice(0, -1).map((from, i) => ({
+            from,
+            to: line.cabinets[i + 1],
+          }))
+
+    for (const { from, to } of powerHops) {
       powerLinkCount++
-      const from = line.cabinets[i]
-      const to = line.cabinets[i + 1]
       const len = powerLinkLengthBetween(
         from,
         to,

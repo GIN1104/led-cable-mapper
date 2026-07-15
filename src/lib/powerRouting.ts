@@ -301,7 +301,8 @@ function partitionVerticalColumnPack(
   return paths
 }
 
-function buildLinksForLine(
+/** Последовательные линки вдоль порядка кабинетов (edge daisy-chain) */
+function buildSequentialLinksForLine(
   cabinets: Cabinet[],
   lineNumber: number,
   config: ScreenConfig,
@@ -332,11 +333,71 @@ function buildLinksForLine(
   return links
 }
 
-/** Старт линии по умолчанию: нижний ряд, край по chainStartEdge */
+/**
+ * Spanning-tree линки от cabinets[0]: в center feed стрелки расходятся от точки
+ * подвода в обе стороны полосы (на линейной полосе — влево и вправо).
+ */
+export function buildSpanningTreeLinksFromStart(
+  cabinets: Cabinet[],
+  lineNumber: number,
+  config: ScreenConfig,
+): GridLink[] {
+  if (cabinets.length <= 1) return []
+
+  const start = cabinets[0]
+  const direction = edgeToDirection(config.chainStartEdge)
+  const visited = new Set<string>([start.label])
+  const queue: Cabinet[] = [start]
+  const links: GridLink[] = []
+
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    const neighbors = sortNeighborsForPowerGrowth(
+      getPowerNeighbors(current, cabinets, config).filter(
+        (n) => !visited.has(n.label),
+      ),
+      current,
+      config.pitchPreset,
+      direction,
+    )
+    for (const next of neighbors) {
+      if (visited.has(next.label)) continue
+      visited.add(next.label)
+      queue.push(next)
+      links.push({
+        from: current,
+        to: next,
+        type: 'power',
+        chainId: lineNumber,
+        direction: linkDirection(current, next),
+      })
+    }
+  }
+
+  return links
+}
+
+function buildLinksForLine(
+  cabinets: Cabinet[],
+  lineNumber: number,
+  config: ScreenConfig,
+): GridLink[] {
+  if (config.powerFeedMode === 'center') {
+    return buildSpanningTreeLinksFromStart(cabinets, lineNumber, config)
+  }
+  return buildSequentialLinksForLine(cabinets, lineNumber, config)
+}
+
+/** Старт линии: edge — край по chainStartEdge; center — геометрический центр полосы */
 export function inferPowerLineStart(
   cabinets: Cabinet[],
   startEdge: ScreenConfig['chainStartEdge'],
+  feedMode: ScreenConfig['powerFeedMode'] = 'edge',
 ): string | undefined {
+  if (cabinets.length === 0) return undefined
+  if (feedMode === 'center') {
+    return getPowerLineCenterCabinet(cabinets).label
+  }
   return inferChainStart(cabinets, startEdge)
 }
 
@@ -355,7 +416,7 @@ function buildLinesFromGroups(
     const startLabel =
       startPoints[lineNumber] && raw.some((c) => c.label === startPoints[lineNumber])
         ? startPoints[lineNumber]
-        : inferPowerLineStart(raw, config.chainStartEdge)
+        : inferPowerLineStart(raw, config.chainStartEdge, config.powerFeedMode)
     const ordered = preserveOrder
       ? raw
       : orderPowerCabinetsFromStart(
@@ -996,11 +1057,21 @@ export function buildPowerLines(
   }
 
   const startPoints: Record<number, string> = {}
+  const centerFeed = config.powerFeedMode === 'center'
   for (const [num, path] of lineGroups) {
-    if (path.length > 0) startPoints[num] = path[0].label
+    if (path.length === 0) continue
+    startPoints[num] = centerFeed
+      ? getPowerLineCenterCabinet(path).label
+      : path[0].label
   }
 
-  const { lines, links } = buildLinesFromGroups(lineGroups, config, startPoints, true)
+  // Edge: сохраняем порядок partition (змейка/полосы). Center: перестраиваем от центра полосы.
+  const { lines, links } = buildLinesFromGroups(
+    lineGroups,
+    config,
+    startPoints,
+    !centerFeed,
+  )
   return { lines, links, cabinetsPerLine: packWidth }
 }
 
