@@ -639,6 +639,7 @@ export default memo(function GridVisualization({
     setEditMode('assign')
   }, [onClearManual])
 
+  /** Снимок всей карточки панели (заголовок, легенда, zoom, SVG), без обрезки scroll */
   const captureDiagram = useCallback(async () => {
     const node = captureRef.current
     if (!node) throw new Error('Схема недоступна для экспорта')
@@ -688,6 +689,7 @@ export default memo(function GridVisualization({
 
   return (
     <div
+      ref={captureRef}
       className={`overflow-x-auto rounded-xl border bg-white p-3 shadow-sm sm:p-4 ${
         manualMode || emptyPaintMode
           ? 'border-amber-300 ring-1 ring-amber-200'
@@ -1107,7 +1109,6 @@ export default memo(function GridVisualization({
         className="-mx-1 overflow-x-auto px-1 pb-1 touch-pan-x"
       >
         <div
-          ref={captureRef}
           className="mx-auto max-w-none bg-white"
           style={{
             width: svgW * effectiveScale,

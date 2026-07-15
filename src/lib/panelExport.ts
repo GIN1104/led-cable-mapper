@@ -64,13 +64,107 @@ export function formatPanelPrintInfoLines(info: PanelPrintInfo): string[] {
   return lines
 }
 
-/** Рендер узла панели (SVG-сетка) в PNG data URL */
-export async function capturePanelPng(element: HTMLElement): Promise<string> {
-  return toPng(element, {
-    backgroundColor: '#ffffff',
-    pixelRatio: 2,
-    cacheBust: true,
+type StyleSnapshot = {
+  el: HTMLElement
+  overflow: string
+  overflowX: string
+  overflowY: string
+  width: string
+  height: string
+  maxWidth: string
+  maxHeight: string
+}
+
+/**
+ * Временно разворачивает scroll/overflow-контейнеры внутри корня панели,
+ * чтобы html-to-image не обрезал сетку и легенду.
+ */
+function expandOverflowForCapture(root: HTMLElement): () => void {
+  const snapshots: StyleSnapshot[] = []
+  const candidates: HTMLElement[] = [root, ...Array.from(root.querySelectorAll<HTMLElement>('*'))]
+
+  for (const el of candidates) {
+    const computed = getComputedStyle(el)
+    const ox = computed.overflowX
+    const oy = computed.overflowY
+    const clips =
+      ox === 'auto' ||
+      ox === 'scroll' ||
+      ox === 'hidden' ||
+      oy === 'auto' ||
+      oy === 'scroll' ||
+      oy === 'hidden'
+    if (!clips) continue
+
+    snapshots.push({
+      el,
+      overflow: el.style.overflow,
+      overflowX: el.style.overflowX,
+      overflowY: el.style.overflowY,
+      width: el.style.width,
+      height: el.style.height,
+      maxWidth: el.style.maxWidth,
+      maxHeight: el.style.maxHeight,
+    })
+
+    el.style.overflow = 'visible'
+    el.style.overflowX = 'visible'
+    el.style.overflowY = 'visible'
+    el.style.maxWidth = 'none'
+    el.style.maxHeight = 'none'
+
+    const fullW = Math.max(el.scrollWidth, el.clientWidth)
+    const fullH = Math.max(el.scrollHeight, el.clientHeight)
+    if (fullW > el.clientWidth) el.style.width = `${fullW}px`
+    if (fullH > el.clientHeight) el.style.height = `${fullH}px`
+  }
+
+  return () => {
+    for (const snap of snapshots) {
+      snap.el.style.overflow = snap.overflow
+      snap.el.style.overflowX = snap.overflowX
+      snap.el.style.overflowY = snap.overflowY
+      snap.el.style.width = snap.width
+      snap.el.style.height = snap.height
+      snap.el.style.maxWidth = snap.maxWidth
+      snap.el.style.maxHeight = snap.maxHeight
+    }
+  }
+}
+
+function waitTwoFrames(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve())
+    })
   })
+}
+
+/** Рендер всей карточки панели (заголовок, легенда, zoom, SVG) в PNG data URL */
+export async function capturePanelPng(element: HTMLElement): Promise<string> {
+  const restoreOverflow = expandOverflowForCapture(element)
+  try {
+    await waitTwoFrames()
+    const width = Math.ceil(Math.max(element.scrollWidth, element.offsetWidth))
+    const height = Math.ceil(Math.max(element.scrollHeight, element.offsetHeight))
+    return await toPng(element, {
+      backgroundColor: '#ffffff',
+      pixelRatio: 2,
+      cacheBust: true,
+      width,
+      height,
+      style: {
+        width: `${width}px`,
+        height: `${height}px`,
+        overflow: 'visible',
+        maxWidth: 'none',
+        maxHeight: 'none',
+        transform: 'none',
+      },
+    })
+  } finally {
+    restoreOverflow()
+  }
 }
 
 /**
