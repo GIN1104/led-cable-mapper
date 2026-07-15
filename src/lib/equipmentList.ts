@@ -11,7 +11,6 @@ export type EquipmentAutoKey =
   | 'sprayers'
   | 'hangers'
   | 'robot32a'
-  | 'cableTies'
 
 /** Модель оптического конвертера CVT */
 export type CvtModel = 'CVT10' | 'CVT16'
@@ -97,7 +96,7 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'adapters', hebrew: 'הופכים חשמל', russian: 'Переходники: 63→32, 32→16' },
   { id: 'ratchets', hebrew: "רצ'אטים", russian: 'Рачеты' },
   { id: 'tool-bag', hebrew: 'תיק כלים', russian: 'Сумка с инструментами' },
-  { id: 'cable-ties', hebrew: 'אזיקונים', russian: 'Азиконим', autoKey: 'cableTies' },
+  { id: 'cable-ties', hebrew: 'אזיקונים', russian: 'Азиконим', defaultQuantity: '+' },
   { id: 'gaffa', hebrew: 'גפה', russian: 'Гафа', defaultQuantity: '+' },
   { id: 'screws', hebrew: 'ברגים', russian: 'Шурупы', defaultQuantity: '+' },
   { id: 'stage-deck', hebrew: 'במה', russian: 'Сцены' },
@@ -175,10 +174,6 @@ function sumPowerLines(results: { result: RoutingResult }[]): number {
   return results.reduce((sum, { result }) => sum + result.summary.powerLines, 0)
 }
 
-function sumTotalCabinets(results: { result: RoutingResult }[]): number {
-  return results.reduce((sum, { result }) => sum + result.summary.totalCabinets, 0)
-}
-
 /**
  * Результаты маршрутизации для листа оборудования.
  * Для одного экрана `allScreenResults` часто пуст (ленивый хук) — подставляем активный экран.
@@ -190,51 +185,6 @@ export function resolveEquipmentScreenResults(
   if (allScreenResults.length > 0) return allScreenResults
   if (fallback) return [fallback]
   return []
-}
-
-/** Пороги для אזיקונים (пачки) — можно скорректировать вручную после автозаполнения */
-const AZIKONS_VERY_LARGE_CABINETS = 200
-const AZIKONS_LARGE_CABINETS = 100
-/** Суммарная площадь всех экранов, м² — ориентир «очень большой стены» (~14×3) */
-const AZIKONS_LARGE_WALL_AREA_M2 = 42
-/** Ширина одного экрана, м — крупный одноэкранный (например 15×3) */
-const AZIKONS_LARGE_SINGLE_WIDTH_M = 14
-/** Суммарная ширина всех экранов, м — несколько широких стен в ряд */
-const AZIKONS_VERY_LARGE_COMBINED_WIDTH_M = 20
-
-/** אזיקונים: 1 по умолчанию; 2 — крупный/несколько экранов; 3 — очень крупный */
-export function resolveCableTiesPacks(
-  screens: ScreenConfig[],
-  results: { screen: ScreenConfig; result: RoutingResult }[],
-): number | undefined {
-  if (screens.length === 0 || results.length === 0) return undefined
-
-  const totalCabinets = sumTotalCabinets(results)
-  const combinedWidthM = screens.reduce((sum, s) => sum + s.wallWidthM, 0)
-  const maxSingleWidthM = Math.max(...screens.map((s) => s.wallWidthM))
-  const totalWallAreaM2 = screens.reduce(
-    (sum, s) => sum + s.wallWidthM * s.wallHeightM,
-    0,
-  )
-
-  if (
-    totalCabinets > AZIKONS_VERY_LARGE_CABINETS ||
-    screens.length >= 3 ||
-    combinedWidthM > AZIKONS_VERY_LARGE_COMBINED_WIDTH_M
-  ) {
-    return 3
-  }
-
-  if (
-    totalCabinets > AZIKONS_LARGE_CABINETS ||
-    totalWallAreaM2 > AZIKONS_LARGE_WALL_AREA_M2 ||
-    maxSingleWidthM > AZIKONS_LARGE_SINGLE_WIDTH_M ||
-    screens.length >= 2
-  ) {
-    return 2
-  }
-
-  return 1
 }
 
 /**
@@ -404,8 +354,6 @@ export function resolveEquipmentAutoQuantity(
       const powerLines = sumPowerLines(results)
       return results.length > 0 ? Math.max(1, Math.ceil(powerLines / 6)) : undefined
     }
-    case 'cableTies':
-      return resolveCableTiesPacks(screens, results)
     default:
       return undefined
   }

@@ -1,5 +1,5 @@
 /**
- * Проверка автозаполнения листа оборудования: ספיקונים, רובוט, אזיקונים, CVT, процессор, LED-карта.
+ * Проверка автозаполнения листа оборудования: ספיקונים, רובוט, אזיקונים (+), CVT, процессор, LED-карта.
  * Запуск: npm run verify:equipment
  */
 import type { ControllerModel, RoutingResult, ScreenConfig } from '../src/types/index.ts'
@@ -14,7 +14,6 @@ import {
   resolveCvtQtyForScreen,
   resolveEquipmentAutoQuantity,
   resolveEquipmentScreenResults,
-  resolveCableTiesPacks,
 } from '../src/lib/equipmentList.ts'
 
 function makeConfig(
@@ -128,11 +127,6 @@ assertEq(
   ),
   Math.max(1, Math.ceil(result10x3.summary.powerLines / 6)),
 )
-assertEq(
-  'cableTies 10×3',
-  resolveCableTiesPacks([screen10x3], equipmentResults),
-  1,
-)
 
 const state10x3 = buildEquipmentListState(
   [screen10x3],
@@ -146,9 +140,20 @@ assertEq(
   qtyById(state10x3, 'robot-32a'),
   Math.max(1, Math.ceil(result10x3.summary.powerLines / 6)),
 )
-assertEq('cable-ties row', qtyById(state10x3, 'cable-ties'), 1)
+assertEq('cable-ties default +', qtyById(state10x3, 'cable-ties'), '+')
+assertEq('cable-ties has no autoKey', state10x3.rows.find((r) => r.id === 'cable-ties')?.autoKey ?? '', '')
 
-// --- 2 экрана → אזיקונים 2 ---
+// Refresh keeps "+" when not quantityManual
+const state10x3Refresh = buildEquipmentListState(
+  [screen10x3],
+  equipmentResults,
+  result10x3.cableSchedule,
+  result10x3.packingList,
+  state10x3,
+)
+assertEq('cable-ties after refresh', qtyById(state10x3Refresh, 'cable-ties'), '+')
+
+// --- 2 экрана: אזיקונים остаётся "+" ---
 const s1 = makeConfig(10, 3, 's1', 'Screen 1')
 const s2 = makeConfig(8, 3, 's2', 'Screen 2')
 const r1 = computeRouting(s1)
@@ -157,24 +162,32 @@ const multiResults = [
   { screen: s1, result: r1 },
   { screen: s2, result: r2 },
 ]
-console.log('\n=== 2 screens → azikons 2 ===')
-assertEq(
-  'cableTies 2 screens',
-  resolveCableTiesPacks([s1, s2], multiResults),
-  2,
+console.log('\n=== 2 screens → azikons stay + ===')
+const stateMulti = buildEquipmentListState(
+  [s1, s2],
+  multiResults,
+  [...r1.cableSchedule, ...r2.cableSchedule],
+  [...r1.packingList, ...r2.packingList],
 )
+assertEq('cable-ties 2 screens', qtyById(stateMulti, 'cable-ties'), '+')
 assertEq(
   'speakons multi',
   resolveEquipmentAutoQuantity('speakons', [s1, s2], multiResults, []),
   r1.summary.powerLines + r2.summary.powerLines,
 )
 
-// --- 15×3 один экран → אזיקונים 2 (ширина > 14 м) ---
+// --- 15×3: אזיקונים тоже "+" (без автоформулы) ---
 const screen15x3 = makeConfig(15, 3)
 const result15x3 = computeRouting(screen15x3)
 const res15 = [{ screen: screen15x3, result: result15x3 }]
-console.log('\n=== 15×3m wide single screen → azikons 2 ===')
-assertEq('cableTies 15×3', resolveCableTiesPacks([screen15x3], res15), 2)
+console.log('\n=== 15×3m → azikons + ===')
+const state15 = buildEquipmentListState(
+  [screen15x3],
+  res15,
+  result15x3.cableSchedule,
+  result15x3.packingList,
+)
+assertEq('cable-ties 15×3', qtyById(state15, 'cable-ties'), '+')
 
 // --- Процессор: без auto, количество пустое ---
 console.log('\n=== Processor: no auto quantity ===')
