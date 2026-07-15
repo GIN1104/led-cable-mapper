@@ -247,7 +247,9 @@ export default memo(function GridVisualization({
     return map
   }, [isData, dataChains, powerLines])
 
-  const title = isData ? 'Data Ports' : 'Power Lines'
+  const title = isData
+    ? 'Data Ports / Тикшорет / תקשורת'
+    : 'Power Lines / Электричество / חשמל'
   const prefix = isData ? 'D' : 'P'
 
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set())
@@ -534,7 +536,7 @@ export default memo(function GridVisualization({
       }`}
     >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
           {(manualMode || emptyPaintMode) && (
             <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
@@ -543,6 +545,8 @@ export default memo(function GridVisualization({
                 : 'EDIT MODE'}
             </span>
           )}
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           {onManualModeChange && (
             <button
               type="button"
@@ -559,12 +563,11 @@ export default memo(function GridVisualization({
               Manual Routing / Ручная схема ({isData ? 'Data' : 'Power'})
             </button>
           )}
-        </div>
-        <div
-          className="flex items-center gap-1"
-          role="group"
-          aria-label="Масштаб сетки"
-        >
+          <div
+            className="flex items-center gap-1"
+            role="group"
+            aria-label="Масштаб сетки"
+          >
           <button
             type="button"
             onClick={zoomOut}
@@ -600,6 +603,7 @@ export default memo(function GridVisualization({
           >
             Fit
           </button>
+          </div>
         </div>
       </div>
 
