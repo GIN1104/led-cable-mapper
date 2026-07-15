@@ -1,6 +1,7 @@
 /**
  * Проверка авто-маршрутизации power: 3×2 м (1 линия), 7×3 м, 10×3 м, 14×8 м,
- * кейс где max(12) лучше; 2.9 — упаковка целыми столбцами без mid-column split.
+ * кейс где max(12) лучше; 6×3.5 м 3.9 Small (4 линии, multi-row);
+ * 2.9 — упаковка целыми столбцами без mid-column split.
  * Запуск: npm run verify:power
  */
 import type { ChainStartEdge, PitchPresetId, ScreenConfig } from '../src/types/index.ts'
@@ -243,6 +244,25 @@ function horizStrip(
   return cols.map((c) => `${letter}${c}`)
 }
 
+/**
+ * Змейка по нескольким рядам (letters снизу вверх), столбцы fromCol..toCol.
+ * startRight=false → нижний ряд LTR, следующий RTL.
+ */
+function horizSnakeRows(
+  lettersBottomToTop: string[],
+  fromCol: number,
+  toCol: number,
+  startRight = false,
+): string[] {
+  const out: string[] = []
+  for (let i = 0; i < lettersBottomToTop.length; i++) {
+    const letter = lettersBottomToTop[i]
+    const ltr = i % 2 === 0 ? !startRight : startRight
+    out.push(...horizStrip(letter, fromCol, toCol, !ltr))
+  }
+  return out
+}
+
 /** Вертикаль снизу вверх в столбце col по буквам A.. */
 function vertCol(col: number, letters: string[]): string[] {
   return letters.map((letter) => `${letter}${col}`)
@@ -295,7 +315,7 @@ const ok10Rtl = runCase(10, 3, 'right', '10m×3m 3.9 Big RTL', [
 ])
 
 /*
- * Кейс «12 лучше 10»: 6m×3m = 12×3.
+ * 6m×3m = 12×3.
  * preferred 10 → полоса 10 + остаток 2 → 3×10 + 1×P(6) = 4 линии.
  * max 12 → одна полоса 12 → 3 полные линии по 12 (меньше линий, без остатка).
  */
@@ -304,6 +324,24 @@ const ok6Ltr = runCase(6, 3, 'left', '6m×3m 3.9 Big LTR (12 better than 10)', [
   ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'B12'],
   ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12'],
 ])
+
+/*
+ * 6m×3.5m 3.9 Small: 500×500 → 12×7 = 84 cab, max 24.
+ * Было: остаток P → 6 линий по 14. Нужно: 2 ряда×12 = 24 на линию → 4 линии.
+ */
+const ok6x35Small = runCase(
+  6,
+  3.5,
+  'left',
+  '6m×3.5m 3.9 Small LTR (multi-row pack up to max 24)',
+  [
+    horizSnakeRows(['A', 'B'], 1, 12),
+    horizSnakeRows(['C', 'D'], 1, 12),
+    horizSnakeRows(['E', 'F'], 1, 12),
+    horizStrip('G', 1, 12),
+  ],
+  '3.9-small',
+)
 
 /*
  * 14m×8m = 28×8: pack 12 → две полосы 12 + остаток 4×8.
@@ -377,6 +415,7 @@ const allOk =
   ok7Rtl &&
   ok10Rtl &&
   ok6Ltr &&
+  ok6x35Small &&
   ok14x8 &&
   okDecisions &&
   ok29_5x4 &&

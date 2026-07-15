@@ -20,6 +20,7 @@ import {
   linkDirection,
   orderPowerCabinetsFromStart,
   orderPowerRegionByPreset,
+  orderRegionBySnake,
   powerLinkLengthBetween,
 } from './cabinetGrid'
 import type { CellActiveFn } from './rectangularPartition'
@@ -682,11 +683,17 @@ function getColumnBands(
   return bands
 }
 
-/** Горизонтальные полосы снизу вверх; fillTarget — целевой размер линии (≤ max) */
+/**
+ * Горизонтальные полосы снизу вверх.
+ * fillTarget — ширина горизонтального хода (≤ max).
+ * stackMultipleRows: пакует несколько целых подряд идущих рядов в одну линию
+ * до max (не режет ряд посередине); внутри линии — змейка от края направления.
+ */
 function partitionBandHorizontalStrips(
   bandCabs: Cabinet[],
   config: ScreenConfig,
   fillTarget: number,
+  stackMultipleRows = true,
 ): Cabinet[][] {
   const maxSize = getMaxCabinetsPerPowerLine(config)
   const target = Math.max(1, Math.min(fillTarget, maxSize))
@@ -695,21 +702,72 @@ function partitionBandHorizontalStrips(
 
   const minRow = Math.min(...bandCabs.map((c) => c.row))
   const maxRow = Math.max(...bandCabs.map((c) => c.row))
+  const minCol = Math.min(...bandCabs.map((c) => c.col))
+  const maxCol = Math.max(...bandCabs.map((c) => c.col))
+  const bandWidth = maxCol - minCol + 1
   const pool = new Map(bandCabs.map((c) => [c.label, c]))
   const paths: Cabinet[][] = []
 
-  for (let row = maxRow; row >= minRow; row--) {
+  const rowsPerLine =
+    stackMultipleRows && bandWidth > 0
+      ? Math.max(1, Math.floor(maxSize / bandWidth))
+      : 1
+
+  for (let rowBottom = maxRow; rowBottom >= minRow; ) {
+    if (rowsPerLine > 1) {
+      const blockRows: number[] = []
+      for (
+        let r = rowBottom;
+        r >= minRow && blockRows.length < rowsPerLine;
+        r--
+      ) {
+        const count = [...pool.values()].filter((c) => c.row === r).length
+        if (count === 0) continue
+        // Неполный ряд — не смешиваем с полной пачкой (не режем ряд)
+        if (count !== bandWidth) break
+        if ((blockRows.length + 1) * bandWidth > maxSize) break
+        blockRows.push(r)
+      }
+
+      if (blockRows.length >= 1) {
+        const blockSet = new Set(blockRows)
+        const blockCabs = [...pool.values()].filter((c) => blockSet.has(c.row))
+        const blockMinRow = Math.min(...blockRows)
+        const blockMaxRow = Math.max(...blockRows)
+        const ordered = orderRegionBySnake(
+          blockCabs,
+          minCol,
+          blockMinRow,
+          bandWidth,
+          blockMaxRow - blockMinRow + 1,
+          config.chainStartEdge,
+        )
+        paths.push(ordered)
+        for (const cab of ordered) {
+          pool.delete(cab.label)
+        }
+        rowBottom = blockMinRow - 1
+        continue
+      }
+    }
+
     const rowCabs = [...pool.values()]
-      .filter((c) => c.row === row)
+      .filter((c) => c.row === rowBottom)
       .sort((a, b) => (ltr ? a.col - b.col : b.col - a.col))
 
-    if (rowCabs.length === 0) continue
+    if (rowCabs.length === 0) {
+      rowBottom--
+      continue
+    }
 
-    // От края направления: LTR — слева, RTL — справа; набиваем до fillTarget
+    // Один ряд / неполный ряд: от края направления до fillTarget
     const strip = rowCabs.slice(0, Math.min(target, rowCabs.length))
     paths.push(strip)
     for (const cab of strip) {
       pool.delete(cab.label)
+    }
+    if (![...pool.values()].some((c) => c.row === rowBottom)) {
+      rowBottom--
     }
   }
 
@@ -867,7 +925,8 @@ function partitionRemainderBand(
 
   const candidates: Cabinet[][][] = [
     partitionBandPShape(bandCabs, config),
-    partitionBandHorizontalStrips(bandCabs, config, horizFill),
+    // Узкий остаток: по одному ряду — иначе multi-row перебьёт равные вертикали
+    partitionBandHorizontalStrips(bandCabs, config, horizFill, false),
   ]
 
   // Высокий/полный по высоте остаток: колонки длины height дают равные линии
@@ -891,8 +950,9 @@ function partitionRemainderBand(
 /**
  * 3.9 big/small: если кабинетов ≤ max — одна связная линия;
  * иначе полосы по choosePowerPackWidth (preferred если ≤6 полных линий,
- * иначе max); в полной полосе — горизонтали снизу вверх;
- * остаток — P / горизонтали / вертикальные колонки (равные линии).
+ * иначе max); в полной полосе или когда ширина стены ≤ packWidth —
+ * горизонтали снизу вверх с упаковкой нескольких целых рядов до max;
+ * узкий остаток — P / горизонтали / вертикальные колонки (равные линии).
  */
 function partitionHorizontalStripComponent(
   component: Cabinet[],
@@ -918,8 +978,9 @@ function partitionHorizontalStripComponent(
     if (bandCabs.length === 0) continue
 
     const bandWidth = band.colEnd - band.colStart + 1
-    if (bandWidth >= packWidth) {
-      paths.push(...partitionBandHorizontalStrips(bandCabs, config, packWidth))
+    // Полная полоса packWidth или вся стена влезает в одну полосу (width ≤ max/pack)
+    if (bandWidth >= packWidth || bandWidth === colsWide) {
+      paths.push(...partitionBandHorizontalStrips(bandCabs, config, packWidth, true))
     } else {
       paths.push(...partitionRemainderBand(bandCabs, config))
     }
