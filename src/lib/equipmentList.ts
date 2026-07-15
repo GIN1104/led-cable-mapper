@@ -96,7 +96,7 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'tv', hebrew: 'TV', russian: 'ТВ' },
   { id: 'adapters', hebrew: 'הופכים חשמל', russian: 'Переходники: 63→32, 32→16' },
   { id: 'ratchets', hebrew: "רצ'אטים", russian: 'Рачеты' },
-  { id: 'tool-bag', hebrew: 'תיק כלים', russian: 'Сумка с инструментами' },
+  { id: 'tool-bag', hebrew: 'תיק כלים', russian: 'Сумка с инструментами', defaultQuantity: '+' },
   { id: 'cable-ties', hebrew: 'אזיקונים', russian: 'Азиконим', defaultQuantity: '+' },
   { id: 'gaffa', hebrew: 'גפה', russian: 'Гафа', defaultQuantity: '+' },
   { id: 'screws', hebrew: 'ברגים', russian: 'Шурупы', defaultQuantity: '+' },
