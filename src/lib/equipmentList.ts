@@ -14,6 +14,7 @@ export type EquipmentAutoKey =
   | 'hangers'
   | 'hangStraps'
   | 'robot32a'
+  | 'cable32a'
 
 /** Модель оптического конвертера CVT */
 export type CvtModel = 'CVT10' | 'CVT16'
@@ -92,7 +93,12 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'speakon', hebrew: 'ספיקונים', russian: 'Спикон', autoKey: 'speakons' },
   { id: 'power-ext', hebrew: 'כבל חשמל', russian: 'Удлинитель электрический', autoKey: 'powerTrunks' },
   { id: 'robot-32a', hebrew: 'רובוט', russian: 'Робот 32А', autoKey: 'robot32a' },
-  { id: 'three-phase', hebrew: 'תלת פאזי', russian: 'Кабель 32А (трёхфазный)' },
+  {
+    id: 'three-phase',
+    hebrew: 'תלת פאזי',
+    russian: 'Кабель 32А (трёхфазный)',
+    autoKey: 'cable32a',
+  },
   { id: 'sdi', hebrew: 'כבל SDI', russian: 'Кабель SDI' },
   { id: 'fiber', hebrew: 'כבל אופטי', russian: 'Оптический кабель', autoKey: 'opticCable' },
   {
@@ -192,6 +198,15 @@ function sumDataPorts(results: { result: RoutingResult }[]): number {
 
 function sumPowerLines(results: { result: RoutingResult }[]): number {
   return results.reduce((sum, { result }) => sum + result.summary.powerLines, 0)
+}
+
+/** Количество роботов 32А: max(1, ceil(powerLines / 6)); без маршрутизации — undefined */
+function resolveRobot32aCount(
+  results: { result: RoutingResult }[],
+): number | undefined {
+  if (results.length === 0) return undefined
+  const robotCount = Math.max(1, Math.ceil(sumPowerLines(results) / 6))
+  return robotCount >= 1 ? robotCount : undefined
 }
 
 /**
@@ -400,9 +415,11 @@ export function resolveEquipmentAutoQuantity(
       const qty = sumHangStraps(screens)
       return qty > 0 ? qty : 0
     }
-    case 'robot32a': {
-      const powerLines = sumPowerLines(results)
-      return results.length > 0 ? Math.max(1, Math.ceil(powerLines / 6)) : undefined
+    case 'robot32a':
+      return resolveRobot32aCount(results)
+    case 'cable32a': {
+      const robotCount = resolveRobot32aCount(results)
+      return robotCount != null ? robotCount + 2 : undefined
     }
     default:
       return undefined

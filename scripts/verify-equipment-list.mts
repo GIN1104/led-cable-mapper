@@ -128,6 +128,17 @@ assertEq(
   ),
   Math.max(1, Math.ceil(result10x3.summary.powerLines / 6)),
 )
+const robotCount10x3 = Math.max(1, Math.ceil(result10x3.summary.powerLines / 6))
+assertEq(
+  'cable32a (fallback) = robots+2',
+  resolveEquipmentAutoQuantity(
+    'cable32a',
+    [screen10x3],
+    equipmentResults,
+    result10x3.cableSchedule,
+  ),
+  robotCount10x3 + 2,
+)
 
 const state10x3 = buildEquipmentListState(
   [screen10x3],
@@ -140,6 +151,12 @@ assertEq(
   'robot row',
   qtyById(state10x3, 'robot-32a'),
   Math.max(1, Math.ceil(result10x3.summary.powerLines / 6)),
+)
+assertEq('three-phase row = robots+2', qtyById(state10x3, 'three-phase'), robotCount10x3 + 2)
+assertEq(
+  'three-phase autoKey',
+  state10x3.rows.find((r) => r.id === 'three-phase')?.autoKey ?? '',
+  'cable32a',
 )
 assertEq('cable-ties default +', qtyById(state10x3, 'cable-ties'), '+')
 assertEq('cable-ties has no autoKey', state10x3.rows.find((r) => r.id === 'cable-ties')?.autoKey ?? '', '')
@@ -487,6 +504,29 @@ assertEq(
   resolveEquipmentAutoQuantity('commCableLong', [], [], []),
   '',
 )
+
+// --- Кабель 32А (трёхфазный): robots + 2 ---
+console.log('\n=== 32A three-phase cable = robots + 2 ===')
+assertEq('cable32a example 6 lines → 3', Math.max(1, Math.ceil(6 / 6)) + 2, 3)
+assertEq('cable32a example 12 lines → 4', Math.max(1, Math.ceil(12 / 6)) + 2, 4)
+assertEq(
+  'cable32a empty results → empty',
+  resolveEquipmentAutoQuantity('cable32a', [], [], []),
+  '',
+)
+const multiPowerLines = r1.summary.powerLines + r2.summary.powerLines
+const multiRobotCount = Math.max(1, Math.ceil(multiPowerLines / 6))
+assertEq(
+  'cable32a multi screens',
+  resolveEquipmentAutoQuantity('cable32a', [s1, s2], multiResults, []),
+  multiRobotCount + 2,
+)
+assertEq('three-phase multi row', qtyById(stateMulti, 'three-phase'), multiRobotCount + 2)
+
+const robotIdx = state10x3.rows.findIndex((r) => r.id === 'robot-32a')
+const threePhaseIdx = state10x3.rows.findIndex((r) => r.id === 'three-phase')
+assertEq('order: robot before three-phase', robotIdx < threePhaseIdx ? 1 : 0, 1)
+assertEq('order: three-phase right after robot', threePhaseIdx === robotIdx + 1 ? 1 : 0, 1)
 
 const multiDataPorts = r1.summary.dataPorts + r2.summary.dataPorts
 const expectedLongMulti = Math.ceil(multiDataPorts * 2 * 1.1)
