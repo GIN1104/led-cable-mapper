@@ -490,34 +490,191 @@ export async function downloadEquipmentListXlsx(state: EquipmentListState): Prom
   URL.revokeObjectURL(url)
 }
 
-/** Экспорт в .xlsx (лист «לדים») */
-export async function equipmentListToXlsxBlob(state: EquipmentListState): Promise<Blob> {
-  const XLSX = await import('xlsx')
+/** Границы как в шаблоне «רשימת ציוד לאירוע» */
+const XLSX_BORDER_MEDIUM = { style: 'medium' as const, color: { argb: 'FF000000' } }
+const XLSX_BORDER_THIN = { style: 'thin' as const, color: { argb: 'FF000000' } }
+const XLSX_HEADER_FILL = {
+  type: 'pattern' as const,
+  pattern: 'solid' as const,
+  fgColor: { argb: 'FFD8D8D8' },
+  bgColor: { argb: 'FFD8D8D8' },
+}
 
-  const sheetData: (string | number)[][] = [
-    ['תאריך', state.meta.eventDate],
-    ['שם האירוע', state.meta.eventName],
-    [],
-    ['ציוד', 'Оборудование', 'כמויות', 'תופסות'],
-    ...getEquipmentListExportRows(state).map((row) => [
-      row.hebrew,
-      row.russian,
-      row.quantity,
-      row.footprint,
-    ]),
-    [],
-    ['מיקום:', state.meta.location],
-    ['שעות:', state.meta.hours],
-    ['איש קשר:', state.meta.contact],
+function underlineOrValue(value: string, blanks: string): string {
+  const trimmed = value.trim()
+  return trimmed || blanks
+}
+
+/** Экспорт в .xlsx (лист «לדים») — оформление как в оригинальном шаблоне */
+export async function equipmentListToXlsxBlob(state: EquipmentListState): Promise<Blob> {
+  const ExcelJS = (await import('exceljs')).default
+
+  const workbook = new ExcelJS.Workbook()
+  const worksheet = workbook.addWorksheet('לדים', {
+    views: [{ rightToLeft: true, state: 'normal', showGridLines: true }],
+    properties: { defaultRowHeight: 15, defaultColWidth: 14.43 },
+    pageSetup: {
+      paperSize: 9,
+      orientation: 'landscape',
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 1,
+      horizontalDpi: 4294967295,
+      verticalDpi: 4294967295,
+    },
+  })
+
+  worksheet.getColumn(1).width = 25.14
+  worksheet.getColumn(2).width = 32
+  worksheet.getColumn(3).width = 37
+  worksheet.getColumn(4).width = 50.71
+
+  const metaFont = { name: 'Arial', size: 12, bold: true, color: { theme: 1 } }
+  const headerFont = { name: 'Arial', size: 14, bold: true, color: { theme: 1 } }
+  const hebrewFont = { name: 'Arial', size: 12, color: { theme: 1 } }
+  const bodyFont = { name: 'Arial', size: 11, color: { theme: 1 } }
+
+  const dateLabel = `תאריך: ${underlineOrValue(state.meta.eventDate, '______________________')}`
+  const eventLabel = `שם האירוע: ${underlineOrValue(state.meta.eventName, '____________________________')}`
+
+  // Строки 1–4: дата / имя события (как в оригинале)
+  const row1 = worksheet.getRow(1)
+  row1.height = 14.25
+  row1.getCell(1).value = dateLabel
+  row1.getCell(1).font = metaFont
+  row1.getCell(1).alignment = { readingOrder: 'ltr' }
+
+  const row2 = worksheet.getRow(2)
+  row2.height = 14.25
+
+  const row3 = worksheet.getRow(3)
+  row3.height = 14.25
+  row3.getCell(1).value = eventLabel
+  row3.getCell(1).font = metaFont
+  row3.getCell(1).alignment = { readingOrder: 'ltr' }
+
+  const row4 = worksheet.getRow(4)
+  row4.height = 14.25
+
+  // Строка 5: заголовки колонок
+  const headerRowIndex = 5
+  const headerRow = worksheet.getRow(headerRowIndex)
+  headerRow.height = 14.25
+  const headers = ['ציוד', 'Оборудование', 'כמויות', 'תופסות'] as const
+  headers.forEach((title, i) => {
+    const cell = headerRow.getCell(i + 1)
+    cell.value = title
+    cell.font = headerFont
+    cell.fill = XLSX_HEADER_FILL
+    cell.alignment = {
+      horizontal: 'center',
+      ...(i !== 1 ? { readingOrder: 'ltr' as const } : {}),
+    }
+    cell.border = {
+      left: XLSX_BORDER_MEDIUM,
+      right: XLSX_BORDER_MEDIUM,
+      top: XLSX_BORDER_MEDIUM,
+      bottom: XLSX_BORDER_MEDIUM,
+    }
+  })
+
+  const dataRows = getEquipmentListExportRows(state)
+  const dataStart = headerRowIndex + 1
+  const dataEnd =
+    dataRows.length > 0 ? dataStart + dataRows.length - 1 : headerRowIndex
+
+  dataRows.forEach((row, index) => {
+    const rowIndex = dataStart + index
+    const excelRow = worksheet.getRow(rowIndex)
+    const lineCount = Math.max(
+      1,
+      String(row.quantity).split(/\r?\n/).length,
+      String(row.russian).split(/\r?\n/).length,
+    )
+    excelRow.height = lineCount > 1 ? Math.max(14.25, lineCount * 14.25) : 14.25
+
+    const isFirst = index === 0
+    const isLast = index === dataRows.length - 1
+    const topBorder = isFirst ? XLSX_BORDER_MEDIUM : XLSX_BORDER_THIN
+    const bottomBorder = isLast ? XLSX_BORDER_MEDIUM : XLSX_BORDER_THIN
+
+    const values = [row.hebrew, row.russian, row.quantity, row.footprint]
+    values.forEach((value, colIndex) => {
+      const cell = excelRow.getCell(colIndex + 1)
+      cell.value = value
+      cell.font = colIndex === 0 ? hebrewFont : bodyFont
+      const multiline = String(value).includes('\n')
+      cell.alignment = {
+        horizontal: 'center',
+        vertical: 'middle',
+        wrapText: multiline || undefined,
+        ...(colIndex !== 1 ? { readingOrder: 'ltr' as const } : {}),
+      }
+      cell.border = {
+        left: XLSX_BORDER_MEDIUM,
+        right: XLSX_BORDER_MEDIUM,
+        top: topBorder,
+        bottom: bottomBorder,
+      }
+    })
+  })
+
+  // Пустая закрывающая строка таблицы (как row 29 в оригинале)
+  const tableCloseRow = dataEnd + 1
+  const closeRow = worksheet.getRow(tableCloseRow)
+  closeRow.height = 14.25
+  for (let col = 1; col <= 4; col++) {
+    const cell = closeRow.getCell(col)
+    cell.font = bodyFont
+    cell.alignment = { horizontal: 'center', vertical: 'middle' }
+    cell.border = {
+      left: XLSX_BORDER_MEDIUM,
+      right: XLSX_BORDER_MEDIUM,
+      top: XLSX_BORDER_THIN,
+      bottom: XLSX_BORDER_MEDIUM,
+    }
+  }
+
+  // Разделитель, затем футер מיקום / שעות / איש קשר
+  const gapRow = tableCloseRow + 1
+  worksheet.getRow(gapRow).height = 14.25
+
+  const footerStart = gapRow + 1
+  const footerBlocks: { label: string; value: string; rowSpan: number }[] = [
+    { label: 'מיקום:', value: state.meta.location, rowSpan: 2 },
+    { label: 'שעות:', value: state.meta.hours, rowSpan: 2 },
+    { label: 'איש קשר:', value: state.meta.contact, rowSpan: 1 },
   ]
 
-  const worksheet = XLSX.utils.aoa_to_sheet(sheetData)
-  worksheet['!cols'] = [{ wch: 22 }, { wch: 28 }, { wch: 36 }, { wch: 12 }]
+  let footerRow = footerStart
+  for (const block of footerBlocks) {
+    const start = footerRow
+    const end = footerRow + block.rowSpan - 1
+    const text = block.value.trim() ? `${block.label} ${block.value}` : block.label
 
-  const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'לדים')
+    worksheet.mergeCells(start, 1, end, 2)
+    const cell = worksheet.getCell(start, 1)
+    cell.value = text
+    cell.font = metaFont
+    cell.alignment = { horizontal: 'right', vertical: 'top', readingOrder: 'ltr', wrapText: true }
 
-  const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
+    for (let r = start; r <= end; r++) {
+      worksheet.getRow(r).height = r === start && block.rowSpan > 1 ? 15.75 : 15
+      for (let c = 1; c <= 2; c++) {
+        const borderCell = worksheet.getCell(r, c)
+        borderCell.border = {
+          left: c === 1 ? XLSX_BORDER_MEDIUM : undefined,
+          right: c === 2 ? XLSX_BORDER_MEDIUM : undefined,
+          top: r === start ? XLSX_BORDER_MEDIUM : undefined,
+          bottom: r === end ? XLSX_BORDER_MEDIUM : undefined,
+        }
+      }
+    }
+
+    footerRow = end + 1
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer()
   return new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   })
