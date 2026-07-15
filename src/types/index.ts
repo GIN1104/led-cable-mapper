@@ -442,7 +442,7 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
 
   signalBackup: true,
 
-  trunkLengthM: 15,
+  trunkLengthM: 50,
 
   refreshRate: 60,
 
