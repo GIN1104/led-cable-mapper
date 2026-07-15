@@ -543,6 +543,62 @@ const speakonIdx = state10x3.rows.findIndex((r) => r.id === 'speakon')
 assertEq('order: comm before long', commIdx < commLongIdx ? 1 : 0, 1)
 assertEq('order: long right after comm', commLongIdx === commIdx + 1 ? 1 : 0, 1)
 assertEq('order: long before speakon', commLongIdx + 1 === speakonIdx ? 1 : 0, 1)
+
+const ledCardIdx = state10x3.rows.findIndex((r) => r.id === 'led-card')
+const cvtIdx = state10x3.rows.findIndex((r) => r.id === 'cvt')
+assertEq('order: CVT right after LED card', cvtIdx === ledCardIdx + 1 ? 1 : 0, 1)
+
+// Ручное описание LED-карты / CVT не перезаписывается при пересчёте
+const manualDescPrev = buildEquipmentListState(
+  [screen10x3],
+  [{ screen: screen10x3, result: result10x3 }],
+  [],
+  [],
+)
+const withManualDesc: typeof manualDescPrev = {
+  ...manualDescPrev,
+  rows: manualDescPrev.rows.map((row) => {
+    if (row.id === 'led-card') {
+      return {
+        ...row,
+        quantity: '9',
+        quantityManual: true,
+        hebrew: 'כרטיס מותאם',
+        hebrewManual: true,
+        russian: 'Кастомная карта',
+        russianManual: true,
+      }
+    }
+    if (row.id === 'cvt') {
+      return {
+        ...row,
+        quantity: '3',
+        quantityManual: true,
+        hebrew: 'CVT מותאם',
+        hebrewManual: true,
+        russian: 'Кастомный CVT',
+        russianManual: true,
+      }
+    }
+    return row
+  }),
+}
+const afterRebuild = buildEquipmentListState(
+  [screen10x3],
+  [{ screen: screen10x3, result: result10x3 }],
+  [],
+  [],
+  withManualDesc,
+)
+const ledAfter = afterRebuild.rows.find((r) => r.id === 'led-card')
+const cvtAfter = afterRebuild.rows.find((r) => r.id === 'cvt')
+assertEq('led-card manual qty preserved', ledAfter?.quantity ?? '', '9')
+assertEq('led-card manual hebrew preserved', ledAfter?.hebrew ?? '', 'כרטיס מותאם')
+assertEq('led-card manual russian preserved', ledAfter?.russian ?? '', 'Кастомная карта')
+assertEq('cvt manual qty preserved', cvtAfter?.quantity ?? '', '3')
+assertEq('cvt manual hebrew preserved', cvtAfter?.hebrew ?? '', 'CVT מותאם')
+assertEq('cvt manual russian preserved', cvtAfter?.russian ?? '', 'Кастомный CVT')
+
 assertEq(
   'long hebrew',
   state10x3.rows.find((r) => r.id === 'comm-cable-long')?.hebrew ?? '',

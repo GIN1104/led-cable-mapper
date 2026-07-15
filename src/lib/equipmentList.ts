@@ -37,6 +37,10 @@ export interface EquipmentListRow extends EquipmentListRowTemplate {
   /** Пользователь вручную изменил quantity — не перезаписывать при обновлении */
   quantityManual: boolean
   footprintManual: boolean
+  /** Пользователь вручную изменил ивритское название — не перезаписывать */
+  hebrewManual: boolean
+  /** Пользователь вручную изменил русское описание — не перезаписывать авто-текст */
+  russianManual: boolean
 }
 
 export interface EquipmentListMeta {
@@ -79,6 +83,12 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'processor', hebrew: 'פרוצסור', russian: 'Процессор' },
   { id: 'led-card', hebrew: 'כרטיס לד', russian: 'Картис Лед', autoKey: 'ledCard' },
   {
+    id: 'cvt',
+    hebrew: 'CVT / ממיר אופטי',
+    russian: 'CVT / оптический конвертер',
+    autoKey: 'cvtOptical',
+  },
+  {
     id: 'comm-cable',
     hebrew: 'קבל תקשורת',
     russian: 'Тикшорет (сетевой кабель)',
@@ -101,12 +111,6 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   },
   { id: 'sdi', hebrew: 'כבל SDI', russian: 'Кабель SDI' },
   { id: 'fiber', hebrew: 'כבל אופטי', russian: 'Оптический кабель', autoKey: 'opticCable' },
-  {
-    id: 'cvt',
-    hebrew: 'CVT / ממיר אופטי',
-    russian: 'CVT / оптический конвертер',
-    autoKey: 'cvtOptical',
-  },
   { id: 'tv', hebrew: 'TV', russian: 'ТВ' },
   { id: 'adapters', hebrew: 'הופכים חשמל', russian: 'Переходники: 63→32, 32→16' },
   { id: 'ratchets', hebrew: "רצ'אטים", russian: 'Рачеты' },
@@ -457,13 +461,22 @@ export function buildEquipmentListState(
 
     const quantityManual = previous?.quantityManual ?? false
     const footprintManual = previous?.footprintManual ?? false
+    const hebrewManual = previous?.hebrewManual ?? false
+    const russianManual = previous?.russianManual ?? false
     const ledCardAuto = template.id === 'led-card' ? aggregateLedCards(screens) : undefined
     const cvtAuto = template.id === 'cvt' ? aggregateCvtOptical(results) : undefined
     const autoRussian = ledCardAuto?.russian ?? cvtAuto?.russian
 
     return {
       ...template,
-      russian: autoRussian ?? template.russian,
+      hebrew:
+        hebrewManual && previous
+          ? previous.hebrew
+          : template.hebrew,
+      russian:
+        russianManual && previous
+          ? previous.russian
+          : (autoRussian ?? template.russian),
       quantity:
         quantityManual && previous
           ? previous.quantity
@@ -474,6 +487,8 @@ export function buildEquipmentListState(
           : (template.defaultFootprint ?? previous?.footprint ?? ''),
       quantityManual,
       footprintManual,
+      hebrewManual,
+      russianManual,
     }
   })
 
