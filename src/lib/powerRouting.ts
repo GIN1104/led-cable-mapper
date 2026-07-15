@@ -724,6 +724,7 @@ export function buildPowerLinesFromManual(
   config: ScreenConfig,
   startPoints: Record<number, string> = {},
   emptySet?: Set<string>,
+  orderedChains?: Record<number, string[]>,
 ): { lines: PowerLine[]; links: GridLink[]; warnings: RoutingValidationWarning[] } {
   const lineGroups = new Map<number, Cabinet[]>()
 
@@ -734,6 +735,29 @@ export function buildPowerLinesFromManual(
     const group = lineGroups.get(line) ?? []
     group.push(cab)
     lineGroups.set(line, group)
+  }
+
+  // Если есть упорядоченные цепочки кликов — собираем группы в этом порядке
+  if (orderedChains && Object.keys(orderedChains).length > 0) {
+    for (const [lineStr, labels] of Object.entries(orderedChains)) {
+      const lineNumber = Number(lineStr)
+      const byLabel = new Map((lineGroups.get(lineNumber) ?? []).map((c) => [c.label, c]))
+      const ordered: Cabinet[] = []
+      const seen = new Set<string>()
+      for (const label of labels) {
+        const cab = byLabel.get(label)
+        if (cab && !seen.has(label)) {
+          ordered.push(cab)
+          seen.add(label)
+        }
+      }
+      for (const cab of lineGroups.get(lineNumber) ?? []) {
+        if (!seen.has(cab.label)) ordered.push(cab)
+      }
+      if (ordered.length > 0) lineGroups.set(lineNumber, ordered)
+    }
+    const { lines, links } = buildLinesFromGroups(lineGroups, config, startPoints, true)
+    return { lines, links, warnings: validatePowerLines(lines, config) }
   }
 
   const { lines, links } = buildLinesFromGroups(lineGroups, config, startPoints)
@@ -761,6 +785,15 @@ export function assignmentsFromPowerLines(lines: PowerLine[]): Record<string, nu
     for (const cab of line.cabinets) {
       map[cab.label] = line.lineNumber
     }
+  }
+  return map
+}
+
+/** Упорядоченные метки по линиям — для ручной схемы без авто-переупорядочивания */
+export function orderedChainsFromPowerLines(lines: PowerLine[]): Record<number, string[]> {
+  const map: Record<number, string[]> = {}
+  for (const line of lines) {
+    map[line.lineNumber] = line.cabinets.map((c) => c.label)
   }
   return map
 }

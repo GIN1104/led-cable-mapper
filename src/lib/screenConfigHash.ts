@@ -1,5 +1,6 @@
 import type { ManualRoutingOverrides, ScreenConfig, ScreenRoutingState } from '../types'
 import { EMPTY_SCREEN_ROUTING } from '../types'
+import { chainsKey } from './manualChains'
 
 /** Стабильный ключ конфигурации для мемоизации маршрутизации */
 export function screenRoutingKey(screen: ScreenConfig): string {
@@ -45,12 +46,12 @@ export function routingOptionsKey(
 
   const dataKey =
     manualModeData && manualOverrides
-      ? `data|${sortedRecordKey(manualOverrides.dataPorts)}|${sortedRecordKey(manualOverrides.dataStartPoints ?? {})}`
+      ? `data|${sortedRecordKey(manualOverrides.dataPorts)}|${sortedRecordKey(manualOverrides.dataStartPoints ?? {})}|${chainsKey(manualOverrides.dataPortChains)}`
       : 'auto-data'
 
   const powerKey =
     manualModePower && manualOverrides
-      ? `power|${sortedRecordKey(manualOverrides.powerLines)}|${sortedRecordKey(manualOverrides.powerStartPoints ?? {})}`
+      ? `power|${sortedRecordKey(manualOverrides.powerLines)}|${sortedRecordKey(manualOverrides.powerStartPoints ?? {})}|${chainsKey(manualOverrides.powerLineChains)}`
       : 'auto-power'
 
   return `manual|${dataKey}|${powerKey}`

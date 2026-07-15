@@ -26,6 +26,17 @@ console.log(
 const reassigned = {
   ...overrides,
   dataPorts: { ...overrides.dataPorts, A1: 99 },
+  dataPortChains: {
+    ...(overrides.dataPortChains ?? {}),
+    99: [...((overrides.dataPortChains ?? {})[99] ?? []).filter((l) => l !== 'A1'), 'A1'],
+  },
+}
+// Убрать A1 из старой цепочки, если переназначен
+if (overrides.dataPorts.A1 != null && overrides.dataPorts.A1 !== 99) {
+  const oldPort = overrides.dataPorts.A1
+  const oldChain = (reassigned.dataPortChains[oldPort] ?? []).filter((l) => l !== 'A1')
+  if (oldChain.length > 0) reassigned.dataPortChains[oldPort] = oldChain
+  else delete reassigned.dataPortChains[oldPort]
 }
 const manual2 = computeRouting(screen, {
   manualModeData: true,
@@ -38,6 +49,29 @@ console.log('A1 reassigned to 99, chain port:', a1Chain?.portNumber)
 if (!a1Chain || a1Chain.portNumber !== 99) {
   console.error('FAIL: manual reassignment not applied')
   process.exit(1)
+}
+
+// Порядок кликов: явная цепочка сохраняется
+const sample = Object.keys(overrides.dataPorts).slice(0, 3)
+if (sample.length >= 3) {
+  const [a, b, c] = sample
+  const ordered = computeRouting(screen, {
+    manualModeData: true,
+    manualModePower: false,
+    manualOverrides: {
+      dataPorts: { [a]: 1, [b]: 1, [c]: 1 },
+      powerLines: {},
+      dataStartPoints: { 1: a },
+      dataPortChains: { 1: [a, c, b] },
+    },
+  })
+  const chain = ordered.dataChains.find((ch) => ch.portNumber === 1)
+  const labels = chain?.cabinets.map((cab) => cab.label) ?? []
+  console.log('Click-order chain:', labels.join(' → '))
+  if (labels[0] !== a || labels[1] !== c || labels[2] !== b) {
+    console.error('FAIL: click order not preserved', labels)
+    process.exit(1)
+  }
 }
 
 const dataOnly = computeRouting(screen, {

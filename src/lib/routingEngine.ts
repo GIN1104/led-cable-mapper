@@ -36,6 +36,8 @@ import {
 
   buildDataChainsFromManual,
 
+  orderedChainsFromDataChains,
+
   startPointsFromDataChains,
 } from './dataRouting'
 
@@ -46,6 +48,8 @@ import {
   buildPowerLines,
 
   buildPowerLinesFromManual,
+
+  orderedChainsFromPowerLines,
 
   startPointsFromPowerLines,
 
@@ -131,6 +135,8 @@ export function computeRouting(
 
       emptySet,
 
+      manualOverrides.dataPortChains,
+
     )
 
     dataChains = manual.chains
@@ -182,6 +188,8 @@ export function computeRouting(
       manualOverrides.powerStartPoints ?? {},
 
       emptySet,
+
+      manualOverrides.powerLineChains,
 
     )
 
@@ -340,6 +348,10 @@ export function buildAutoManualOverrides(config: ScreenConfig) {
     dataStartPoints: startPointsFromDataChains(dataChains),
 
     powerStartPoints: startPointsFromPowerLines(powerLines),
+
+    dataPortChains: orderedChainsFromDataChains(dataChains),
+
+    powerLineChains: orderedChainsFromPowerLines(powerLines),
 
   }
 

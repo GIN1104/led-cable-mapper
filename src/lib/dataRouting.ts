@@ -82,17 +82,35 @@ function buildChainsFromPortGroups(
   portGroups: Map<number, Cabinet[]>,
   startPoints: Record<number, string> = {},
   startEdge: ChainStartEdge = 'left',
+  orderedChains?: Record<number, string[]>,
 ): { chains: DataChain[]; links: GridLink[] } {
   const chains: DataChain[] = []
   const links: GridLink[] = []
   const portNumbers = [...portGroups.keys()].sort((a, b) => a - b)
 
   for (const portNumber of portNumbers) {
-    const ordered = orderCabinetsFromStartSnake(
-      portGroups.get(portNumber) ?? [],
-      startPoints[portNumber],
-      startEdge,
-    )
+    const group = portGroups.get(portNumber) ?? []
+    const orderedLabels = orderedChains?.[portNumber]
+    let ordered: Cabinet[]
+
+    if (orderedLabels && orderedLabels.length > 0) {
+      const byLabel = new Map(group.map((c) => [c.label, c]))
+      ordered = []
+      const seen = new Set<string>()
+      for (const label of orderedLabels) {
+        const cab = byLabel.get(label)
+        if (cab && !seen.has(label)) {
+          ordered.push(cab)
+          seen.add(label)
+        }
+      }
+      for (const cab of group) {
+        if (!seen.has(cab.label)) ordered.push(cab)
+      }
+    } else {
+      ordered = orderCabinetsFromStartSnake(group, startPoints[portNumber], startEdge)
+    }
+
     if (ordered.length === 0) continue
 
     const totalPixels = ordered.reduce((sum, c) => sum + c.totalPixels, 0)
@@ -548,6 +566,7 @@ export function buildDataChainsFromManual(
   pixelsPerCabinet: number,
   startEdge: ChainStartEdge = 'left',
   emptySet?: Set<string>,
+  orderedChains?: Record<number, string[]>,
 ): { chains: DataChain[]; links: GridLink[]; warnings: RoutingValidationWarning[] } {
   const portGroups = new Map<number, Cabinet[]>()
 
@@ -560,7 +579,12 @@ export function buildDataChainsFromManual(
     portGroups.set(port, group)
   }
 
-  const { chains, links } = buildChainsFromPortGroups(portGroups, startPoints, startEdge)
+  const { chains, links } = buildChainsFromPortGroups(
+    portGroups,
+    startPoints,
+    startEdge,
+    orderedChains,
+  )
   return { chains, links, warnings: validateDataChains(chains, refreshRate, pixelsPerCabinet) }
 }
 
@@ -616,6 +640,16 @@ export function assignmentsFromDataChains(chains: DataChain[]): Record<string, n
     for (const cab of chain.cabinets) {
       map[cab.label] = chain.portNumber
     }
+  }
+  return map
+}
+
+/** Упорядоченные метки по портам — для ручной схемы без змейки */
+export function orderedChainsFromDataChains(chains: DataChain[]): Record<number, string[]> {
+  const map: Record<number, string[]> = {}
+  for (const chain of chains) {
+    if (chain.isBackup) continue
+    map[chain.portNumber] = chain.cabinets.map((c) => c.label)
   }
   return map
 }

@@ -24,10 +24,17 @@ interface GridVisualizationProps {
   emptyPaintMode?: boolean
   onToggleEmpty?: (label: string) => void
   manualAssignments?: Record<string, number>
+  /** Упорядоченные цепочки (порядок кликов) — для undo последнего кабинета линии */
+  chainOrder?: Record<number, string[]>
   startPoints?: Record<number, string>
   onAssign?: (labels: string[], value: number) => void
   onSetStartPoint?: (value: number, label: string) => void
   onClearManual?: () => void
+  /** Отменить последнее заполнение (кнопка / Alt+клик) */
+  onUndoLast?: () => void
+  /** Снять конкретный кабинет (повторный клик по последнему в активной линии) */
+  onUndoCabinet?: (label: string) => void
+  canUndo?: boolean
   maxAssignable?: number
   chainStartEdge?: ChainStartEdge
   pitchPreset?: PitchPresetId
@@ -184,10 +191,14 @@ export default memo(function GridVisualization({
   emptyPaintMode = false,
   onToggleEmpty,
   manualAssignments = {},
+  chainOrder = {},
   startPoints = {},
   onAssign,
   onSetStartPoint,
   onClearManual,
+  onUndoLast,
+  onUndoCabinet,
+  canUndo = false,
   maxAssignable = 1,
   chainStartEdge = 'left',
   pitchPreset = '3.9-small',
@@ -413,7 +424,7 @@ export default memo(function GridVisualization({
   )
 
   const handleCabinetClick = useCallback(
-    (label: string, shiftKey: boolean) => {
+    (label: string, shiftKey: boolean, altKey: boolean) => {
       // Глобальный Empty из сайдбара не блокирует Paint/Set Start в ручном режиме
       const sidebarEmptyOnly =
         emptyPaintMode && (!manualMode || editMode === 'empty')
@@ -424,6 +435,12 @@ export default memo(function GridVisualization({
       }
 
       if (!manualMode) return
+
+      // Alt+клик — отменить последнее заполнение
+      if (altKey && onUndoLast && canUndo) {
+        onUndoLast()
+        return
+      }
 
       if (editMode === 'empty' && onToggleEmpty) {
         onToggleEmpty(label)
@@ -452,9 +469,29 @@ export default memo(function GridVisualization({
         return
       }
 
+      // Повторный клик по последнему кабинету активной линии — отмена
+      const lastInActive = (chainOrder[activeValue] ?? []).at(-1)
+      if (onUndoCabinet && label === lastInActive) {
+        onUndoCabinet(label)
+        return
+      }
+
       assignTo([label], activeValue)
     },
-    [manualMode, emptyPaintMode, onToggleEmpty, editMode, onSetStartPoint, selectedLabels, activeValue, assignTo],
+    [
+      manualMode,
+      emptyPaintMode,
+      onToggleEmpty,
+      editMode,
+      onSetStartPoint,
+      selectedLabels,
+      activeValue,
+      assignTo,
+      onUndoLast,
+      canUndo,
+      chainOrder,
+      onUndoCabinet,
+    ],
   )
 
   const handleLegendClick = useCallback(
@@ -584,6 +621,21 @@ export default memo(function GridVisualization({
             >
               Paint / Краска
             </button>
+            {onUndoLast && (
+              <button
+                type="button"
+                onClick={onUndoLast}
+                disabled={!canUndo}
+                className={`${editBtnClass} ${
+                  canUndo
+                    ? 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
+                    : 'cursor-not-allowed bg-white/60 text-amber-400 ring-1 ring-amber-200'
+                }`}
+                title="Отменить последнее заполнение (Alt+клик)"
+              >
+                Undo / Отменить
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setEditMode('start')}
@@ -664,7 +716,11 @@ export default memo(function GridVisualization({
           <p className="text-amber-800/90">
             Активно: <strong>{prefix}{activeValue}</strong>
             {editMode === 'assign' ? (
-              <> — клик по кабинету, Shift+клик для выделения.</>
+              <>
+                {' '}
+                — клики задают порядок цепочки; повторный клик по последнему снимает его;
+                Undo / Alt+клик — отменить последнее заполнение.
+              </>
             ) : editMode === 'start' ? (
               <> — клик задаёт START для {prefix}{activeValue}.</>
             ) : (
@@ -802,7 +858,7 @@ export default memo(function GridVisualization({
             return (
               <g
                 key={cab.label}
-                onClick={(e) => handleCabinetClick(cab.label, e.shiftKey)}
+                onClick={(e) => handleCabinetClick(cab.label, e.shiftKey, e.altKey)}
                 style={{ cursor: isInteractive ? 'pointer' : 'default' }}
               >
                 <rect

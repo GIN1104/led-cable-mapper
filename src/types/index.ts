@@ -372,6 +372,18 @@ export interface ManualRoutingOverrides {
 
   powerStartPoints?: Record<number, string>
 
+  /**
+   * Упорядоченные метки кабинетов по data-порту (порядок кликов Paint).
+   * Если задано — определяет направление стрелок вместо змейки.
+   */
+  dataPortChains?: Record<number, string[]>
+
+  /**
+   * Упорядоченные метки кабинетов по power-линии (порядок кликов Paint).
+   * Если задано — определяет направление стрелок вместо авто-упорядочивания.
+   */
+  powerLineChains?: Record<number, string[]>
+
 }
 
 
@@ -561,6 +573,10 @@ export const EMPTY_MANUAL_OVERRIDES: ManualRoutingOverrides = {
   dataStartPoints: {},
 
   powerStartPoints: {},
+
+  dataPortChains: {},
+
+  powerLineChains: {},
 
 }
 

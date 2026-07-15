@@ -9,6 +9,11 @@ import { buildAutoManualOverrides } from './lib/routingEngine'
 import { buildCombinedPackingList } from './lib/packingList'
 import { syncCabinetGridFromMeters } from './lib/cabinetGrid'
 import {
+  appendLabelToChain,
+  moveLabelToChainFront,
+  removeLabelFromChains,
+} from './lib/manualChains'
+import {
   getMaxCabinetsPerDataPort,
   getPowerLineLimitHint,
   getMaxPixelsPerDataPort,
@@ -28,6 +33,9 @@ import {
   resolveEquipmentScreenResults,
 } from './lib/equipmentList'
 import type { EquipmentListState } from './lib/equipmentList'
+
+/** Запись стека отмены последнего Paint */
+type PaintUndoEntry = { label: string; value: number }
 function SummaryCard({
   label,
   value,
@@ -74,6 +82,9 @@ export default function App() {
   const [gridLayout, setGridLayout] = useState<GridLayout>('side-by-side')
   const [showCombinedPacking, setShowCombinedPacking] = useState(false)
   const [equipmentList, setEquipmentList] = useState<EquipmentListState | null>(null)
+  /** Стеки отмены последнего заполнения — отдельно для Data и Power по экрану */
+  const [dataPaintUndo, setDataPaintUndo] = useState<Record<string, PaintUndoEntry[]>>({})
+  const [powerPaintUndo, setPowerPaintUndo] = useState<Record<string, PaintUndoEntry[]>>({})
 
   const activeScreen = useMemo(
     () => screens.find((s) => s.id === activeScreenId) ?? screens[0],
@@ -218,16 +229,24 @@ export default function App() {
               dataStartPoints: current.manualModeData
                 ? auto.dataStartPoints
                 : current.manualOverrides.dataStartPoints,
+              dataPortChains: current.manualModeData
+                ? auto.dataPortChains
+                : current.manualOverrides.dataPortChains,
               powerLines: current.manualModePower
                 ? auto.powerLines
                 : current.manualOverrides.powerLines,
               powerStartPoints: current.manualModePower
                 ? auto.powerStartPoints
                 : current.manualOverrides.powerStartPoints,
+              powerLineChains: current.manualModePower
+                ? auto.powerLineChains
+                : current.manualOverrides.powerLineChains,
             },
           },
         }
       })
+      setDataPaintUndo((u) => ({ ...u, [activeScreen.id]: [] }))
+      setPowerPaintUndo((u) => ({ ...u, [activeScreen.id]: [] }))
       setScreens((prev) =>
         prev.map((s) =>
           s.id === activeScreen.id
@@ -272,6 +291,18 @@ export default function App() {
       powerLines: { ...state.manualOverrides.powerLines },
       dataStartPoints: { ...state.manualOverrides.dataStartPoints },
       powerStartPoints: { ...state.manualOverrides.powerStartPoints },
+      dataPortChains: Object.fromEntries(
+        Object.entries(state.manualOverrides.dataPortChains ?? {}).map(([k, v]) => [
+          Number(k),
+          [...v],
+        ]),
+      ),
+      powerLineChains: Object.fromEntries(
+        Object.entries(state.manualOverrides.powerLineChains ?? {}).map(([k, v]) => [
+          Number(k),
+          [...v],
+        ]),
+      ),
     },
   })
 
@@ -303,10 +334,12 @@ export default function App() {
                 ...current.manualOverrides,
                 dataPorts: auto.dataPorts,
                 dataStartPoints: auto.dataStartPoints,
+                dataPortChains: auto.dataPortChains,
               },
             },
           }
         })
+        setDataPaintUndo((prev) => ({ ...prev, [activeScreen.id]: [] }))
       } else {
         setActiveRouting({ manualModeData: false })
       }
@@ -329,10 +362,12 @@ export default function App() {
                 ...current.manualOverrides,
                 powerLines: auto.powerLines,
                 powerStartPoints: auto.powerStartPoints,
+                powerLineChains: auto.powerLineChains,
               },
             },
           }
         })
+        setPowerPaintUndo((prev) => ({ ...prev, [activeScreen.id]: [] }))
       } else {
         setActiveRouting({ manualModePower: false })
       }
@@ -342,20 +377,22 @@ export default function App() {
 
   const handleDataAssignment = useCallback(
     (labels: string[], portNumber: number) => {
+      const emptySet = new Set(
+        screens.find((s) => s.id === activeScreen.id)?.emptyCabinets ?? [],
+      )
+      const painted = labels.filter((label) => !emptySet.has(label))
+      if (painted.length === 0) return
+
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
-        const dataPorts = { ...current.manualOverrides.dataPorts }
-        const dataStartPoints = { ...current.manualOverrides.dataStartPoints }
-        const emptySet = new Set(
-          screens.find((s) => s.id === activeScreen.id)?.emptyCabinets ?? [],
-        )
-        for (const label of labels) {
-          if (!emptySet.has(label)) {
-            dataPorts[label] = portNumber
-            if (!dataStartPoints[portNumber]) {
-              dataStartPoints[portNumber] = label
-            }
-          }
+        let dataPorts = { ...current.manualOverrides.dataPorts }
+        let dataPortChains = { ...(current.manualOverrides.dataPortChains ?? {}) }
+        let dataStartPoints = { ...(current.manualOverrides.dataStartPoints ?? {}) }
+        for (const label of painted) {
+          dataPortChains = appendLabelToChain(dataPortChains, label, portNumber)
+          dataPorts = { ...dataPorts, [label]: portNumber }
+          const first = dataPortChains[portNumber]?.[0]
+          if (first) dataStartPoints[portNumber] = first
         }
         return {
           ...prev,
@@ -365,31 +402,41 @@ export default function App() {
             manualOverrides: {
               ...current.manualOverrides,
               dataPorts,
+              dataPortChains,
               dataStartPoints,
             },
           },
         }
       })
+      setDataPaintUndo((u) => ({
+        ...u,
+        [activeScreen.id]: [
+          ...(u[activeScreen.id] ?? []),
+          ...painted.map((label) => ({ label, value: portNumber })),
+        ],
+      }))
     },
     [activeScreen.id, screens],
   )
 
   const handlePowerAssignment = useCallback(
     (labels: string[], lineNumber: number) => {
+      const emptySet = new Set(
+        screens.find((s) => s.id === activeScreen.id)?.emptyCabinets ?? [],
+      )
+      const painted = labels.filter((label) => !emptySet.has(label))
+      if (painted.length === 0) return
+
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
-        const powerLines = { ...current.manualOverrides.powerLines }
-        const powerStartPoints = { ...current.manualOverrides.powerStartPoints }
-        const emptySet = new Set(
-          screens.find((s) => s.id === activeScreen.id)?.emptyCabinets ?? [],
-        )
-        for (const label of labels) {
-          if (!emptySet.has(label)) {
-            powerLines[label] = lineNumber
-            if (!powerStartPoints[lineNumber]) {
-              powerStartPoints[lineNumber] = label
-            }
-          }
+        let powerLines = { ...current.manualOverrides.powerLines }
+        let powerLineChains = { ...(current.manualOverrides.powerLineChains ?? {}) }
+        let powerStartPoints = { ...(current.manualOverrides.powerStartPoints ?? {}) }
+        for (const label of painted) {
+          powerLineChains = appendLabelToChain(powerLineChains, label, lineNumber)
+          powerLines = { ...powerLines, [label]: lineNumber }
+          const first = powerLineChains[lineNumber]?.[0]
+          if (first) powerStartPoints[lineNumber] = first
         }
         return {
           ...prev,
@@ -399,11 +446,19 @@ export default function App() {
             manualOverrides: {
               ...current.manualOverrides,
               powerLines,
+              powerLineChains,
               powerStartPoints,
             },
           },
         }
       })
+      setPowerPaintUndo((u) => ({
+        ...u,
+        [activeScreen.id]: [
+          ...(u[activeScreen.id] ?? []),
+          ...painted.map((label) => ({ label, value: lineNumber })),
+        ],
+      }))
     },
     [activeScreen.id, screens],
   )
@@ -412,19 +467,166 @@ export default function App() {
     (portNumber: number, label: string) => {
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        const dataPorts = { ...current.manualOverrides.dataPorts, [label]: portNumber }
+        const dataPortChains = moveLabelToChainFront(
+          { ...(current.manualOverrides.dataPortChains ?? {}) },
+          label,
+          portNumber,
+        )
         return {
           ...prev,
           [activeScreen.id]: {
             ...current,
+            manualModeData: true,
             manualOverrides: {
               ...current.manualOverrides,
-              dataStartPoints: { ...current.manualOverrides.dataStartPoints, [portNumber]: label },
+              dataPorts,
+              dataPortChains,
+              dataStartPoints: {
+                ...current.manualOverrides.dataStartPoints,
+                [portNumber]: label,
+              },
             },
           },
         }
       })
     },
     [activeScreen.id],
+  )
+
+  const removeCabinetFromData = useCallback(
+    (label: string) => {
+      setRoutingByScreen((prev) => {
+        const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        const dataPorts = { ...current.manualOverrides.dataPorts }
+        const oldPort = dataPorts[label]
+        delete dataPorts[label]
+        const dataPortChains = removeLabelFromChains(
+          { ...(current.manualOverrides.dataPortChains ?? {}) },
+          label,
+        )
+        const dataStartPoints = { ...(current.manualOverrides.dataStartPoints ?? {}) }
+        if (oldPort != null) {
+          const first = dataPortChains[oldPort]?.[0]
+          if (first) dataStartPoints[oldPort] = first
+          else delete dataStartPoints[oldPort]
+        }
+        for (const [port, start] of Object.entries(dataStartPoints)) {
+          if (start === label) {
+            const first = dataPortChains[Number(port)]?.[0]
+            if (first) dataStartPoints[Number(port)] = first
+            else delete dataStartPoints[Number(port)]
+          }
+        }
+        return {
+          ...prev,
+          [activeScreen.id]: {
+            ...current,
+            manualOverrides: {
+              ...current.manualOverrides,
+              dataPorts,
+              dataPortChains,
+              dataStartPoints,
+            },
+          },
+        }
+      })
+    },
+    [activeScreen.id],
+  )
+
+  const removeCabinetFromPower = useCallback(
+    (label: string) => {
+      setRoutingByScreen((prev) => {
+        const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        const powerLines = { ...current.manualOverrides.powerLines }
+        const oldLine = powerLines[label]
+        delete powerLines[label]
+        const powerLineChains = removeLabelFromChains(
+          { ...(current.manualOverrides.powerLineChains ?? {}) },
+          label,
+        )
+        const powerStartPoints = { ...(current.manualOverrides.powerStartPoints ?? {}) }
+        if (oldLine != null) {
+          const first = powerLineChains[oldLine]?.[0]
+          if (first) powerStartPoints[oldLine] = first
+          else delete powerStartPoints[oldLine]
+        }
+        for (const [line, start] of Object.entries(powerStartPoints)) {
+          if (start === label) {
+            const first = powerLineChains[Number(line)]?.[0]
+            if (first) powerStartPoints[Number(line)] = first
+            else delete powerStartPoints[Number(line)]
+          }
+        }
+        return {
+          ...prev,
+          [activeScreen.id]: {
+            ...current,
+            manualOverrides: {
+              ...current.manualOverrides,
+              powerLines,
+              powerLineChains,
+              powerStartPoints,
+            },
+          },
+        }
+      })
+    },
+    [activeScreen.id],
+  )
+
+  const handleUndoDataLast = useCallback(() => {
+    const stack = dataPaintUndo[activeScreen.id] ?? []
+    if (stack.length === 0) return
+    const entry = stack[stack.length - 1]
+    setDataPaintUndo((u) => ({
+      ...u,
+      [activeScreen.id]: (u[activeScreen.id] ?? []).slice(0, -1),
+    }))
+    removeCabinetFromData(entry.label)
+  }, [activeScreen.id, dataPaintUndo, removeCabinetFromData])
+
+  const handleUndoPowerLast = useCallback(() => {
+    const stack = powerPaintUndo[activeScreen.id] ?? []
+    if (stack.length === 0) return
+    const entry = stack[stack.length - 1]
+    setPowerPaintUndo((u) => ({
+      ...u,
+      [activeScreen.id]: (u[activeScreen.id] ?? []).slice(0, -1),
+    }))
+    removeCabinetFromPower(entry.label)
+  }, [activeScreen.id, powerPaintUndo, removeCabinetFromPower])
+
+  /** Клик по последнему кабинету активной линии — снять заполнение */
+  const handleUndoDataCabinet = useCallback(
+    (label: string) => {
+      setDataPaintUndo((u) => {
+        const stack = u[activeScreen.id] ?? []
+        const idx = [...stack].map((e) => e.label).lastIndexOf(label)
+        if (idx < 0) return u
+        const next = [...stack]
+        next.splice(idx, 1)
+        return { ...u, [activeScreen.id]: next }
+      })
+      removeCabinetFromData(label)
+    },
+    [activeScreen.id, removeCabinetFromData],
+  )
+
+  const handleUndoPowerCabinet = useCallback(
+    (label: string) => {
+      setPowerPaintUndo((u) => {
+        const stack = u[activeScreen.id] ?? []
+        const idx = [...stack].map((e) => e.label).lastIndexOf(label)
+        if (idx < 0) return u
+        const next = [...stack]
+        next.splice(idx, 1)
+        return { ...u, [activeScreen.id]: next }
+      })
+      removeCabinetFromPower(label)
+    },
+    [activeScreen.id, removeCabinetFromPower],
   )
 
   const handleClearDataManual = useCallback(() => {
@@ -439,10 +641,12 @@ export default function App() {
             ...current.manualOverrides,
             dataPorts: {},
             dataStartPoints: {},
+            dataPortChains: {},
           },
         },
       }
     })
+    setDataPaintUndo((u) => ({ ...u, [activeScreen.id]: [] }))
   }, [activeScreen.id])
 
   const handleClearPowerManual = useCallback(() => {
@@ -457,17 +661,27 @@ export default function App() {
             ...current.manualOverrides,
             powerLines: {},
             powerStartPoints: {},
+            powerLineChains: {},
           },
         },
       }
     })
+    setPowerPaintUndo((u) => ({ ...u, [activeScreen.id]: [] }))
   }, [activeScreen.id])
 
   const handlePowerStartPoint = useCallback(
     (lineNumber: number, label: string) => {
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
-        const assignedLine = current.manualOverrides.powerLines[label]
+        const powerLines = {
+          ...current.manualOverrides.powerLines,
+          [label]: lineNumber,
+        }
+        const powerLineChains = moveLabelToChainFront(
+          { ...(current.manualOverrides.powerLineChains ?? {}) },
+          label,
+          lineNumber,
+        )
         return {
           ...prev,
           [activeScreen.id]: {
@@ -475,10 +689,8 @@ export default function App() {
             manualModePower: true,
             manualOverrides: {
               ...current.manualOverrides,
-              powerLines:
-                assignedLine == null
-                  ? { ...current.manualOverrides.powerLines, [label]: lineNumber }
-                  : current.manualOverrides.powerLines,
+              powerLines,
+              powerLineChains,
               powerStartPoints: {
                 ...current.manualOverrides.powerStartPoints,
                 [lineNumber]: label,
@@ -506,11 +718,27 @@ export default function App() {
           const powerStartPoints = { ...current.manualOverrides.powerStartPoints }
           delete dataPorts[label]
           delete powerLines[label]
+          const dataPortChains = removeLabelFromChains(
+            { ...(current.manualOverrides.dataPortChains ?? {}) },
+            label,
+          )
+          const powerLineChains = removeLabelFromChains(
+            { ...(current.manualOverrides.powerLineChains ?? {}) },
+            label,
+          )
           for (const [port, start] of Object.entries(dataStartPoints)) {
-            if (start === label) delete dataStartPoints[Number(port)]
+            if (start === label) {
+              const first = dataPortChains[Number(port)]?.[0]
+              if (first) dataStartPoints[Number(port)] = first
+              else delete dataStartPoints[Number(port)]
+            }
           }
           for (const [line, start] of Object.entries(powerStartPoints)) {
-            if (start === label) delete powerStartPoints[Number(line)]
+            if (start === label) {
+              const first = powerLineChains[Number(line)]?.[0]
+              if (first) powerStartPoints[Number(line)] = first
+              else delete powerStartPoints[Number(line)]
+            }
           }
           return {
             ...prev,
@@ -521,6 +749,8 @@ export default function App() {
                 powerLines,
                 dataStartPoints,
                 powerStartPoints,
+                dataPortChains,
+                powerLineChains,
               },
             },
           }
@@ -765,10 +995,14 @@ export default function App() {
                   emptyPaintMode={emptyPaintMode}
                   onToggleEmpty={handleToggleEmpty}
                   manualAssignments={manualOverrides.dataPorts}
+                  chainOrder={manualOverrides.dataPortChains ?? {}}
                   startPoints={manualOverrides.dataStartPoints ?? {}}
                   onAssign={handleDataAssignment}
                   onSetStartPoint={handleDataStartPoint}
                   onClearManual={handleClearDataManual}
+                  onUndoLast={handleUndoDataLast}
+                  onUndoCabinet={handleUndoDataCabinet}
+                  canUndo={(dataPaintUndo[activeScreen.id] ?? []).length > 0}
                   maxAssignable={Math.max(
                     result!.summary.dataPorts,
                     autoResult?.summary.dataPorts ?? result!.summary.dataPorts,
@@ -788,10 +1022,14 @@ export default function App() {
                   emptyPaintMode={emptyPaintMode}
                   onToggleEmpty={handleToggleEmpty}
                   manualAssignments={manualOverrides.powerLines}
+                  chainOrder={manualOverrides.powerLineChains ?? {}}
                   startPoints={manualOverrides.powerStartPoints ?? {}}
                   onAssign={handlePowerAssignment}
                   onSetStartPoint={handlePowerStartPoint}
                   onClearManual={handleClearPowerManual}
+                  onUndoLast={handleUndoPowerLast}
+                  onUndoCabinet={handleUndoPowerCabinet}
+                  canUndo={(powerPaintUndo[activeScreen.id] ?? []).length > 0}
                   maxAssignable={Math.max(
                     result!.summary.powerLines,
                     autoResult?.summary.powerLines ?? result!.summary.powerLines,
