@@ -5,6 +5,7 @@ export type EquipmentAutoKey =
   | 'screenSummary'
   | 'ledCard'
   | 'cvtOptical'
+  | 'opticCable'
   | 'dataCables'
   | 'speakons'
   | 'powerTrunks'
@@ -86,7 +87,7 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'robot-32a', hebrew: 'רובוט', russian: 'Робот 32А', autoKey: 'robot32a' },
   { id: 'three-phase', hebrew: 'תלת פאזי', russian: 'Кабель 32А (трёхфазный)' },
   { id: 'sdi', hebrew: 'כבל SDI', russian: 'Кабель SDI' },
-  { id: 'fiber', hebrew: 'כבל אופטי', russian: 'Оптический кабель' },
+  { id: 'fiber', hebrew: 'כבל אופטי', russian: 'Оптический кабель', autoKey: 'opticCable' },
   {
     id: 'cvt',
     hebrew: 'CVT / ממיר אופטי',
@@ -342,6 +343,11 @@ export function resolveEquipmentAutoQuantity(
     case 'cvtOptical': {
       const cvt = aggregateCvtOptical(results)
       return cvt.quantity > 0 ? cvt.quantity : undefined
+    }
+    case 'opticCable': {
+      // Если есть CVT — оптический кабель: суммарное qty CVT + 1
+      const cvt = aggregateCvtOptical(results)
+      return cvt.quantity > 0 ? cvt.quantity + 1 : undefined
     }
     case 'dataCables':
       return countDataTrunkAndLinkCables(cableSchedule)

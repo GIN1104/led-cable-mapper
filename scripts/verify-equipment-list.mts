@@ -142,6 +142,8 @@ assertEq(
 )
 assertEq('cable-ties default +', qtyById(state10x3, 'cable-ties'), '+')
 assertEq('cable-ties has no autoKey', state10x3.rows.find((r) => r.id === 'cable-ties')?.autoKey ?? '', '')
+assertEq('tool-bag default +', qtyById(state10x3, 'tool-bag'), '+')
+assertEq('fiber empty without CVT', qtyById(state10x3, 'fiber'), '')
 
 // Refresh keeps "+" when not quantityManual
 const state10x3Refresh = buildEquipmentListState(
@@ -281,6 +283,7 @@ const stateCvt = buildEquipmentListState(
   [],
 )
 assertEq('cvt row qty', qtyById(stateCvt, 'cvt'), 1)
+assertEq('fiber row qty = CVT+1', qtyById(stateCvt, 'fiber'), 2)
 assertEq(
   'cvt row russian',
   stateCvt.rows.find((r) => r.id === 'cvt')?.russian ?? '',
@@ -301,6 +304,51 @@ assertEq(
     [],
   ),
   1,
+)
+assertEq(
+  'opticCable = CVT+1',
+  resolveEquipmentAutoQuantity(
+    'opticCable',
+    [makeConfig(10, 3, 'c2', 'C2', { trunkLengthM: 50 })],
+    [
+      {
+        screen: makeConfig(10, 3, 'c2', 'C2', { trunkLengthM: 50 }),
+        result: fakeResult(4),
+      },
+    ],
+    [],
+  ),
+  2,
+)
+assertEq(
+  'opticCable empty when no CVT',
+  resolveEquipmentAutoQuantity(
+    'opticCable',
+    [makeConfig(10, 3, 'c1', 'C1', { trunkLengthM: 15 })],
+    [
+      {
+        screen: makeConfig(10, 3, 'c1', 'C1', { trunkLengthM: 15 }),
+        result: fakeResult(4),
+      },
+    ],
+    [],
+  ),
+  '',
+)
+assertEq(
+  'opticCable ports8 → CVT2+1=3',
+  resolveEquipmentAutoQuantity(
+    'opticCable',
+    [makeConfig(10, 3, 'c3', 'C3', { trunkLengthM: 15 })],
+    [
+      {
+        screen: makeConfig(10, 3, 'c3', 'C3', { trunkLengthM: 15 }),
+        result: fakeResult(8),
+      },
+    ],
+    [],
+  ),
+  3,
 )
 
 // --- Подвес (hangMount): шпрайцы ↔ подвес/тросы ---
