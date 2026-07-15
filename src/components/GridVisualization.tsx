@@ -360,23 +360,24 @@ export default memo(function GridVisualization({
   }, [isData, dataChains, powerLines, manualAssignments, maxAssignable])
 
   const effectiveStartPoints = useMemo(() => {
-    if (manualMode) return startPoints
-    const map: Record<number, string> = {}
+    const map: Record<number, string> = { ...startPoints }
     if (isData) {
       for (const chain of dataChains) {
-        if (!chain.isBackup && chain.cabinets.length > 0) {
-          map[chain.portNumber] =
-            inferDataChainStart(chain.cabinets, chainStartEdge) ??
-            chain.cabinets[0].label
-        }
+        if (chain.isBackup || chain.cabinets.length === 0) continue
+        if (map[chain.portNumber]) continue
+        map[chain.portNumber] = manualMode
+          ? chain.cabinets[0].label
+          : (inferDataChainStart(chain.cabinets, chainStartEdge) ??
+            chain.cabinets[0].label)
       }
     } else {
       for (const line of powerLines) {
-        if (line.cabinets.length > 0) {
-          map[line.lineNumber] =
-            inferPowerLineStart(line.cabinets, chainStartEdge) ??
-            line.cabinets[0].label
-        }
+        if (line.cabinets.length === 0) continue
+        if (map[line.lineNumber]) continue
+        map[line.lineNumber] = manualMode
+          ? line.cabinets[0].label
+          : (inferPowerLineStart(line.cabinets, chainStartEdge) ??
+            line.cabinets[0].label)
       }
     }
     return map

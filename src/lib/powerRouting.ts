@@ -625,44 +625,121 @@ function partitionBandPShape(
   return paths
 }
 
-/** Оценка плана остатка: меньше линий лучше, затем крупнее средняя линия */
-function scoreRemainderPlan(paths: Cabinet[][]): { lines: number; avgFill: number } {
-  if (paths.length === 0) return { lines: Infinity, avgFill: 0 }
-  const total = paths.reduce((sum, p) => sum + p.length, 0)
-  return { lines: paths.length, avgFill: total / paths.length }
+/** Оценка плана остатка: меньше линий → равнее длины → крупнее среднее заполнение */
+function scoreRemainderPlan(paths: Cabinet[][]): {
+  lines: number
+  avgFill: number
+  variance: number
+} {
+  if (paths.length === 0) {
+    return { lines: Infinity, avgFill: 0, variance: Infinity }
+  }
+  const lengths = paths.map((p) => p.length)
+  const total = lengths.reduce((sum, n) => sum + n, 0)
+  const avgFill = total / paths.length
+  const variance =
+    lengths.reduce((sum, n) => sum + (n - avgFill) ** 2, 0) / paths.length
+  return { lines: paths.length, avgFill, variance }
+}
+
+/** true, если a лучше b (меньше хаоса при том же числе линий) */
+function isBetterRemainderScore(
+  a: ReturnType<typeof scoreRemainderPlan>,
+  b: ReturnType<typeof scoreRemainderPlan>,
+): boolean {
+  if (a.lines !== b.lines) return a.lines < b.lines
+  // При равном числе линий предпочитаем равные длины (меньше 12+4+12+4)
+  if (Math.abs(a.variance - b.variance) > 1e-9) return a.variance < b.variance
+  return a.avgFill > b.avgFill
 }
 
 /**
- * Остаток: выбираем P-паттерн или короткие горизонтали — меньше линий / плотнее заполнение.
+ * Вертикальные колонки снизу вверх: одна линия на столбец (длина = высота, ≤ max).
+ * Для высокого узкого остатка даёт одинаковые линии вместо чередующихся P.
+ */
+function partitionBandVerticalColumns(
+  bandCabs: Cabinet[],
+  config: ScreenConfig,
+): Cabinet[][] {
+  const maxSize = getMaxCabinetsPerPowerLine(config)
+  const direction = edgeToDirection(config.chainStartEdge)
+  const ltr = direction === 'ltr'
+  const minCol = Math.min(...bandCabs.map((c) => c.col))
+  const maxCol = Math.max(...bandCabs.map((c) => c.col))
+  const pool = new Map(bandCabs.map((c) => [c.label, c]))
+  const paths: Cabinet[][] = []
+
+  const cols: number[] = []
+  if (ltr) {
+    for (let col = minCol; col <= maxCol; col++) cols.push(col)
+  } else {
+    for (let col = maxCol; col >= minCol; col--) cols.push(col)
+  }
+
+  for (const col of cols) {
+    const colCabs = [...pool.values()]
+      .filter((c) => c.col === col)
+      .sort((a, b) => b.row - a.row) // снизу вверх
+
+    let i = 0
+    while (i < colCabs.length) {
+      const chunk = colCabs.slice(i, i + maxSize)
+      if (chunk.length === 0) break
+      paths.push(chunk)
+      for (const cab of chunk) pool.delete(cab.label)
+      i += maxSize
+    }
+  }
+
+  return paths
+}
+
+/**
+ * Остаток: P / горизонтали / вертикальные колонки — меньше линий,
+ * затем равные длины (высокий остаток → колонки снизу вверх).
  */
 function partitionRemainderBand(
   bandCabs: Cabinet[],
   config: ScreenConfig,
 ): Cabinet[][] {
+  if (bandCabs.length === 0) return []
+
   const maxSize = getMaxCabinetsPerPowerLine(config)
-  const bandWidth =
-    Math.max(...bandCabs.map((c) => c.col)) -
-    Math.min(...bandCabs.map((c) => c.col)) +
-    1
+  const minCol = Math.min(...bandCabs.map((c) => c.col))
+  const maxCol = Math.max(...bandCabs.map((c) => c.col))
+  const minRow = Math.min(...bandCabs.map((c) => c.row))
+  const maxRow = Math.max(...bandCabs.map((c) => c.row))
+  const bandWidth = maxCol - minCol + 1
+  const bandHeight = maxRow - minRow + 1
   const horizFill = Math.min(maxSize, Math.max(1, bandWidth))
 
-  const pPaths = partitionBandPShape(bandCabs, config)
-  const hPaths = partitionBandHorizontalStrips(bandCabs, config, horizFill)
+  const candidates: Cabinet[][][] = [
+    partitionBandPShape(bandCabs, config),
+    partitionBandHorizontalStrips(bandCabs, config, horizFill),
+  ]
 
-  const pScore = scoreRemainderPlan(pPaths)
-  const hScore = scoreRemainderPlan(hPaths)
+  // Высокий/полный по высоте остаток: колонки длины height дают равные линии
+  const isTallRemainder = bandHeight >= bandWidth
+  if (isTallRemainder || bandHeight <= maxSize) {
+    candidates.push(partitionBandVerticalColumns(bandCabs, config))
+  }
 
-  if (pScore.lines < hScore.lines) return pPaths
-  if (hScore.lines < pScore.lines) return hPaths
-  // Ничья по числу линий — берём план с большим средним заполнением;
-  // при равенстве предпочитаем P (лучше использует узкий остаток).
-  if (pScore.avgFill >= hScore.avgFill) return pPaths
-  return hPaths
+  let best = candidates[0]
+  let bestScore = scoreRemainderPlan(best)
+  for (let i = 1; i < candidates.length; i++) {
+    const score = scoreRemainderPlan(candidates[i])
+    if (isBetterRemainderScore(score, bestScore)) {
+      best = candidates[i]
+      bestScore = score
+    }
+  }
+  return best
 }
 
 /**
  * 3.9 big/small: полосы по choosePowerPackWidth (preferred если ≤6 полных линий,
- * иначе max); в полной полосе — горизонтали снизу вверх; остаток — P или горизонтали.
+ * иначе max); в полной полосе — горизонтали снизу вверх;
+ * остаток — P / горизонтали / вертикальные колонки (равные линии).
  */
 function partitionHorizontalStripComponent(
   component: Cabinet[],

@@ -1,5 +1,5 @@
 /**
- * Проверка авто-маршрутизации power: 7×3 м, 10×3 м, кейс где max(12) лучше.
+ * Проверка авто-маршрутизации power: 7×3 м, 10×3 м, 14×8 м, кейс где max(12) лучше.
  * Запуск: npm run verify:power
  */
 import type { ChainStartEdge, ScreenConfig } from '../src/types/index.ts'
@@ -113,6 +113,32 @@ function assertPackWidth(
   return ok
 }
 
+function rowLetters(high: number): string[] {
+  // A = низ, далее вверх: A,B,C,... для high рядов
+  return Array.from({ length: high }, (_, i) => String.fromCharCode(65 + i))
+}
+
+/** Горизонтальная полоса ряда letter, столбцы fromCol..toCol включительно */
+function horizStrip(
+  letter: string,
+  fromCol: number,
+  toCol: number,
+  rtl = false,
+): string[] {
+  const cols: number[] = []
+  if (rtl) {
+    for (let c = toCol; c >= fromCol; c--) cols.push(c)
+  } else {
+    for (let c = fromCol; c <= toCol; c++) cols.push(c)
+  }
+  return cols.map((c) => `${letter}${c}`)
+}
+
+/** Вертикаль снизу вверх в столбце col по буквам A.. */
+function vertCol(col: number, letters: string[]): string[] {
+  return letters.map((letter) => `${letter}${col}`)
+}
+
 // 7m×3m = 14×3: ширина не делится на 10 → pack 12; остаток 2 кол. — P-паттерн
 const ok7Ltr = runCase(7, 3, 'left', '7m×3m 3.9 Big LTR', [
   ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A11', 'A12'],
@@ -158,6 +184,24 @@ const ok6Ltr = runCase(6, 3, 'left', '6m×3m 3.9 Big LTR (12 better than 10)', [
   ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12'],
 ])
 
+/*
+ * 14m×8m = 28×8: pack 12 → две полосы 12 + остаток 4×8.
+ * Остаток: 4 одинаковые вертикали по 8 (не 12+4+12+4).
+ */
+const letters8 = rowLetters(8)
+const expected14x8: string[][] = [
+  ...letters8.map((L) => horizStrip(L, 1, 12)),
+  ...letters8.map((L) => horizStrip(L, 13, 24)),
+  ...[25, 26, 27, 28].map((col) => vertCol(col, letters8)),
+]
+const ok14x8 = runCase(
+  14,
+  8,
+  'left',
+  '14m×8m 3.9 Big LTR (equal vertical remainder)',
+  expected14x8,
+)
+
 const configBig = makeConfig(10, 3)
 const pref = getPreferredCabinetsPerPowerLine(configBig)
 const max = getMaxCabinetsPerPowerLine(configBig)
@@ -166,9 +210,10 @@ const okDecisions =
   assertPackWidth(20, 3, pref, max, 10, '10m×3m clean ≤6 → preferred') &&
   assertPackWidth(14, 3, pref, max, 12, '7m×3m rem → max') &&
   assertPackWidth(12, 3, pref, max, 12, '6m×3m clean-at-max → max') &&
-  assertPackWidth(20, 4, pref, max, 12, '10m×4m preferred would be 8 lines → max')
+  assertPackWidth(20, 4, pref, max, 12, '10m×4m preferred would be 8 lines → max') &&
+  assertPackWidth(28, 8, pref, max, 12, '14m×8m rem → max')
 
 const allOk =
-  ok7Ltr && ok10Ltr && ok7Rtl && ok10Rtl && ok6Ltr && okDecisions
+  ok7Ltr && ok10Ltr && ok7Rtl && ok10Rtl && ok6Ltr && ok14x8 && okDecisions
 console.log(`\n${allOk ? 'ALL PASS' : 'SOME FAILED'}`)
 process.exit(allOk ? 0 : 1)

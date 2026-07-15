@@ -431,12 +431,10 @@ export default function App() {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         let powerLines = { ...current.manualOverrides.powerLines }
         let powerLineChains = { ...(current.manualOverrides.powerLineChains ?? {}) }
-        let powerStartPoints = { ...(current.manualOverrides.powerStartPoints ?? {}) }
+        // START не двигаем при Paint — только через Set Start
         for (const label of painted) {
           powerLineChains = appendLabelToChain(powerLineChains, label, lineNumber)
           powerLines = { ...powerLines, [label]: lineNumber }
-          const first = powerLineChains[lineNumber]?.[0]
-          if (first) powerStartPoints[lineNumber] = first
         }
         return {
           ...prev,
@@ -447,7 +445,6 @@ export default function App() {
               ...current.manualOverrides,
               powerLines,
               powerLineChains,
-              powerStartPoints,
             },
           },
         }
@@ -547,17 +544,12 @@ export default function App() {
           label,
         )
         const powerStartPoints = { ...(current.manualOverrides.powerStartPoints ?? {}) }
-        if (oldLine != null) {
-          const first = powerLineChains[oldLine]?.[0]
-          if (first) powerStartPoints[oldLine] = first
-          else delete powerStartPoints[oldLine]
-        }
+        // Сбрасываем START только если удалили сам стартовый кабинет
         for (const [line, start] of Object.entries(powerStartPoints)) {
-          if (start === label) {
-            const first = powerLineChains[Number(line)]?.[0]
-            if (first) powerStartPoints[Number(line)] = first
-            else delete powerStartPoints[Number(line)]
-          }
+          if (start === label) delete powerStartPoints[Number(line)]
+        }
+        if (oldLine != null && powerLineChains[oldLine] == null) {
+          delete powerStartPoints[oldLine]
         }
         return {
           ...prev,
@@ -734,11 +726,7 @@ export default function App() {
             }
           }
           for (const [line, start] of Object.entries(powerStartPoints)) {
-            if (start === label) {
-              const first = powerLineChains[Number(line)]?.[0]
-              if (first) powerStartPoints[Number(line)] = first
-              else delete powerStartPoints[Number(line)]
-            }
+            if (start === label) delete powerStartPoints[Number(line)]
           }
           return {
             ...prev,
