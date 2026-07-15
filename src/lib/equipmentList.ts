@@ -100,8 +100,8 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'cable-ties', hebrew: 'אזיקונים', russian: 'Азиконим', defaultQuantity: '+' },
   { id: 'gaffa', hebrew: 'גפה', russian: 'Гафа', defaultQuantity: '+' },
   { id: 'screws', hebrew: 'ברגים', russian: 'Шурупы', defaultQuantity: '+' },
-  { id: 'stage-deck', hebrew: 'במה', russian: 'Сцены' },
   { id: 'drill', hebrew: 'מברגה', russian: 'Шуруповёрт', defaultQuantity: '+' },
+  { id: 'stage-deck', hebrew: 'במה', russian: 'Сцены' },
   { id: 'truss', hebrew: 'טראנס', russian: 'Ферма (трас)' },
 ]
 
