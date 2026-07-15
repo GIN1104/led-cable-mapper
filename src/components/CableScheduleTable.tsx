@@ -17,7 +17,7 @@ export default function CableScheduleTable({
   title = 'Cable Schedule',
 }: CableScheduleTableProps) {
   return (
-    <CollapsibleSection title={title}>
+    <CollapsibleSection title={title} defaultExpanded={false}>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-xs sm:min-w-[900px]">
           <thead>
