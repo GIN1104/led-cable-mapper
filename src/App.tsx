@@ -79,7 +79,7 @@ export default function App() {
     [DEFAULT_PROJECT.activeScreenId]: { ...EMPTY_SCREEN_ROUTING },
   })
   const [emptyPaintMode, setEmptyPaintMode] = useState(false)
-  const [gridLayout, setGridLayout] = useState<GridLayout>('side-by-side')
+  const [gridLayout, setGridLayout] = useState<GridLayout>('stacked')
   const [showCombinedPacking, setShowCombinedPacking] = useState(false)
   const [equipmentList, setEquipmentList] = useState<EquipmentListState | null>(null)
   /** Стеки отмены последнего заполнения — отдельно для Data и Power по экрану */
