@@ -303,11 +303,13 @@ assertEq(
   1,
 )
 
-// --- Подвес (hangMount): шпрайцы ↔ тросы/подвес ---
-console.log('\n=== Hang mount: sprayers vs hangers ===')
+// --- Подвес (hangMount): шпрайцы ↔ подвес/тросы ---
+console.log('\n=== Hang mount: sprayers vs hangers / straps ===')
 const hangScreen = makeConfig(10, 3, 'hang', 'Hang', { hangMount: true })
+const hangScreen7 = makeConfig(7, 3, 'hang7', 'Hang7', { hangMount: true })
 const floorScreen = makeConfig(10, 3, 'floor', 'Floor', { hangMount: false })
 const hangResult = computeRouting(hangScreen)
+const hangResult7 = computeRouting(hangScreen7)
 const floorResult = computeRouting(floorScreen)
 
 assertEq(
@@ -326,8 +328,23 @@ assertEq(
   10,
 )
 assertEq(
+  'hangStraps hang 10m → 15',
+  resolveEquipmentAutoQuantity('hangStraps', [hangScreen], [{ screen: hangScreen, result: hangResult }], []),
+  15,
+)
+assertEq(
+  'hangStraps hang 7m → 11',
+  resolveEquipmentAutoQuantity('hangStraps', [hangScreen7], [{ screen: hangScreen7, result: hangResult7 }], []),
+  11,
+)
+assertEq(
   'hangers floor → 0/empty',
   resolveEquipmentAutoQuantity('hangers', [floorScreen], [{ screen: floorScreen, result: floorResult }], []),
+  0,
+)
+assertEq(
+  'hangStraps floor → 0/empty',
+  resolveEquipmentAutoQuantity('hangStraps', [floorScreen], [{ screen: floorScreen, result: floorResult }], []),
   0,
 )
 
@@ -345,6 +362,11 @@ assertEq(
   resolveEquipmentAutoQuantity('hangers', [hangScreen, floorScreen], mixedHangResults, []),
   10,
 )
+assertEq(
+  'mixed: hangStraps from hang only',
+  resolveEquipmentAutoQuantity('hangStraps', [hangScreen, floorScreen], mixedHangResults, []),
+  15,
+)
 
 const stateHang = buildEquipmentListState(
   [hangScreen],
@@ -353,16 +375,17 @@ const stateHang = buildEquipmentListState(
   hangResult.packingList,
 )
 assertEq('hang: sprays row empty', qtyById(stateHang, 'sprays'), '')
-assertEq('hang: rigging-wire qty', qtyById(stateHang, 'rigging-wire'), 10)
 assertEq('hang: hangers qty', qtyById(stateHang, 'hangers'), 10)
+assertEq('hang: rigging-wire qty', qtyById(stateHang, 'rigging-wire'), 15)
 
 const templateOrder = stateHang.rows.map((r) => r.id)
 const spraysIdx = templateOrder.indexOf('sprays')
-const riggingIdx = templateOrder.indexOf('rigging-wire')
 const hangersIdx = templateOrder.indexOf('hangers')
+const riggingIdx = templateOrder.indexOf('rigging-wire')
 const computerIdx = templateOrder.indexOf('computer')
-assertEq('order: sprays before rigging', spraysIdx < riggingIdx ? 1 : 0, 1)
-assertEq('order: hangers after rigging', hangersIdx === spraysIdx + 2 ? 1 : 0, 1)
+assertEq('order: sprays before hangers', spraysIdx < hangersIdx ? 1 : 0, 1)
+assertEq('order: hangers before rigging', hangersIdx === spraysIdx + 1 ? 1 : 0, 1)
+assertEq('order: rigging after hangers', hangersIdx + 1 === riggingIdx ? 1 : 0, 1)
 assertEq('order: hang gear before computer', hangersIdx < computerIdx ? 1 : 0, 1)
 
 if (failed > 0) {

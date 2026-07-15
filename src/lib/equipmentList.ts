@@ -10,6 +10,7 @@ export type EquipmentAutoKey =
   | 'powerTrunks'
   | 'sprayers'
   | 'hangers'
+  | 'hangStraps'
   | 'robot32a'
 
 /** Модель оптического конвертера CVT */
@@ -63,13 +64,13 @@ export interface EquipmentListState {
 export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'screen', hebrew: 'מסך', russian: 'Экран', autoKey: 'screenSummary' },
   { id: 'sprays', hebrew: 'שפרייצים', russian: 'Шпрайцы', autoKey: 'sprayers' },
+  { id: 'hangers', hebrew: 'תלייה', russian: 'Подвес', autoKey: 'hangers' },
   {
     id: 'rigging-wire',
     hebrew: 'רצועות תלייה',
     russian: 'Тросы для подвеса',
-    autoKey: 'hangers',
+    autoKey: 'hangStraps',
   },
-  { id: 'hangers', hebrew: 'תלייה', russian: 'Подвес', autoKey: 'hangers' },
   { id: 'computer', hebrew: 'מחשב', russian: 'Компьютер' },
   /** Процессор по умолчанию не нужен — без autoKey, количество пустое */
   { id: 'processor', hebrew: 'פרוצסור', russian: 'Процессор' },
@@ -197,13 +198,23 @@ function sumSprayers(screens: ScreenConfig[]): number {
 }
 
 /**
- * Подвес / тросы: 1 м ширины → 1 шт. Только экраны с hangMount.
+ * Подвес (תלייה): 1 м ширины → 1 шт. Только экраны с hangMount.
  * Math.max(1, Math.ceil(wallWidthM)), чтобы не занижать.
  */
 function sumHangers(screens: ScreenConfig[]): number {
   return screens
     .filter((screen) => screen.hangMount)
     .reduce((sum, screen) => sum + Math.max(1, Math.ceil(screen.wallWidthM)), 0)
+}
+
+/**
+ * Тросы (רצועות תלייה): 1.5 × ширина в м, округление вверх.
+ * Только экраны с hangMount. Пример: 10м → 15, 7м → 11.
+ */
+function sumHangStraps(screens: ScreenConfig[]): number {
+  return screens
+    .filter((screen) => screen.hangMount)
+    .reduce((sum, screen) => sum + Math.ceil(screen.wallWidthM * 1.5), 0)
 }
 
 /**
@@ -348,6 +359,11 @@ export function resolveEquipmentAutoQuantity(
     case 'hangers': {
       if (screens.length === 0) return undefined
       const qty = sumHangers(screens)
+      return qty > 0 ? qty : 0
+    }
+    case 'hangStraps': {
+      if (screens.length === 0) return undefined
+      const qty = sumHangStraps(screens)
       return qty > 0 ? qty : 0
     }
     case 'robot32a': {
