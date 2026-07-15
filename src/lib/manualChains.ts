@@ -64,6 +64,18 @@ export function startPointsFromChains(
   return map
 }
 
+/** Очищает одну линию: удаляет цепочку и возвращает снятые метки */
+export function clearChain(
+  chains: Record<number, string[]>,
+  line: number,
+): { chains: Record<number, string[]>; labels: string[] } {
+  const chain = chains[line] ?? []
+  if (chain.length === 0) return { chains, labels: [] }
+  const next = { ...chains }
+  delete next[line]
+  return { chains: next, labels: [...chain] }
+}
+
 /** Переворачивает цепочку одной линии: первый кабинет → последний */
 export function reverseChain(
   chains: Record<number, string[]>,

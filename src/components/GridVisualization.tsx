@@ -58,6 +58,8 @@ interface GridVisualizationProps {
   onUndoCabinet?: (label: string) => void
   /** Перевернуть порядок кабинетов активной линии */
   onReverseActiveLine?: (lineNumber: number) => void
+  /** Очистить все кабинеты активной линии */
+  onClearActiveLine?: (lineNumber: number) => void
   canUndo?: boolean
   maxAssignable?: number
   chainStartEdge?: ChainStartEdge
@@ -228,6 +230,7 @@ export default memo(function GridVisualization({
   onUndoLast,
   onUndoCabinet,
   onReverseActiveLine,
+  onClearActiveLine,
   canUndo = false,
   maxAssignable = 1,
   chainStartEdge = 'left',
@@ -807,6 +810,21 @@ export default memo(function GridVisualization({
                 Reverse / Перевернуть / הפוך
               </button>
             )}
+            {onClearActiveLine && (
+              <button
+                type="button"
+                onClick={() => onClearActiveLine(activeValue)}
+                disabled={(chainOrder[activeValue] ?? []).length === 0}
+                className={`${editBtnClass} ${
+                  (chainOrder[activeValue] ?? []).length > 0
+                    ? 'bg-white text-red-700 ring-1 ring-red-300 hover:bg-red-50'
+                    : 'cursor-not-allowed bg-white/60 text-red-300 ring-1 ring-red-200'
+                }`}
+                title={`Очистить ${prefix}${activeValue}: снять все кабинеты с линии`}
+              >
+                Clear line / Очистить линию / נקה שורה
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setEditMode('start')}
@@ -890,7 +908,8 @@ export default memo(function GridVisualization({
               <>
                 {' '}
                 — клики задают порядок цепочки; повторный клик по последнему снимает его;
-                Undo / Alt+клик — отменить последнее; Reverse — первый кабинет станет последним.
+                Undo / Alt+клик — отменить последнее; Reverse — первый кабинет станет последним;
+                Clear line — снять все кабинеты с активной линии.
               </>
             ) : editMode === 'start' ? (
               <>
