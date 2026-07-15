@@ -1,4 +1,5 @@
 import { computeRouting, buildAutoManualOverrides } from '../src/lib/routingEngine'
+import { renumberLine } from '../src/lib/manualChains'
 import { createScreen } from '../src/types'
 import { fullRoutingKey } from '../src/lib/screenConfigHash'
 
@@ -91,6 +92,53 @@ if (sample.length >= 3) {
     console.error('FAIL: reverse order not applied', revLabels)
     process.exit(1)
   }
+}
+
+// Перенумерация: move (целевая пуста)
+{
+  const moved = renumberLine(
+    { 1: ['A1', 'A2'] },
+    { 1: 'A1' },
+    { A1: 1, A2: 1 },
+    1,
+    4,
+  )
+  if (
+    !moved ||
+    moved.chains[4]?.join(',') !== 'A1,A2' ||
+    moved.chains[1] != null ||
+    moved.assignments.A1 !== 4 ||
+    moved.startPoints[4] !== 'A1' ||
+    moved.startPoints[1] != null
+  ) {
+    console.error('FAIL: renumber move', moved)
+    process.exit(1)
+  }
+  console.log('Renumber move: D1 → D4 OK')
+}
+
+// Перенумерация: swap (обе линии заняты)
+{
+  const swapped = renumberLine(
+    { 1: ['A1', 'A2'], 4: ['B1', 'B2'] },
+    { 1: 'A1', 4: 'B1' },
+    { A1: 1, A2: 1, B1: 4, B2: 4 },
+    1,
+    4,
+  )
+  if (
+    !swapped ||
+    swapped.chains[1]?.join(',') !== 'B1,B2' ||
+    swapped.chains[4]?.join(',') !== 'A1,A2' ||
+    swapped.assignments.A1 !== 4 ||
+    swapped.assignments.B1 !== 1 ||
+    swapped.startPoints[1] !== 'B1' ||
+    swapped.startPoints[4] !== 'A1'
+  ) {
+    console.error('FAIL: renumber swap', swapped)
+    process.exit(1)
+  }
+  console.log('Renumber swap: D1 ↔ D4 OK')
 }
 
 const dataOnly = computeRouting(screen, {

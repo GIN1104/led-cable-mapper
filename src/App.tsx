@@ -13,6 +13,7 @@ import {
   clearChain,
   moveLabelToChainFront,
   removeLabelFromChains,
+  renumberLine,
   reverseChain,
 } from './lib/manualChains'
 import {
@@ -837,6 +838,98 @@ export default function App() {
     [activeScreen.id],
   )
 
+  /** Обновить стек undo после перенумерации линии */
+  const remapPaintUndo = useCallback(
+    (
+      stack: PaintUndoEntry[],
+      from: number,
+      to: number,
+      swapped: boolean,
+    ): PaintUndoEntry[] =>
+      stack.map((e) => {
+        if (e.value === from) return { ...e, value: to }
+        if (swapped && e.value === to) return { ...e, value: from }
+        return e
+      }),
+    [],
+  )
+
+  /** Перенумеровать активную data-линию: move или swap с целевой */
+  const handleRenumberActiveDataLine = useCallback(
+    (from: number, to: number) => {
+      let swapped = false
+      setRoutingByScreen((prev) => {
+        const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        const chains = { ...(current.manualOverrides.dataPortChains ?? {}) }
+        swapped = (chains[from] ?? []).length > 0 && (chains[to] ?? []).length > 0
+        const result = renumberLine(
+          chains,
+          current.manualOverrides.dataStartPoints ?? {},
+          current.manualOverrides.dataPorts ?? {},
+          from,
+          to,
+        )
+        if (!result) return prev
+        return {
+          ...prev,
+          [activeScreen.id]: {
+            ...current,
+            manualModeData: true,
+            manualOverrides: {
+              ...current.manualOverrides,
+              dataPortChains: result.chains,
+              dataStartPoints: result.startPoints,
+              dataPorts: result.assignments,
+            },
+          },
+        }
+      })
+      setDataPaintUndo((u) => ({
+        ...u,
+        [activeScreen.id]: remapPaintUndo(u[activeScreen.id] ?? [], from, to, swapped),
+      }))
+    },
+    [activeScreen.id, remapPaintUndo],
+  )
+
+  /** Перенумеровать активную power-линию: move или swap с целевой */
+  const handleRenumberActivePowerLine = useCallback(
+    (from: number, to: number) => {
+      let swapped = false
+      setRoutingByScreen((prev) => {
+        const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        const chains = { ...(current.manualOverrides.powerLineChains ?? {}) }
+        swapped = (chains[from] ?? []).length > 0 && (chains[to] ?? []).length > 0
+        const result = renumberLine(
+          chains,
+          current.manualOverrides.powerStartPoints ?? {},
+          current.manualOverrides.powerLines ?? {},
+          from,
+          to,
+        )
+        if (!result) return prev
+        return {
+          ...prev,
+          [activeScreen.id]: {
+            ...current,
+            manualModePower: true,
+            manualOverrides: {
+              ...current.manualOverrides,
+              powerLineChains: result.chains,
+              powerStartPoints: result.startPoints,
+              powerLines: result.assignments,
+            },
+          },
+        }
+      })
+      setPowerPaintUndo((u) => ({
+        ...u,
+        [activeScreen.id]: remapPaintUndo(u[activeScreen.id] ?? [], from, to, swapped),
+      }))
+    },
+    [activeScreen.id, remapPaintUndo],
+  )
+
   const handlePowerStartPoint = useCallback(
     (lineNumber: number, label: string) => {
       setRoutingByScreen((prev) => {
@@ -1184,6 +1277,7 @@ export default function App() {
                   onUndoCabinet={handleUndoDataCabinet}
                   onReverseActiveLine={handleReverseActiveDataLine}
                   onClearActiveLine={handleClearActiveDataLine}
+                  onRenumberActiveLine={handleRenumberActiveDataLine}
                   canUndo={(dataPaintUndo[activeScreen.id] ?? []).length > 0}
                   maxAssignable={Math.max(
                     result!.summary.dataPorts,
@@ -1219,6 +1313,7 @@ export default function App() {
                   onUndoCabinet={handleUndoPowerCabinet}
                   onReverseActiveLine={handleReverseActivePowerLine}
                   onClearActiveLine={handleClearActivePowerLine}
+                  onRenumberActiveLine={handleRenumberActivePowerLine}
                   canUndo={(powerPaintUndo[activeScreen.id] ?? []).length > 0}
                   maxAssignable={Math.max(
                     result!.summary.powerLines,

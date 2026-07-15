@@ -24,6 +24,7 @@ import {
   dataLineColor,
   powerLineColor,
 } from '../lib/lineColors'
+import { maxRenumberLine } from '../lib/manualChains'
 
 export type GridVisualizationMode = 'data' | 'power'
 export type ManualEditMode = 'assign' | 'start' | 'empty'
@@ -60,6 +61,8 @@ interface GridVisualizationProps {
   onReverseActiveLine?: (lineNumber: number) => void
   /** Очистить все кабинеты активной линии */
   onClearActiveLine?: (lineNumber: number) => void
+  /** Перенумеровать активную линию (from → to) */
+  onRenumberActiveLine?: (from: number, to: number) => void
   canUndo?: boolean
   maxAssignable?: number
   chainStartEdge?: ChainStartEdge
@@ -231,6 +234,7 @@ export default memo(function GridVisualization({
   onUndoCabinet,
   onReverseActiveLine,
   onClearActiveLine,
+  onRenumberActiveLine,
   canUndo = false,
   maxAssignable = 1,
   chainStartEdge = 'left',
@@ -322,13 +326,39 @@ export default memo(function GridVisualization({
 
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set())
   const [activeValue, setActiveValue] = useState(1)
+  const [lineNumberInput, setLineNumberInput] = useState('1')
   const [editMode, setEditMode] = useState<ManualEditMode>('assign')
+
+  const maxLineNumber = useMemo(
+    () => maxRenumberLine(chainOrder, maxAssignable),
+    [chainOrder, maxAssignable],
+  )
 
   useEffect(() => {
     setSelectedLabels(new Set())
     setActiveValue(1)
+    setLineNumberInput('1')
     setEditMode('assign')
   }, [manualMode, wide, high, mode])
+
+  useEffect(() => {
+    setLineNumberInput(String(activeValue))
+  }, [activeValue])
+
+  const applyLineRenumber = useCallback(() => {
+    const parsed = Number.parseInt(lineNumberInput, 10)
+    if (
+      Number.isNaN(parsed) ||
+      parsed < 1 ||
+      parsed > maxLineNumber ||
+      parsed === activeValue
+    ) {
+      setLineNumberInput(String(activeValue))
+      return
+    }
+    onRenumberActiveLine?.(activeValue, parsed)
+    setActiveValue(parsed)
+  }, [lineNumberInput, maxLineNumber, activeValue, onRenumberActiveLine])
 
   const emptySet = useMemo(() => new Set(emptyCabinets), [emptyCabinets])
 
@@ -864,6 +894,30 @@ export default memo(function GridVisualization({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{prefix}-линия:</span>
+            {onRenumberActiveLine && (
+              <label className="flex items-center gap-1.5">
+                <span className="text-amber-800/90">Line # / Линия №</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={maxLineNumber}
+                  value={lineNumberInput}
+                  onChange={(e) => setLineNumberInput(e.target.value)}
+                  onBlur={applyLineRenumber}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      applyLineRenumber()
+                    } else if (e.key === 'Escape') {
+                      setLineNumberInput(String(activeValue))
+                      ;(e.target as HTMLInputElement).blur()
+                    }
+                  }}
+                  className="w-14 rounded-md border border-amber-300 bg-white px-2 py-1 text-center text-xs font-semibold text-amber-950 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  title={`Перенумеровать активную линию ${prefix}${activeValue} (Enter — применить, 1–${maxLineNumber})`}
+                />
+              </label>
+            )}
             {valueNumbers.map((n) => (
               <button
                 key={`sel-${n}`}
@@ -909,7 +963,8 @@ export default memo(function GridVisualization({
                 {' '}
                 — клики задают порядок цепочки; повторный клик по последнему снимает его;
                 Undo / Alt+клик — отменить последнее; Reverse — первый кабинет станет последним;
-                Clear line — снять все кабинеты с активной линии.
+                Clear line — снять все кабинеты с активной линии; Line # — перенумеровать линию
+                (если целевая занята — обмен содержимым).
               </>
             ) : editMode === 'start' ? (
               <>

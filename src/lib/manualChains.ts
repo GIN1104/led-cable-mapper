@@ -89,6 +89,96 @@ export function reverseChain(
   }
 }
 
+/** Максимальный номер линии при перенумерации */
+export const MANUAL_LINE_NUMBER_MAX = 99
+
+/** Верхняя граница номера линии: max(существующие, maxAssignable) + 5, но не выше 99 */
+export function maxRenumberLine(
+  chains: Record<number, string[]>,
+  maxAssignable: number,
+): number {
+  const existingMax =
+    Object.keys(chains).length > 0
+      ? Math.max(...Object.keys(chains).map(Number))
+      : 0
+  return Math.min(
+    MANUAL_LINE_NUMBER_MAX,
+    Math.max(maxAssignable, existingMax) + 5,
+  )
+}
+
+export interface RenumberLineResult {
+  chains: Record<number, string[]>
+  startPoints: Record<number, string>
+  assignments: Record<string, number>
+}
+
+/**
+ * Перенумеровать линию from → to.
+ * - Целевая занята → обмен (swap) содержимым и start points.
+ * - Целевая пуста → перенос цепочки и start point.
+ * - Исходная пуста → без изменений данных (только смена активной линии в UI).
+ */
+export function renumberLine(
+  chains: Record<number, string[]>,
+  startPoints: Record<number, string>,
+  assignments: Record<string, number>,
+  from: number,
+  to: number,
+): RenumberLineResult | null {
+  if (from < 1 || to < 1 || from === to) return null
+
+  const fromChain = chains[from] ?? []
+  const toChain = chains[to] ?? []
+  const hasFrom = fromChain.length > 0
+  const hasTo = toChain.length > 0
+
+  const nextChains = { ...chains }
+  const nextStart = { ...startPoints }
+  const nextAssignments = { ...assignments }
+
+  if (hasFrom && hasTo) {
+    nextChains[from] = [...toChain]
+    nextChains[to] = [...fromChain]
+    for (const label of toChain) nextAssignments[label] = from
+    for (const label of fromChain) nextAssignments[label] = to
+    const fromStart = startPoints[from]
+    const toStart = startPoints[to]
+    if (fromStart !== undefined && toStart !== undefined) {
+      nextStart[from] = toStart
+      nextStart[to] = fromStart
+    } else if (fromStart !== undefined) {
+      delete nextStart[from]
+      nextStart[to] = fromStart
+    } else if (toStart !== undefined) {
+      nextStart[from] = toStart
+      delete nextStart[to]
+    } else {
+      delete nextStart[from]
+      delete nextStart[to]
+    }
+  } else if (hasFrom) {
+    nextChains[to] = [...fromChain]
+    delete nextChains[from]
+    for (const label of fromChain) nextAssignments[label] = to
+    if (startPoints[from] !== undefined) {
+      nextStart[to] = startPoints[from]
+      delete nextStart[from]
+    } else {
+      delete nextStart[to]
+    }
+  }
+
+  if ((nextChains[from]?.length ?? 0) === 0) delete nextChains[from]
+  if ((nextChains[to]?.length ?? 0) === 0) delete nextChains[to]
+
+  return {
+    chains: nextChains,
+    startPoints: nextStart,
+    assignments: nextAssignments,
+  }
+}
+
 /** Ключ для хеша маршрутизации: порядок внутри линий важен */
 export function chainsKey(chains: Record<number, string[]> | undefined): string {
   if (!chains || Object.keys(chains).length === 0) return ''
