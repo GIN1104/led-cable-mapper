@@ -21,6 +21,8 @@ export interface EquipmentListRowTemplate {
   russian: string
   /** Если задан — количество подставляется из расчёта маршрутизации */
   autoKey?: EquipmentAutoKey
+  /** Количество כמויות по умолчанию (если нет autoKey и пользователь не редактировал) */
+  defaultQuantity?: string
   /** Значение תופסות по умолчанию (если пользователь не редактировал) */
   defaultFootprint?: string
 }
@@ -89,10 +91,10 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'ratchets', hebrew: "רצ'אטים", russian: 'Рачеты' },
   { id: 'tool-bag', hebrew: 'תיק כלים', russian: 'Сумка с инструментами' },
   { id: 'cable-ties', hebrew: 'אזיקונים', russian: 'Азиконим', autoKey: 'cableTies' },
-  { id: 'gaffa', hebrew: 'גפה', russian: 'Гафа' },
-  { id: 'screws', hebrew: 'ברגים', russian: 'Шурупы' },
+  { id: 'gaffa', hebrew: 'גפה', russian: 'Гафа', defaultQuantity: '+' },
+  { id: 'screws', hebrew: 'ברגים', russian: 'Шурупы', defaultQuantity: '+' },
   { id: 'stage-deck', hebrew: 'במה', russian: 'Сцены' },
-  { id: 'drill', hebrew: 'מברגה', russian: 'Шуруповёрт' },
+  { id: 'drill', hebrew: 'מברגה', russian: 'Шуруповёрт', defaultQuantity: '+' },
   { id: 'truss', hebrew: 'טראנס', russian: 'Ферма (трас)' },
 ]
 
@@ -421,7 +423,7 @@ export function buildEquipmentListState(
       quantity:
         quantityManual && previous
           ? previous.quantity
-          : formatQty(autoQty),
+          : formatQty(autoQty ?? template.defaultQuantity),
       footprint:
         footprintManual && previous
           ? previous.footprint
