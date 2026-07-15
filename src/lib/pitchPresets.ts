@@ -35,10 +35,10 @@ export const PITCH_PRESETS: PitchPreset[] = [
   {
     id: '3.9-reshet',
     label: '3.9 Reshet',
-    cabinetWidthMm: 500,
-    cabinetHeightMm: 1000,
+    cabinetWidthMm: 1000,
+    cabinetHeightMm: 500,
     pixelsWide: 256,
-    pixelsHigh: 64,
+    pixelsHigh: 128,
     pixelPitchMm: 3.9,
   },
   {

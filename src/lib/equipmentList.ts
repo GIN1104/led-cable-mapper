@@ -155,11 +155,12 @@ export function getEquipmentListExportRows(
   ]
 }
 
-/** Кабинетов в кейсе: 500×500 → 8, 500×1000 → 6 */
+/** Кабинетов в кейсе: 500×500 → 8, 500×1000 / 1000×500 → 6 */
 export function cabinetsPerCase(cabinetWidthMm: number, cabinetHeightMm: number): number {
   if (cabinetWidthMm === 500 && cabinetHeightMm === 500) return 8
   if (cabinetWidthMm === 500 && cabinetHeightMm === 1000) return 6
-  return cabinetHeightMm >= 1000 ? 6 : 8
+  if (cabinetWidthMm === 1000 && cabinetHeightMm === 500) return 6
+  return cabinetHeightMm >= 1000 || cabinetWidthMm >= 1000 ? 6 : 8
 }
 
 function formatMeters(value: number): string {
