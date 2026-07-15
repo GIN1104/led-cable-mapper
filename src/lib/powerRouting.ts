@@ -170,7 +170,7 @@ function growPowerPath(
 /**
  * Разбивает компоненту связности на минимальное число power-линий.
  * Старт всегда с нижнего края по chainStartEdge (не из середины ряда).
- * fillTarget = preferred; при остатке < preferred добираем до max.
+ * Цель заполнения: preferred при чистом плане ≤6 линий, иначе max.
  */
 function partitionComponent(
   component: Cabinet[],
@@ -180,6 +180,16 @@ function partitionComponent(
 
   const preferred = getPreferredCabinetsPerPowerLine(config)
   const maxSize = getMaxCabinetsPerPowerLine(config)
+  const minCol = Math.min(...component.map((c) => c.col))
+  const maxCol = Math.max(...component.map((c) => c.col))
+  const minRow = Math.min(...component.map((c) => c.row))
+  const maxRow = Math.max(...component.map((c) => c.row))
+  const packTarget = choosePowerPackWidth(
+    maxCol - minCol + 1,
+    maxRow - minRow + 1,
+    preferred,
+    maxSize,
+  )
   const remaining = new Map(component.map((c) => [c.label, c]))
   const paths: Cabinet[][] = []
 
@@ -187,8 +197,8 @@ function partitionComponent(
     const pool = [...remaining.values()]
     const start = selectPathStart(pool, config)
     const target =
-      remaining.size >= preferred
-        ? Math.min(preferred, maxSize)
+      remaining.size >= packTarget
+        ? Math.min(packTarget, maxSize)
         : Math.min(remaining.size, maxSize)
     const path = growPowerPath(pool, start, config, target)
     paths.push(path)
@@ -464,44 +474,70 @@ function pickPChainStarts(
 
 type ColBand = { colStart: number; colEnd: number }
 
+/** Бюджет линий: preferred (10/20) допустим только если план даёт ≤ этого числа полных линий */
+const MAX_PREFERRED_POWER_LINES = 6
+
 /**
- * Делит ширину стены на вертикальные полосы шириной до preferred.
+ * Выбор ширины полосы / цели заполнения: preferred при чистом делении
+ * на полные горизонтальные линии и lineCount ≤ 6; иначе max (плотнее упаковка).
+ */
+export function choosePowerPackWidth(
+  colsWide: number,
+  rowsHigh: number,
+  preferred: number,
+  maxSize: number,
+): number {
+  const pref = Math.min(preferred, maxSize)
+  const max = Math.max(1, maxSize)
+  if (colsWide <= 0 || rowsHigh <= 0) return pref
+
+  // Чистый план preferred: полосы ширины preferred на всю высоту — полные горизонтали
+  if (colsWide % pref === 0) {
+    const lineCount = (colsWide / pref) * rowsHigh
+    if (lineCount <= MAX_PREFERRED_POWER_LINES) return pref
+  }
+
+  return max
+}
+
+/**
+ * Делит ширину стены на вертикальные полосы шириной до packWidth.
  * LTR: полные полосы слева, узкий остаток справа.
  * RTL: полные полосы справа, узкий остаток слева (порядок обхода — от края направления).
  */
 function getColumnBands(
   minCol: number,
   maxCol: number,
-  preferred: number,
+  packWidth: number,
   direction: LineDirection,
 ): ColBand[] {
   const bands: ColBand[] = []
   if (direction === 'ltr') {
-    for (let colStart = minCol; colStart <= maxCol; colStart += preferred) {
+    for (let colStart = minCol; colStart <= maxCol; colStart += packWidth) {
       bands.push({
         colStart,
-        colEnd: Math.min(colStart + preferred - 1, maxCol),
+        colEnd: Math.min(colStart + packWidth - 1, maxCol),
       })
     }
     return bands
   }
 
-  for (let colEnd = maxCol; colEnd >= minCol; colEnd -= preferred) {
-    const colStart = Math.max(minCol, colEnd - preferred + 1)
+  for (let colEnd = maxCol; colEnd >= minCol; colEnd -= packWidth) {
+    const colStart = Math.max(minCol, colEnd - packWidth + 1)
     bands.push({ colStart, colEnd })
     if (colStart <= minCol) break
   }
   return bands
 }
 
-/** Горизонтальные полосы снизу вверх внутри полной колонковой полосы */
+/** Горизонтальные полосы снизу вверх; fillTarget — целевой размер линии (≤ max) */
 function partitionBandHorizontalStrips(
   bandCabs: Cabinet[],
   config: ScreenConfig,
+  fillTarget: number,
 ): Cabinet[][] {
-  const preferred = getPreferredCabinetsPerPowerLine(config)
   const maxSize = getMaxCabinetsPerPowerLine(config)
-  const fillTarget = Math.min(preferred, maxSize)
+  const target = Math.max(1, Math.min(fillTarget, maxSize))
   const direction = edgeToDirection(config.chainStartEdge)
   const ltr = direction === 'ltr'
 
@@ -517,8 +553,8 @@ function partitionBandHorizontalStrips(
 
     if (rowCabs.length === 0) continue
 
-    // От края направления: LTR — слева, RTL — справа; набиваем до preferred
-    const strip = rowCabs.slice(0, Math.min(fillTarget, rowCabs.length))
+    // От края направления: LTR — слева, RTL — справа; набиваем до fillTarget
+    const strip = rowCabs.slice(0, Math.min(target, rowCabs.length))
     paths.push(strip)
     for (const cab of strip) {
       pool.delete(cab.label)
@@ -540,7 +576,7 @@ function partitionBandHorizontalStrips(
   return paths
 }
 
-/** P-образные цепочки для узкой остаточной полосы (< preferred столбцов) */
+/** P-образные цепочки для узкой остаточной полосы */
 function partitionBandPShape(
   bandCabs: Cabinet[],
   config: ScreenConfig,
@@ -589,19 +625,60 @@ function partitionBandPShape(
   return paths
 }
 
+/** Оценка плана остатка: меньше линий лучше, затем крупнее средняя линия */
+function scoreRemainderPlan(paths: Cabinet[][]): { lines: number; avgFill: number } {
+  if (paths.length === 0) return { lines: Infinity, avgFill: 0 }
+  const total = paths.reduce((sum, p) => sum + p.length, 0)
+  return { lines: paths.length, avgFill: total / paths.length }
+}
+
 /**
- * 3.9 big/small: полосы по preferred столбцов (от края Line Direction),
- * в каждой — горизонтальные линии снизу вверх; узкий остаток — P-цепочки.
+ * Остаток: выбираем P-паттерн или короткие горизонтали — меньше линий / плотнее заполнение.
+ */
+function partitionRemainderBand(
+  bandCabs: Cabinet[],
+  config: ScreenConfig,
+): Cabinet[][] {
+  const maxSize = getMaxCabinetsPerPowerLine(config)
+  const bandWidth =
+    Math.max(...bandCabs.map((c) => c.col)) -
+    Math.min(...bandCabs.map((c) => c.col)) +
+    1
+  const horizFill = Math.min(maxSize, Math.max(1, bandWidth))
+
+  const pPaths = partitionBandPShape(bandCabs, config)
+  const hPaths = partitionBandHorizontalStrips(bandCabs, config, horizFill)
+
+  const pScore = scoreRemainderPlan(pPaths)
+  const hScore = scoreRemainderPlan(hPaths)
+
+  if (pScore.lines < hScore.lines) return pPaths
+  if (hScore.lines < pScore.lines) return hPaths
+  // Ничья по числу линий — берём план с большим средним заполнением;
+  // при равенстве предпочитаем P (лучше использует узкий остаток).
+  if (pScore.avgFill >= hScore.avgFill) return pPaths
+  return hPaths
+}
+
+/**
+ * 3.9 big/small: полосы по choosePowerPackWidth (preferred если ≤6 полных линий,
+ * иначе max); в полной полосе — горизонтали снизу вверх; остаток — P или горизонтали.
  */
 function partitionHorizontalStripComponent(
   component: Cabinet[],
   config: ScreenConfig,
 ): Cabinet[][] {
   const preferred = getPreferredCabinetsPerPowerLine(config)
+  const maxSize = getMaxCabinetsPerPowerLine(config)
   const direction = edgeToDirection(config.chainStartEdge)
   const minCol = Math.min(...component.map((c) => c.col))
   const maxCol = Math.max(...component.map((c) => c.col))
-  const bands = getColumnBands(minCol, maxCol, preferred, direction)
+  const minRow = Math.min(...component.map((c) => c.row))
+  const maxRow = Math.max(...component.map((c) => c.row))
+  const colsWide = maxCol - minCol + 1
+  const rowsHigh = maxRow - minRow + 1
+  const packWidth = choosePowerPackWidth(colsWide, rowsHigh, preferred, maxSize)
+  const bands = getColumnBands(minCol, maxCol, packWidth, direction)
   const paths: Cabinet[][] = []
 
   for (const band of bands) {
@@ -611,10 +688,10 @@ function partitionHorizontalStripComponent(
     if (bandCabs.length === 0) continue
 
     const bandWidth = band.colEnd - band.colStart + 1
-    if (bandWidth >= preferred) {
-      paths.push(...partitionBandHorizontalStrips(bandCabs, config))
+    if (bandWidth >= packWidth) {
+      paths.push(...partitionBandHorizontalStrips(bandCabs, config, packWidth))
     } else {
-      paths.push(...partitionBandPShape(bandCabs, config))
+      paths.push(...partitionRemainderBand(bandCabs, config))
     }
   }
 
@@ -680,7 +757,8 @@ export function buildPowerLines(
   emptySet?: Set<string>,
   _pixelsPerCabinet?: number,
 ): { lines: PowerLine[]; links: GridLink[]; cabinetsPerLine: number } {
-  const preferredCabinetsPerLine = getPreferredCabinetsPerPowerLine(config)
+  const preferred = getPreferredCabinetsPerPowerLine(config)
+  const maxSize = getMaxCabinetsPerPowerLine(config)
   const active = emptySet
     ? cabinets.filter((c) => !emptySet.has(c.label))
     : cabinets
@@ -688,8 +766,21 @@ export function buildPowerLines(
   const components = findPowerComponents(active, config)
   const lineGroups = new Map<number, Cabinet[]>()
   let lineNumber = 1
+  let packWidth = preferred
 
   for (const component of components) {
+    if (component.length > 0) {
+      const minCol = Math.min(...component.map((c) => c.col))
+      const maxCol = Math.max(...component.map((c) => c.col))
+      const minRow = Math.min(...component.map((c) => c.row))
+      const maxRow = Math.max(...component.map((c) => c.row))
+      packWidth = choosePowerPackWidth(
+        maxCol - minCol + 1,
+        maxRow - minRow + 1,
+        preferred,
+        maxSize,
+      )
+    }
     const paths = partitionComponentForPreset(component, config)
     for (const path of paths) {
       if (path.length > 0) {
@@ -705,7 +796,7 @@ export function buildPowerLines(
   }
 
   const { lines, links } = buildLinesFromGroups(lineGroups, config, startPoints, true)
-  return { lines, links, cabinetsPerLine: preferredCabinetsPerLine }
+  return { lines, links, cabinetsPerLine: packWidth }
 }
 
 /** Строит линии питания из ручных назначений */

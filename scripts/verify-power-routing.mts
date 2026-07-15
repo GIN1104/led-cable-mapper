@@ -1,10 +1,17 @@
 /**
- * Проверка авто-маршрутизации power: 7×3 м и 10×3 м, 3.9 Big, LTR и RTL.
+ * Проверка авто-маршрутизации power: 7×3 м, 10×3 м, кейс где max(12) лучше.
  * Запуск: npm run verify:power
  */
 import type { ChainStartEdge, ScreenConfig } from '../src/types/index.ts'
 import { applyPitchPreset } from '../src/lib/pitchPresets.ts'
-import { buildPowerLines } from '../src/lib/powerRouting.ts'
+import {
+  buildPowerLines,
+  choosePowerPackWidth,
+} from '../src/lib/powerRouting.ts'
+import {
+  getMaxCabinetsPerPowerLine,
+  getPreferredCabinetsPerPowerLine,
+} from '../src/lib/constants.ts'
 import {
   generateCabinetGrid,
   filterActiveCabinets,
@@ -89,14 +96,32 @@ function runCase(
   return ok
 }
 
+function assertPackWidth(
+  cols: number,
+  rows: number,
+  preferred: number,
+  max: number,
+  expected: number,
+  label: string,
+): boolean {
+  const got = choosePowerPackWidth(cols, rows, preferred, max)
+  const ok = got === expected
+  console.log(
+    `\n=== packWidth ${label}: ${cols}×${rows} pref=${preferred} max=${max} → ${got} (expect ${expected}) ===`,
+  )
+  console.log(ok ? 'PASS' : 'FAIL')
+  return ok
+}
+
+// 7m×3m = 14×3: ширина не делится на 10 → pack 12; остаток 2 кол. — P-паттерн
 const ok7Ltr = runCase(7, 3, 'left', '7m×3m 3.9 Big LTR', [
-  ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10'],
-  ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10'],
-  ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10'],
-  ['A11', 'B11', 'C11', 'C12', 'B12', 'A12'],
+  ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A11', 'A12'],
+  ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'B12'],
+  ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12'],
   ['A13', 'B13', 'C13', 'C14', 'B14', 'A14'],
 ])
 
+// 10m×3m = 20×3: две полосы по 10, 6 полных линий → preferred 10
 const ok10Ltr = runCase(10, 3, 'left', '10m×3m 3.9 Big LTR', [
   ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10'],
   ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10'],
@@ -107,10 +132,9 @@ const ok10Ltr = runCase(10, 3, 'left', '10m×3m 3.9 Big LTR', [
 ])
 
 const ok7Rtl = runCase(7, 3, 'right', '7m×3m 3.9 Big RTL', [
-  ['A14', 'A13', 'A12', 'A11', 'A10', 'A9', 'A8', 'A7', 'A6', 'A5'],
-  ['B14', 'B13', 'B12', 'B11', 'B10', 'B9', 'B8', 'B7', 'B6', 'B5'],
-  ['C14', 'C13', 'C12', 'C11', 'C10', 'C9', 'C8', 'C7', 'C6', 'C5'],
-  ['A4', 'B4', 'C4', 'C3', 'B3', 'A3'],
+  ['A14', 'A13', 'A12', 'A11', 'A10', 'A9', 'A8', 'A7', 'A6', 'A5', 'A4', 'A3'],
+  ['B14', 'B13', 'B12', 'B11', 'B10', 'B9', 'B8', 'B7', 'B6', 'B5', 'B4', 'B3'],
+  ['C14', 'C13', 'C12', 'C11', 'C10', 'C9', 'C8', 'C7', 'C6', 'C5', 'C4', 'C3'],
   ['A2', 'B2', 'C2', 'C1', 'B1', 'A1'],
 ])
 
@@ -123,6 +147,28 @@ const ok10Rtl = runCase(10, 3, 'right', '10m×3m 3.9 Big RTL', [
   ['C10', 'C9', 'C8', 'C7', 'C6', 'C5', 'C4', 'C3', 'C2', 'C1'],
 ])
 
-const allOk = ok7Ltr && ok10Ltr && ok7Rtl && ok10Rtl
+/*
+ * Кейс «12 лучше 10»: 6m×3m = 12×3.
+ * preferred 10 → полоса 10 + остаток 2 → 3×10 + 1×P(6) = 4 линии.
+ * max 12 → одна полоса 12 → 3 полные линии по 12 (меньше линий, без остатка).
+ */
+const ok6Ltr = runCase(6, 3, 'left', '6m×3m 3.9 Big LTR (12 better than 10)', [
+  ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A11', 'A12'],
+  ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'B12'],
+  ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12'],
+])
+
+const configBig = makeConfig(10, 3)
+const pref = getPreferredCabinetsPerPowerLine(configBig)
+const max = getMaxCabinetsPerPowerLine(configBig)
+
+const okDecisions =
+  assertPackWidth(20, 3, pref, max, 10, '10m×3m clean ≤6 → preferred') &&
+  assertPackWidth(14, 3, pref, max, 12, '7m×3m rem → max') &&
+  assertPackWidth(12, 3, pref, max, 12, '6m×3m clean-at-max → max') &&
+  assertPackWidth(20, 4, pref, max, 12, '10m×4m preferred would be 8 lines → max')
+
+const allOk =
+  ok7Ltr && ok10Ltr && ok7Rtl && ok10Rtl && ok6Ltr && okDecisions
 console.log(`\n${allOk ? 'ALL PASS' : 'SOME FAILED'}`)
 process.exit(allOk ? 0 : 1)
