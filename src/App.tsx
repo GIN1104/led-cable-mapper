@@ -388,11 +388,22 @@ export default function App() {
         let dataPorts = { ...current.manualOverrides.dataPorts }
         let dataPortChains = { ...(current.manualOverrides.dataPortChains ?? {}) }
         let dataStartPoints = { ...(current.manualOverrides.dataStartPoints ?? {}) }
+        // START не двигаем при Paint — только через Set Start
         for (const label of painted) {
+          for (const [port, start] of Object.entries(dataStartPoints)) {
+            if (start === label && Number(port) !== portNumber) {
+              delete dataStartPoints[Number(port)]
+            }
+          }
           dataPortChains = appendLabelToChain(dataPortChains, label, portNumber)
           dataPorts = { ...dataPorts, [label]: portNumber }
-          const first = dataPortChains[portNumber]?.[0]
-          if (first) dataStartPoints[portNumber] = first
+        }
+        const chain = dataPortChains[portNumber] ?? []
+        const lockedStart = dataStartPoints[portNumber]
+        if (lockedStart && chain.includes(lockedStart)) {
+          dataPortChains = moveLabelToChainFront(dataPortChains, lockedStart, portNumber)
+        } else if (chain[0]) {
+          dataStartPoints[portNumber] = chain[0]
         }
         return {
           ...prev,
@@ -431,10 +442,23 @@ export default function App() {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         let powerLines = { ...current.manualOverrides.powerLines }
         let powerLineChains = { ...(current.manualOverrides.powerLineChains ?? {}) }
+        let powerStartPoints = { ...(current.manualOverrides.powerStartPoints ?? {}) }
         // START не двигаем при Paint — только через Set Start
         for (const label of painted) {
+          for (const [line, start] of Object.entries(powerStartPoints)) {
+            if (start === label && Number(line) !== lineNumber) {
+              delete powerStartPoints[Number(line)]
+            }
+          }
           powerLineChains = appendLabelToChain(powerLineChains, label, lineNumber)
           powerLines = { ...powerLines, [label]: lineNumber }
+        }
+        const chain = powerLineChains[lineNumber] ?? []
+        const lockedStart = powerStartPoints[lineNumber]
+        if (lockedStart && chain.includes(lockedStart)) {
+          powerLineChains = moveLabelToChainFront(powerLineChains, lockedStart, lineNumber)
+        } else if (chain[0]) {
+          powerStartPoints[lineNumber] = chain[0]
         }
         return {
           ...prev,
@@ -445,6 +469,7 @@ export default function App() {
               ...current.manualOverrides,
               powerLines,
               powerLineChains,
+              powerStartPoints,
             },
           },
         }
@@ -470,6 +495,15 @@ export default function App() {
           label,
           portNumber,
         )
+        const dataStartPoints = { ...(current.manualOverrides.dataStartPoints ?? {}) }
+        for (const [port, start] of Object.entries(dataStartPoints)) {
+          if (start === label && Number(port) !== portNumber) {
+            const first = dataPortChains[Number(port)]?.[0]
+            if (first) dataStartPoints[Number(port)] = first
+            else delete dataStartPoints[Number(port)]
+          }
+        }
+        dataStartPoints[portNumber] = label
         return {
           ...prev,
           [activeScreen.id]: {
@@ -479,10 +513,7 @@ export default function App() {
               ...current.manualOverrides,
               dataPorts,
               dataPortChains,
-              dataStartPoints: {
-                ...current.manualOverrides.dataStartPoints,
-                [portNumber]: label,
-              },
+              dataStartPoints,
             },
           },
         }
@@ -503,17 +534,16 @@ export default function App() {
           label,
         )
         const dataStartPoints = { ...(current.manualOverrides.dataStartPoints ?? {}) }
-        if (oldPort != null) {
-          const first = dataPortChains[oldPort]?.[0]
-          if (first) dataStartPoints[oldPort] = first
-          else delete dataStartPoints[oldPort]
-        }
+        // Сбрасываем START только если удалили сам стартовый кабинет
         for (const [port, start] of Object.entries(dataStartPoints)) {
           if (start === label) {
             const first = dataPortChains[Number(port)]?.[0]
             if (first) dataStartPoints[Number(port)] = first
             else delete dataStartPoints[Number(port)]
           }
+        }
+        if (oldPort != null && dataPortChains[oldPort] == null) {
+          delete dataStartPoints[oldPort]
         }
         return {
           ...prev,
@@ -546,7 +576,11 @@ export default function App() {
         const powerStartPoints = { ...(current.manualOverrides.powerStartPoints ?? {}) }
         // Сбрасываем START только если удалили сам стартовый кабинет
         for (const [line, start] of Object.entries(powerStartPoints)) {
-          if (start === label) delete powerStartPoints[Number(line)]
+          if (start === label) {
+            const first = powerLineChains[Number(line)]?.[0]
+            if (first) powerStartPoints[Number(line)] = first
+            else delete powerStartPoints[Number(line)]
+          }
         }
         if (oldLine != null && powerLineChains[oldLine] == null) {
           delete powerStartPoints[oldLine]
@@ -674,6 +708,15 @@ export default function App() {
           label,
           lineNumber,
         )
+        const powerStartPoints = { ...(current.manualOverrides.powerStartPoints ?? {}) }
+        for (const [line, start] of Object.entries(powerStartPoints)) {
+          if (start === label && Number(line) !== lineNumber) {
+            const first = powerLineChains[Number(line)]?.[0]
+            if (first) powerStartPoints[Number(line)] = first
+            else delete powerStartPoints[Number(line)]
+          }
+        }
+        powerStartPoints[lineNumber] = label
         return {
           ...prev,
           [activeScreen.id]: {
@@ -683,10 +726,7 @@ export default function App() {
               ...current.manualOverrides,
               powerLines,
               powerLineChains,
-              powerStartPoints: {
-                ...current.manualOverrides.powerStartPoints,
-                [lineNumber]: label,
-              },
+              powerStartPoints,
             },
           },
         }
@@ -726,7 +766,11 @@ export default function App() {
             }
           }
           for (const [line, start] of Object.entries(powerStartPoints)) {
-            if (start === label) delete powerStartPoints[Number(line)]
+            if (start === label) {
+              const first = powerLineChains[Number(line)]?.[0]
+              if (first) powerStartPoints[Number(line)] = first
+              else delete powerStartPoints[Number(line)]
+            }
           }
           return {
             ...prev,

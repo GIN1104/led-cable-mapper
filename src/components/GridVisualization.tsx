@@ -734,7 +734,13 @@ export default memo(function GridVisualization({
                 Undo / Alt+клик — отменить последнее заполнение.
               </>
             ) : editMode === 'start' ? (
-              <> — клик задаёт START для {prefix}{activeValue}.</>
+              <>
+                {' '}
+                — клик по любому кабинету задаёт START для {prefix}
+                {activeValue}: бейдж {prefix}
+                {activeValue} и ★ переезжают туда (кабинет добавляется в начало линии, если ещё не
+                был).
+              </>
             ) : (
               <> — клик помечает пустой кабинет (исключается из маршрута).</>
             )}
@@ -864,7 +870,6 @@ export default memo(function GridVisualization({
             const dataColors = dataLineColor(lineNum)
             const pwrColors = powerLineColor(lineNum)
             const lineColors = isData ? dataColors : pwrColors
-            const lineLabel = isData ? `D${lineNum}` : `P${lineNum}`
             const isInteractive = manualMode || emptyPaintMode
 
             return (
@@ -945,7 +950,7 @@ export default memo(function GridVisualization({
                 )}
                 <text
                   x={x + CELL_W / 2}
-                  y={y + CELL_H / 2 - 6}
+                  y={y + CELL_H / 2 - (simplifyLabels ? 0 : 6)}
                   textAnchor="middle"
                   fontSize={14}
                   fontWeight={700}
@@ -954,19 +959,7 @@ export default memo(function GridVisualization({
                 >
                   {cab.label}
                 </text>
-                {!simplifyLabels && (
-                <text
-                  x={x + CELL_W / 2}
-                  y={y + CELL_H / 2 + 10}
-                  textAnchor="middle"
-                  fontSize={9}
-                  fontWeight={600}
-                  fill={lineColors.label}
-                  pointerEvents="none"
-                >
-                  {lineLabel}
-                </text>
-                )}
+                {/* D/P бейдж только на START (см. start-markers) */}
                   </>
                 )}
               </g>
