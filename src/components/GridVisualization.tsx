@@ -393,6 +393,17 @@ export default memo(function GridVisualization({
     return set
   }, [effectiveStartPoints])
 
+  /** Номер линии (D/P) на START-кабинете — для бейджа, видимого и при simplifyLabels */
+  const startLineByLabel = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const [numStr, label] of Object.entries(effectiveStartPoints)) {
+      if (!label) continue
+      const n = Number(numStr)
+      if (n >= 1) map.set(label, n)
+    }
+    return map
+  }, [effectiveStartPoints])
+
   const feedPointsByLine = useMemo(() => {
     if (isData) return {} as Record<number, string>
     const map: Record<number, string> = {}
@@ -919,7 +930,7 @@ export default memo(function GridVisualization({
                   </>
                 ) : (
                   <>
-                {step != null && step > 0 && !simplifyLabels && (
+                {step != null && step > 0 && !simplifyLabels && !isStart && (
                   <text
                     x={isRtl ? x + CELL_W - 10 : x + 10}
                     y={y + 14}
@@ -1042,10 +1053,49 @@ export default memo(function GridVisualization({
             if (emptySet.has(cab.label) || !startLabels.has(cab.label)) return null
             const x = PAD + cab.col * (CELL_W + GAP)
             const y = PAD + cab.row * (CELL_H + GAP)
+            const lineNum =
+              startLineByLabel.get(cab.label) ?? assignmentMap.get(cab.label) ?? 0
+            const lineColors = isData
+              ? dataLineColor(lineNum)
+              : powerLineColor(lineNum)
+            const lineId = lineNum > 0 ? `${prefix}${lineNum}` : prefix
+            // Крупный бейдж: читается на телефоне и при fitScale сетки 14×8
+            const badgeFont =
+              simplifyLabels || isMobile ? (isMobile && simplifyLabels ? 15 : 13) : 11
+            const badgePadX = simplifyLabels || isMobile ? 6 : 5
+            const badgeH = badgeFont + (simplifyLabels || isMobile ? 8 : 6)
+            const badgeW = Math.max(
+              Math.ceil(lineId.length * badgeFont * 0.68) + badgePadX * 2,
+              simplifyLabels || isMobile ? 34 : 28,
+            )
+            const badgeX = isRtl ? x + CELL_W - badgeW - 2 : x + 2
+            const badgeY = y + 2
             const starSize = simplifyLabels ? 10 : 12
             const labelSize = simplifyLabels ? 7 : 8
+            const isAlsoFeed = !isData && feedLabels.has(cab.label)
             return (
               <g key={`start-${cab.label}`}>
+                <rect
+                  x={badgeX}
+                  y={badgeY}
+                  width={badgeW}
+                  height={badgeH}
+                  rx={badgeH / 2}
+                  fill={lineColors.stroke}
+                  stroke="#ffffff"
+                  strokeWidth={simplifyLabels || isMobile ? 2 : 1.5}
+                />
+                <text
+                  x={badgeX + badgeW / 2}
+                  y={badgeY + badgeH / 2 + badgeFont * 0.35}
+                  textAnchor="middle"
+                  fontSize={badgeFont}
+                  fontWeight={800}
+                  fill="#ffffff"
+                  letterSpacing={0.5}
+                >
+                  {lineId}
+                </text>
                 <text
                   x={isRtl ? x + 8 : x + CELL_W - 8}
                   y={y + 14}
@@ -1059,19 +1109,22 @@ export default memo(function GridVisualization({
                 >
                   ★
                 </text>
-                <text
-                  x={x + CELL_W / 2}
-                  y={y + CELL_H / 2 + (simplifyLabels ? 6 : 8)}
-                  textAnchor="middle"
-                  fontSize={labelSize}
-                  fontWeight={700}
-                  fill="#ca8a04"
-                  stroke="#ffffff"
-                  strokeWidth={simplifyLabels ? 2 : 1}
-                  paintOrder="stroke"
-                >
-                  START
-                </text>
+                {/* START снизу; при FEED на том же кабинете подпись FEED/START уже есть */}
+                {!isAlsoFeed && (
+                  <text
+                    x={x + CELL_W / 2}
+                    y={y + CELL_H - (simplifyLabels || isMobile ? 5 : 6)}
+                    textAnchor="middle"
+                    fontSize={labelSize}
+                    fontWeight={700}
+                    fill="#ca8a04"
+                    stroke="#ffffff"
+                    strokeWidth={simplifyLabels ? 2 : 1}
+                    paintOrder="stroke"
+                  >
+                    START
+                  </text>
+                )}
               </g>
             )
           })}
