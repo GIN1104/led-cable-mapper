@@ -70,7 +70,6 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
     hebrew: 'קבל תקשורת',
     russian: 'Тикшорет (сетевой кабель)',
     autoKey: 'dataCables',
-    defaultFootprint: 'A',
   },
   { id: 'speakon', hebrew: 'ספיקונים', russian: 'Спикон', autoKey: 'speakons' },
   { id: 'power-ext', hebrew: 'כבל חשמל', russian: 'Удлинитель электрический', autoKey: 'powerTrunks' },
