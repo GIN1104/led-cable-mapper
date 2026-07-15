@@ -14,6 +14,7 @@ import {
   resolveCvtQtyForScreen,
   resolveEquipmentAutoQuantity,
   resolveEquipmentScreenResults,
+  roundUpToNext20,
 } from '../src/lib/equipmentList.ts'
 
 function makeConfig(
@@ -435,6 +436,72 @@ assertEq('order: sprays before hangers', spraysIdx < hangersIdx ? 1 : 0, 1)
 assertEq('order: hangers before rigging', hangersIdx === spraysIdx + 1 ? 1 : 0, 1)
 assertEq('order: rigging after hangers', hangersIdx + 1 === riggingIdx ? 1 : 0, 1)
 assertEq('order: hang gear before computer', hangersIdx < computerIdx ? 1 : 0, 1)
+
+// --- Тикшорет: округление вверх до 20; Тикшорет Длинный = dataPorts + 2 ---
+console.log('\n=== Tikshoret rounding + long row ===')
+assertEq('roundUp 0 → 0', roundUpToNext20(0), 0)
+assertEq('roundUp 1 → 20', roundUpToNext20(1), 20)
+assertEq('roundUp 20 → 20', roundUpToNext20(20), 20)
+assertEq('roundUp 21 → 40', roundUpToNext20(21), 40)
+assertEq('roundUp 40 → 40', roundUpToNext20(40), 40)
+
+const rawDataCables = result10x3.cableSchedule.filter(
+  (e) =>
+    (e.lineType === 'Data' || e.lineType === 'Data Backup') &&
+    (e.cableId.startsWith('M-') ||
+      e.cableId.startsWith('L-DAT-') ||
+      e.cableId.startsWith('L-DBK-')),
+).length
+const expectedTikshoret = roundUpToNext20(rawDataCables)
+assertEq(
+  'dataCables rounded to 20',
+  resolveEquipmentAutoQuantity(
+    'dataCables',
+    [screen10x3],
+    equipmentResults,
+    result10x3.cableSchedule,
+  ),
+  expectedTikshoret,
+)
+assertEq('comm-cable row rounded', qtyById(state10x3, 'comm-cable'), expectedTikshoret)
+
+const expectedLong = result10x3.summary.dataPorts + 2
+assertEq(
+  'commCableLong = dataPorts+2',
+  resolveEquipmentAutoQuantity(
+    'commCableLong',
+    [screen10x3],
+    equipmentResults,
+    result10x3.cableSchedule,
+  ),
+  expectedLong,
+)
+assertEq('comm-cable-long row', qtyById(state10x3, 'comm-cable-long'), expectedLong)
+
+const multiDataPorts = r1.summary.dataPorts + r2.summary.dataPorts
+assertEq(
+  'commCableLong multi screens',
+  resolveEquipmentAutoQuantity('commCableLong', [s1, s2], multiResults, []),
+  multiDataPorts + 2,
+)
+assertEq('comm-cable-long multi row', qtyById(stateMulti, 'comm-cable-long'), multiDataPorts + 2)
+
+const commIdx = state10x3.rows.findIndex((r) => r.id === 'comm-cable')
+const commLongIdx = state10x3.rows.findIndex((r) => r.id === 'comm-cable-long')
+const speakonIdx = state10x3.rows.findIndex((r) => r.id === 'speakon')
+assertEq('order: comm before long', commIdx < commLongIdx ? 1 : 0, 1)
+assertEq('order: long right after comm', commLongIdx === commIdx + 1 ? 1 : 0, 1)
+assertEq('order: long before speakon', commLongIdx + 1 === speakonIdx ? 1 : 0, 1)
+assertEq(
+  'long hebrew',
+  state10x3.rows.find((r) => r.id === 'comm-cable-long')?.hebrew ?? '',
+  'תקשורת תארוך',
+)
+assertEq(
+  'long russian',
+  state10x3.rows.find((r) => r.id === 'comm-cable-long')?.russian ?? '',
+  'Тикшорет Длинный',
+)
 
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`)

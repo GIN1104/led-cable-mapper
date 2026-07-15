@@ -7,6 +7,7 @@ export type EquipmentAutoKey =
   | 'cvtOptical'
   | 'opticCable'
   | 'dataCables'
+  | 'commCableLong'
   | 'speakons'
   | 'powerTrunks'
   | 'sprayers'
@@ -81,6 +82,12 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
     hebrew: 'קבל תקשורת',
     russian: 'Тикшорет (сетевой кабель)',
     autoKey: 'dataCables',
+  },
+  {
+    id: 'comm-cable-long',
+    hebrew: 'תקשורת תארוך',
+    russian: 'Тикшорет Длинный',
+    autoKey: 'commCableLong',
   },
   { id: 'speakon', hebrew: 'ספיקונים', russian: 'Спикон', autoKey: 'speakons' },
   { id: 'power-ext', hebrew: 'כבל חשמל', russian: 'Удлинитель электрический', autoKey: 'powerTrunks' },
@@ -170,6 +177,17 @@ function countDataTrunkAndLinkCables(schedule: CableScheduleEntry[]): number {
   const backupTrunks = countTrunks(schedule, 'Data Backup')
   const links = countDataLinkCables(schedule)
   return dataTrunks + backupTrunks + links
+}
+
+/** Округление вверх до кратного 20 (1→20, 21→40, 40→40, 0→0) */
+export function roundUpToNext20(rawQty: number): number {
+  if (rawQty <= 0) return 0
+  return Math.ceil(rawQty / 20) * 20
+}
+
+/** Сумма data-линий (портов) по экранам: dataChains.length / summary.dataPorts */
+function sumDataPorts(results: { result: RoutingResult }[]): number {
+  return results.reduce((sum, { result }) => sum + result.summary.dataPorts, 0)
 }
 
 function sumPowerLines(results: { result: RoutingResult }[]): number {
@@ -349,8 +367,15 @@ export function resolveEquipmentAutoQuantity(
       const cvt = aggregateCvtOptical(results)
       return cvt.quantity > 0 ? cvt.quantity + 1 : undefined
     }
-    case 'dataCables':
-      return countDataTrunkAndLinkCables(cableSchedule)
+    case 'dataCables': {
+      const raw = countDataTrunkAndLinkCables(cableSchedule)
+      return roundUpToNext20(raw)
+    }
+    case 'commCableLong': {
+      if (results.length === 0) return undefined
+      const dataLines = sumDataPorts(results)
+      return dataLines + 2
+    }
     case 'speakons': {
       const powerLines = sumPowerLines(results)
       return powerLines > 0 ? powerLines : undefined
