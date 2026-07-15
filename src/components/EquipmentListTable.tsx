@@ -163,64 +163,22 @@ export default function EquipmentListTable({
             <tbody>
               {state.rows.map((row) => {
                 const isScreenRow = row.id === 'screen'
-                const isDescEditable = row.id === 'led-card' || row.id === 'cvt'
                 const screenLineCount = row.quantity ? row.quantity.split('\n').length : 1
 
                 return (
                   <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/60">
                     <td className="px-3 py-1.5 font-medium text-slate-800" dir="rtl">
-                      {isDescEditable ? (
-                        <input
-                          type="text"
-                          value={row.hebrew}
-                          onChange={(e) =>
-                            updateRow(row.id, {
-                              hebrew: e.target.value,
-                              hebrewManual: true,
-                            })
-                          }
-                          className={cellInputClass}
-                          dir="rtl"
-                        />
-                      ) : (
-                        <>
-                          {row.hebrew}
-                          {row.autoKey && (
-                            <span
-                              className="ms-1 text-[10px] font-normal text-blue-500"
-                              title="Автозаполнение из маршрутизации"
-                            >
-                              auto
-                            </span>
-                          )}
-                        </>
-                      )}
-                      {isDescEditable && row.autoKey && (
+                      {row.hebrew}
+                      {row.autoKey && (
                         <span
                           className="ms-1 text-[10px] font-normal text-blue-500"
-                          title="Автозаполнение из маршрутизации (пока не изменено вручную)"
+                          title="Автозаполнение из маршрутизации"
                         >
                           auto
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-1.5 text-slate-600">
-                      {isDescEditable ? (
-                        <input
-                          type="text"
-                          value={row.russian}
-                          onChange={(e) =>
-                            updateRow(row.id, {
-                              russian: e.target.value,
-                              russianManual: true,
-                            })
-                          }
-                          className={cellInputClass}
-                        />
-                      ) : (
-                        row.russian
-                      )}
-                    </td>
+                    <td className="px-3 py-1.5 text-slate-600">{row.russian}</td>
                     <td className="px-3 py-1.5">
                       {isScreenRow ? (
                         <textarea

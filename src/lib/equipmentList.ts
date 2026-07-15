@@ -37,9 +37,15 @@ export interface EquipmentListRow extends EquipmentListRowTemplate {
   /** Пользователь вручную изменил quantity — не перезаписывать при обновлении */
   quantityManual: boolean
   footprintManual: boolean
-  /** Пользователь вручную изменил ивритское название — не перезаписывать */
+  /**
+   * Пользователь вручную изменил ивритское название — не перезаписывать.
+   * Для led-card / cvt всегда false: ציוד фиксирован шаблоном.
+   */
   hebrewManual: boolean
-  /** Пользователь вручную изменил русское описание — не перезаписывать авто-текст */
+  /**
+   * Пользователь вручную изменил русское описание — не перезаписывать авто-текст.
+   * Для led-card / cvt всегда false: русский текст из модели контроллера / CVT.
+   */
   russianManual: boolean
 }
 
@@ -479,8 +485,10 @@ export function buildEquipmentListState(
 
     const quantityManual = previous?.quantityManual ?? false
     const footprintManual = previous?.footprintManual ?? false
-    const hebrewManual = previous?.hebrewManual ?? false
-    const russianManual = previous?.russianManual ?? false
+    /** כרטיס לד / CVT: иврит из шаблона, русский — авто из контроллера/модели */
+    const isFixedDescRow = template.id === 'led-card' || template.id === 'cvt'
+    const hebrewManual = isFixedDescRow ? false : (previous?.hebrewManual ?? false)
+    const russianManual = isFixedDescRow ? false : (previous?.russianManual ?? false)
     const ledCardAuto = template.id === 'led-card' ? aggregateLedCards(screens) : undefined
     const cvtAuto = template.id === 'cvt' ? aggregateCvtOptical(results) : undefined
     const robotAuto =

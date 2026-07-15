@@ -548,7 +548,7 @@ const ledCardIdx = state10x3.rows.findIndex((r) => r.id === 'led-card')
 const cvtIdx = state10x3.rows.findIndex((r) => r.id === 'cvt')
 assertEq('order: CVT right after LED card', cvtIdx === ledCardIdx + 1 ? 1 : 0, 1)
 
-// Ручное описание LED-карты / CVT не перезаписывается при пересчёте
+// LED-карта / CVT: ручное количество сохраняется; иврит и русский снова из шаблона / авто
 const manualDescPrev = buildEquipmentListState(
   [screen10x3],
   [{ screen: screen10x3, result: result10x3 }],
@@ -593,11 +593,23 @@ const afterRebuild = buildEquipmentListState(
 const ledAfter = afterRebuild.rows.find((r) => r.id === 'led-card')
 const cvtAfter = afterRebuild.rows.find((r) => r.id === 'cvt')
 assertEq('led-card manual qty preserved', ledAfter?.quantity ?? '', '9')
-assertEq('led-card manual hebrew preserved', ledAfter?.hebrew ?? '', 'כרטיס מותאם')
-assertEq('led-card manual russian preserved', ledAfter?.russian ?? '', 'Кастомная карта')
+assertEq('led-card hebrew fixed template', ledAfter?.hebrew ?? '', 'כרטיס לד')
+assertEq('led-card hebrewManual cleared', ledAfter?.hebrewManual ? 1 : 0, 0)
+assertEq(
+  'led-card russian auto from controller',
+  ledAfter?.russian ?? '',
+  'NovaStar VX1000',
+)
+assertEq('led-card russianManual cleared', ledAfter?.russianManual ? 1 : 0, 0)
 assertEq('cvt manual qty preserved', cvtAfter?.quantity ?? '', '3')
-assertEq('cvt manual hebrew preserved', cvtAfter?.hebrew ?? '', 'CVT מותאם')
-assertEq('cvt manual russian preserved', cvtAfter?.russian ?? '', 'Кастомный CVT')
+assertEq('cvt hebrew fixed template', cvtAfter?.hebrew ?? '', 'CVT / ממיר אופטי')
+assertEq('cvt hebrewManual cleared', cvtAfter?.hebrewManual ? 1 : 0, 0)
+assertEq(
+  'cvt russian auto from model',
+  cvtAfter?.russian ?? '',
+  'CVT / оптический конвертер',
+)
+assertEq('cvt russianManual cleared', cvtAfter?.russianManual ? 1 : 0, 0)
 
 assertEq(
   'long hebrew',
