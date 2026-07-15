@@ -3,6 +3,12 @@ import type { ChainStartEdge, PitchPresetId, PowerFeedMode, RoutingResult } from
 import { edgeToDirection } from '../lib/cabinetGrid'
 import { COLORS } from '../lib/constants'
 import { inferDataChainStart } from '../lib/dataRouting'
+import {
+  capturePanelPng,
+  panelExportFilename,
+  printPanelPng,
+  sharePanelViaWhatsApp,
+} from '../lib/panelExport'
 import { getPowerTrunkCabinet, inferPowerLineStart } from '../lib/powerRouting'
 import {
   backupLineColor,
@@ -18,6 +24,8 @@ interface GridVisualizationProps {
   wide: number
   high: number
   mode: GridVisualizationMode
+  /** Имя экрана — для имени файла data-ports-/power-lines-*.png */
+  screenName?: string
   manualMode?: boolean
   onManualModeChange?: (enabled: boolean) => void
   emptyCabinets?: string[]
@@ -187,6 +195,7 @@ export default memo(function GridVisualization({
   wide,
   high,
   mode,
+  screenName = 'Screen',
   manualMode = false,
   onManualModeChange,
   emptyCabinets = [],
@@ -210,6 +219,8 @@ export default memo(function GridVisualization({
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
   )
+  const [exportBusy, setExportBusy] = useState(false)
+  const captureRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 639px)')
@@ -540,6 +551,50 @@ export default memo(function GridVisualization({
     setEditMode('assign')
   }, [onClearManual])
 
+  const captureDiagram = useCallback(async () => {
+    const node = captureRef.current
+    if (!node) throw new Error('Схема недоступна для экспорта')
+    return capturePanelPng(node)
+  }, [])
+
+  const handlePrintScreen = useCallback(async () => {
+    if (exportBusy) return
+    setExportBusy(true)
+    try {
+      const dataUrl = await captureDiagram()
+      const filename = panelExportFilename(mode, screenName)
+      await printPanelPng(dataUrl, title, filename)
+    } catch (error) {
+      console.error('Print screen failed', error)
+      window.alert(
+        isData
+          ? 'Не удалось сделать скрин Data Ports. / Screenshot failed.'
+          : 'Не удалось сделать скрин Power Lines. / Screenshot failed.',
+      )
+    } finally {
+      setExportBusy(false)
+    }
+  }, [captureDiagram, exportBusy, isData, mode, screenName, title])
+
+  const handleWhatsAppShare = useCallback(async () => {
+    if (exportBusy) return
+    setExportBusy(true)
+    try {
+      const dataUrl = await captureDiagram()
+      const filename = panelExportFilename(mode, screenName)
+      await sharePanelViaWhatsApp({ dataUrl, filename, mode })
+    } catch (error) {
+      console.error('WhatsApp share failed', error)
+      window.alert(
+        isData
+          ? 'Не удалось подготовить схему для WhatsApp. / Share failed.'
+          : 'Не удалось подготовить схему для WhatsApp. / Share failed.',
+      )
+    } finally {
+      setExportBusy(false)
+    }
+  }, [captureDiagram, exportBusy, isData, mode, screenName])
+
   return (
     <div
       className={`overflow-x-auto rounded-xl border bg-white p-3 shadow-sm sm:p-4 ${
@@ -576,6 +631,24 @@ export default memo(function GridVisualization({
               Manual Routing / Ручная схема ({isData ? 'Data' : 'Power'})
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => void handlePrintScreen()}
+            disabled={exportBusy}
+            aria-label="Print screen / Печать / צילום מסך"
+            className={`${editBtnClass} bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60`}
+          >
+            Print screen / Печать / צילום מסך
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleWhatsAppShare()}
+            disabled={exportBusy}
+            aria-label="WhatsApp"
+            className={`${editBtnClass} bg-[#25D366] text-white hover:bg-[#1ebe57] disabled:cursor-wait disabled:opacity-60`}
+          >
+            WhatsApp
+          </button>
           <div
             className="flex items-center gap-1"
             role="group"
@@ -893,7 +966,8 @@ export default memo(function GridVisualization({
         className="-mx-1 overflow-x-auto px-1 pb-1 touch-pan-x"
       >
         <div
-          className="mx-auto max-w-none"
+          ref={captureRef}
+          className="mx-auto max-w-none bg-white"
           style={{
             width: svgW * effectiveScale,
             height: svgH * effectiveScale,

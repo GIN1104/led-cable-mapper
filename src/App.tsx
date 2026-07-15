@@ -1081,9 +1081,11 @@ export default function App() {
                 }`}
               >
                 <GridVisualization
-                  result={result!}                  wide={config.cabinetsWide}
+                  result={result!}
+                  wide={config.cabinetsWide}
                   high={config.cabinetsHigh}
                   mode="data"
+                  screenName={activeScreen.name}
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
                   manualMode={manualModeData}
@@ -1108,9 +1110,11 @@ export default function App() {
                   )}
                 />
                 <GridVisualization
-                  result={result!}                  wide={config.cabinetsWide}
+                  result={result!}
+                  wide={config.cabinetsWide}
                   high={config.cabinetsHigh}
                   mode="power"
+                  screenName={activeScreen.name}
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
                   powerFeedMode={config.powerFeedMode}
