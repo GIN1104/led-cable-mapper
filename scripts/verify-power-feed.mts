@@ -35,6 +35,7 @@ function makeConfig(powerFeedMode: PowerFeedMode): ScreenConfig {
     refreshRate: 60,
     chainStartEdge: 'left',
     powerFeedMode,
+    hangMount: false,
   })
   return applyPitchPreset(base, '3.9-big')
 }

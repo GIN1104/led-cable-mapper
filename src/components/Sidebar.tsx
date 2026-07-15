@@ -497,6 +497,27 @@ export default function Sidebar({
             )}
           </p>
 
+          <Field label="Подвес / Hang / תלייה">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={config.hangMount}
+              onClick={() => update('hangMount', !config.hangMount)}
+              className={`${switchClass} ${
+                config.hangMount ? 'bg-green-500' : 'bg-slate-300'
+              }`}
+            >
+              <span
+                className={`${switchKnobClass} ${
+                  config.hangMount ? 'translate-x-7 sm:translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+            <span className="ml-2 text-xs text-slate-500">
+              {config.hangMount ? 'ON — тросы/подвес по м' : 'OFF — шпрайцы'}
+            </span>
+          </Field>
+
         </section>
 
 

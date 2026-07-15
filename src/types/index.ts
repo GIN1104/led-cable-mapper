@@ -170,6 +170,12 @@ export interface ScreenConfig {
 
   powerFeedMode: PowerFeedMode
 
+  /**
+   * Подвес (Hang / תלייה): вместо шпрайцев — тросы/подвесы
+   * по метрам ширины стены (1 м → 1 подвес). По умолчанию выкл.
+   */
+  hangMount: boolean
+
 }
 
 
@@ -443,6 +449,8 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
   chainStartEdge: 'left',
 
   powerFeedMode: 'edge',
+
+  hangMount: false,
 
 }
 

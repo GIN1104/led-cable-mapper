@@ -9,6 +9,7 @@ export type EquipmentAutoKey =
   | 'speakons'
   | 'powerTrunks'
   | 'sprayers'
+  | 'hangers'
   | 'robot32a'
   | 'cableTies'
 
@@ -63,6 +64,13 @@ export interface EquipmentListState {
 export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   { id: 'screen', hebrew: 'מסך', russian: 'Экран', autoKey: 'screenSummary' },
   { id: 'sprays', hebrew: 'שפרייצים', russian: 'Шпрайцы', autoKey: 'sprayers' },
+  {
+    id: 'rigging-wire',
+    hebrew: 'רצועות תלייה',
+    russian: 'Тросы для подвеса',
+    autoKey: 'hangers',
+  },
+  { id: 'hangers', hebrew: 'תלייה', russian: 'Подвес', autoKey: 'hangers' },
   { id: 'computer', hebrew: 'מחשב', russian: 'Компьютер' },
   /** Процессор по умолчанию не нужен — без autoKey, количество пустое */
   { id: 'processor', hebrew: 'פרוצסור', russian: 'Процессор' },
@@ -87,7 +95,6 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
   },
   { id: 'tv', hebrew: 'TV', russian: 'ТВ' },
   { id: 'adapters', hebrew: 'הופכים חשמל', russian: 'Переходники: 63→32, 32→16' },
-  { id: 'rigging-wire', hebrew: 'רצועות תלייה (wire)', russian: 'Тросы для подвеса + подвес' },
   { id: 'ratchets', hebrew: "רצ'אטים", russian: 'Рачеты' },
   { id: 'tool-bag', hebrew: 'תיק כלים', russian: 'Сумка с инструментами' },
   { id: 'cable-ties', hebrew: 'אזיקונים', russian: 'Азиконим', autoKey: 'cableTies' },
@@ -230,9 +237,23 @@ export function resolveCableTiesPacks(
   return 1
 }
 
-/** Шпрайцы: ceil(ширина экрана в м) + 1 на каждый экран */
+/**
+ * Шпрайцы: ceil(ширина в м) + 1 — только экраны без подвеса (hangMount === false).
+ */
 function sumSprayers(screens: ScreenConfig[]): number {
-  return screens.reduce((sum, screen) => sum + Math.ceil(screen.wallWidthM) + 1, 0)
+  return screens
+    .filter((screen) => !screen.hangMount)
+    .reduce((sum, screen) => sum + Math.ceil(screen.wallWidthM) + 1, 0)
+}
+
+/**
+ * Подвес / тросы: 1 м ширины → 1 шт. Только экраны с hangMount.
+ * Math.max(1, Math.ceil(wallWidthM)), чтобы не занижать.
+ */
+function sumHangers(screens: ScreenConfig[]): number {
+  return screens
+    .filter((screen) => screen.hangMount)
+    .reduce((sum, screen) => sum + Math.max(1, Math.ceil(screen.wallWidthM)), 0)
 }
 
 /**
@@ -369,8 +390,16 @@ export function resolveEquipmentAutoQuantity(
     }
     case 'powerTrunks':
       return countTrunks(cableSchedule, 'Power')
-    case 'sprayers':
-      return screens.length > 0 ? sumSprayers(screens) : undefined
+    case 'sprayers': {
+      if (screens.length === 0) return undefined
+      const qty = sumSprayers(screens)
+      return qty > 0 ? qty : 0
+    }
+    case 'hangers': {
+      if (screens.length === 0) return undefined
+      const qty = sumHangers(screens)
+      return qty > 0 ? qty : 0
+    }
     case 'robot32a': {
       const powerLines = sumPowerLines(results)
       return results.length > 0 ? Math.max(1, Math.ceil(powerLines / 6)) : undefined

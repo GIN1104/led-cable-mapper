@@ -46,6 +46,8 @@ function makeConfig(
     trunkLengthM: 15,
     refreshRate,
     chainStartEdge: 'left',
+    powerFeedMode: 'edge',
+    hangMount: false,
   })
   return applyPitchPreset(base, '3.9-big')
 }

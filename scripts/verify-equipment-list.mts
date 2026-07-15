@@ -50,6 +50,7 @@ function makeConfig(
     refreshRate: 60,
     chainStartEdge: 'left',
     powerFeedMode: 'edge',
+    hangMount: false,
     ...overrides,
   })
   return applyPitchPreset(base, '3.9-big')
@@ -288,6 +289,68 @@ assertEq(
   ),
   1,
 )
+
+// --- Подвес (hangMount): шпрайцы ↔ тросы/подвес ---
+console.log('\n=== Hang mount: sprayers vs hangers ===')
+const hangScreen = makeConfig(10, 3, 'hang', 'Hang', { hangMount: true })
+const floorScreen = makeConfig(10, 3, 'floor', 'Floor', { hangMount: false })
+const hangResult = computeRouting(hangScreen)
+const floorResult = computeRouting(floorScreen)
+
+assertEq(
+  'sprayers floor only',
+  resolveEquipmentAutoQuantity('sprayers', [floorScreen], [{ screen: floorScreen, result: floorResult }], []),
+  Math.ceil(10) + 1,
+)
+assertEq(
+  'sprayers hang → 0/empty',
+  resolveEquipmentAutoQuantity('sprayers', [hangScreen], [{ screen: hangScreen, result: hangResult }], []),
+  0,
+)
+assertEq(
+  'hangers hang 10m → 10',
+  resolveEquipmentAutoQuantity('hangers', [hangScreen], [{ screen: hangScreen, result: hangResult }], []),
+  10,
+)
+assertEq(
+  'hangers floor → 0/empty',
+  resolveEquipmentAutoQuantity('hangers', [floorScreen], [{ screen: floorScreen, result: floorResult }], []),
+  0,
+)
+
+const mixedHangResults = [
+  { screen: hangScreen, result: hangResult },
+  { screen: floorScreen, result: floorResult },
+]
+assertEq(
+  'mixed: sprayers from floor only',
+  resolveEquipmentAutoQuantity('sprayers', [hangScreen, floorScreen], mixedHangResults, []),
+  Math.ceil(10) + 1,
+)
+assertEq(
+  'mixed: hangers from hang only',
+  resolveEquipmentAutoQuantity('hangers', [hangScreen, floorScreen], mixedHangResults, []),
+  10,
+)
+
+const stateHang = buildEquipmentListState(
+  [hangScreen],
+  [{ screen: hangScreen, result: hangResult }],
+  hangResult.cableSchedule,
+  hangResult.packingList,
+)
+assertEq('hang: sprays row empty', qtyById(stateHang, 'sprays'), '')
+assertEq('hang: rigging-wire qty', qtyById(stateHang, 'rigging-wire'), 10)
+assertEq('hang: hangers qty', qtyById(stateHang, 'hangers'), 10)
+
+const templateOrder = stateHang.rows.map((r) => r.id)
+const spraysIdx = templateOrder.indexOf('sprays')
+const riggingIdx = templateOrder.indexOf('rigging-wire')
+const hangersIdx = templateOrder.indexOf('hangers')
+const computerIdx = templateOrder.indexOf('computer')
+assertEq('order: sprays before rigging', spraysIdx < riggingIdx ? 1 : 0, 1)
+assertEq('order: hangers after rigging', hangersIdx === spraysIdx + 2 ? 1 : 0, 1)
+assertEq('order: hang gear before computer', hangersIdx < computerIdx ? 1 : 0, 1)
 
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`)

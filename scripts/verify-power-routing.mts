@@ -38,6 +38,7 @@ function makeConfig(wallWidthM: number, wallHeightM: number): ScreenConfig {
     refreshRate: 60,
     chainStartEdge: 'left',
     powerFeedMode: 'edge',
+    hangMount: false,
   })
   return applyPitchPreset(base, '3.9-big')
 }
