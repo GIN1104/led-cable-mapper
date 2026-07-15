@@ -94,30 +94,32 @@ if (sample.length >= 3) {
   }
 }
 
-// Перенумерация: move (целевая пуста)
+// Перенумерация: move (целевая пуста) — ВСЕ кабинеты линии
 {
   const moved = renumberLine(
-    { 1: ['A1', 'A2'] },
+    { 1: ['A1', 'A2', 'A3'] },
     { 1: 'A1' },
-    { A1: 1, A2: 1 },
+    { A1: 1, A2: 1, A3: 1 },
     1,
     4,
   )
   if (
     !moved ||
-    moved.chains[4]?.join(',') !== 'A1,A2' ||
+    moved.chains[4]?.join(',') !== 'A1,A2,A3' ||
     moved.chains[1] != null ||
     moved.assignments.A1 !== 4 ||
+    moved.assignments.A2 !== 4 ||
+    moved.assignments.A3 !== 4 ||
     moved.startPoints[4] !== 'A1' ||
     moved.startPoints[1] != null
   ) {
     console.error('FAIL: renumber move', moved)
     process.exit(1)
   }
-  console.log('Renumber move: D1 → D4 OK')
+  console.log('Renumber move: D1 → D4 (all cabinets) OK')
 }
 
-// Перенумерация: swap (обе линии заняты)
+// Перенумерация: swap (обе линии заняты) — ВСЕ кабинеты обеих линий
 {
   const swapped = renumberLine(
     { 1: ['A1', 'A2'], 4: ['B1', 'B2'] },
@@ -131,14 +133,101 @@ if (sample.length >= 3) {
     swapped.chains[1]?.join(',') !== 'B1,B2' ||
     swapped.chains[4]?.join(',') !== 'A1,A2' ||
     swapped.assignments.A1 !== 4 ||
+    swapped.assignments.A2 !== 4 ||
     swapped.assignments.B1 !== 1 ||
+    swapped.assignments.B2 !== 1 ||
     swapped.startPoints[1] !== 'B1' ||
     swapped.startPoints[4] !== 'A1'
   ) {
     console.error('FAIL: renumber swap', swapped)
     process.exit(1)
   }
-  console.log('Renumber swap: D1 ↔ D4 OK')
+  console.log('Renumber swap: D1 ↔ D4 (all cabinets) OK')
+}
+
+// Перенумерация: orphans в assignments (есть в карте, но нет в chain) — тоже переезжают
+{
+  const withOrphans = renumberLine(
+    { 1: ['A1'] },
+    { 1: 'A1' },
+    { A1: 1, A2: 1, A3: 1 },
+    1,
+    7,
+  )
+  if (
+    !withOrphans ||
+    withOrphans.chains[7]?.join(',') !== 'A1,A2,A3' ||
+    withOrphans.chains[1] != null ||
+    withOrphans.assignments.A1 !== 7 ||
+    withOrphans.assignments.A2 !== 7 ||
+    withOrphans.assignments.A3 !== 7 ||
+    withOrphans.startPoints[7] !== 'A1'
+  ) {
+    console.error('FAIL: renumber orphans in assignments', withOrphans)
+    process.exit(1)
+  }
+  console.log('Renumber orphans: whole line including A2/A3 OK')
+}
+
+// Интеграция: полный auto-override data D1 → D4 — цвета/цепочки всей линии
+{
+  const auto = buildAutoManualOverrides(screen)
+  const fromPort = 1
+  const toPort = 4
+  const onFrom = Object.entries(auto.dataPorts)
+    .filter(([, n]) => n === fromPort)
+    .map(([l]) => l)
+  if (onFrom.length < 2) {
+    console.error('FAIL: expected multi-cabinet data line for renumber integration')
+    process.exit(1)
+  }
+  const renumbered = renumberLine(
+    auto.dataPortChains ?? {},
+    auto.dataStartPoints ?? {},
+    auto.dataPorts,
+    fromPort,
+    toPort,
+  )
+  if (!renumbered) {
+    console.error('FAIL: renumber integration null')
+    process.exit(1)
+  }
+  const stillOnFrom = Object.entries(renumbered.assignments).filter(([, n]) => n === fromPort)
+  const movedTo = Object.entries(renumbered.assignments).filter(([, n]) => n === toPort)
+  if (stillOnFrom.length !== 0 || movedTo.length !== onFrom.length) {
+    console.error('FAIL: renumber integration assignment count', {
+      stillOnFrom: stillOnFrom.length,
+      movedTo: movedTo.length,
+      expected: onFrom.length,
+    })
+    process.exit(1)
+  }
+  if ((renumbered.chains[toPort] ?? []).length !== onFrom.length) {
+    console.error('FAIL: renumber integration chain length', renumbered.chains[toPort]?.length)
+    process.exit(1)
+  }
+  const routed = computeRouting(screen, {
+    manualModeData: true,
+    manualModePower: false,
+    manualOverrides: {
+      ...auto,
+      dataPorts: renumbered.assignments,
+      dataStartPoints: renumbered.startPoints,
+      dataPortChains: renumbered.chains,
+    },
+  })
+  const chain4 = routed.dataChains.find((c) => c.portNumber === toPort)
+  const chain1 = routed.dataChains.find((c) => c.portNumber === fromPort)
+  if (!chain4 || chain4.cabinets.length !== onFrom.length || chain1) {
+    console.error('FAIL: renumber integration routing', {
+      chain4: chain4?.cabinets.length,
+      chain1: chain1?.portNumber,
+    })
+    process.exit(1)
+  }
+  console.log(
+    `Renumber integration: ${onFrom.length} cabinets D${fromPort} → D${toPort}, routing OK`,
+  )
 }
 
 const dataOnly = computeRouting(screen, {

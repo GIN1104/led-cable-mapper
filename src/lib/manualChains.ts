@@ -114,10 +114,33 @@ export interface RenumberLineResult {
 }
 
 /**
- * Перенумеровать линию from → to.
+ * Все кабинеты линии: порядок из цепочки + «осиротевшие» метки из assignments
+ * (те, у кого номер линии есть в карте, но их нет в chain — иначе перенумерация
+ * затронула бы только часть линии / один кубик).
+ */
+export function labelsForLine(
+  chains: Record<number, string[]>,
+  assignments: Record<string, number>,
+  line: number,
+): string[] {
+  const chain = chains[line] ?? []
+  const ordered = [...chain]
+  const seen = new Set(chain)
+  for (const [label, n] of Object.entries(assignments)) {
+    if (n === line && !seen.has(label)) {
+      ordered.push(label)
+      seen.add(label)
+    }
+  }
+  return ordered
+}
+
+/**
+ * Перенумеровать линию from → to (вся линия целиком).
  * - Целевая занята → обмен (swap) содержимым и start points.
  * - Целевая пуста → перенос цепочки и start point.
  * - Исходная пуста → без изменений данных (только смена активной линии в UI).
+ * Обновляет assignment у КАЖДОГО кабинета линии (chain + orphans в assignments).
  */
 export function renumberLine(
   chains: Record<number, string[]>,
@@ -128,8 +151,8 @@ export function renumberLine(
 ): RenumberLineResult | null {
   if (from < 1 || to < 1 || from === to) return null
 
-  const fromChain = chains[from] ?? []
-  const toChain = chains[to] ?? []
+  const fromChain = labelsForLine(chains, assignments, from)
+  const toChain = labelsForLine(chains, assignments, to)
   const hasFrom = fromChain.length > 0
   const hasTo = toChain.length > 0
 
@@ -142,8 +165,8 @@ export function renumberLine(
     nextChains[to] = [...fromChain]
     for (const label of toChain) nextAssignments[label] = from
     for (const label of fromChain) nextAssignments[label] = to
-    const fromStart = startPoints[from]
-    const toStart = startPoints[to]
+    const fromStart = startPoints[from] ?? fromChain[0]
+    const toStart = startPoints[to] ?? toChain[0]
     if (fromStart !== undefined && toStart !== undefined) {
       nextStart[from] = toStart
       nextStart[to] = fromStart
@@ -161,8 +184,9 @@ export function renumberLine(
     nextChains[to] = [...fromChain]
     delete nextChains[from]
     for (const label of fromChain) nextAssignments[label] = to
-    if (startPoints[from] !== undefined) {
-      nextStart[to] = startPoints[from]
+    const fromStart = startPoints[from] ?? fromChain[0]
+    if (fromStart !== undefined) {
+      nextStart[to] = fromStart
       delete nextStart[from]
     } else {
       delete nextStart[to]
@@ -171,6 +195,12 @@ export function renumberLine(
 
   if ((nextChains[from]?.length ?? 0) === 0) delete nextChains[from]
   if ((nextChains[to]?.length ?? 0) === 0) delete nextChains[to]
+
+  // Страховка: номер в assignments всегда совпадает с цепочкой
+  for (const [lineStr, labels] of Object.entries(nextChains)) {
+    const n = Number(lineStr)
+    for (const label of labels) nextAssignments[label] = n
+  }
 
   return {
     chains: nextChains,

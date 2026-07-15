@@ -328,6 +328,8 @@ export default memo(function GridVisualization({
   const [activeValue, setActiveValue] = useState(1)
   const [lineNumberInput, setLineNumberInput] = useState('1')
   const [editMode, setEditMode] = useState<ManualEditMode>('assign')
+  /** Чтобы Enter не вызывал apply дважды (keydown + blur) */
+  const skipRenumberBlurRef = useRef(false)
 
   const maxLineNumber = useMemo(
     () => maxRenumberLine(chainOrder, maxAssignable),
@@ -356,8 +358,10 @@ export default memo(function GridVisualization({
       setLineNumberInput(String(activeValue))
       return
     }
+    // Активная линия целиком (кнопка D1/P2), не выбранный кабинет
     onRenumberActiveLine?.(activeValue, parsed)
     setActiveValue(parsed)
+    setSelectedLabels(new Set())
   }, [lineNumberInput, maxLineNumber, activeValue, onRenumberActiveLine])
 
   const emptySet = useMemo(() => new Set(emptyCabinets), [emptyCabinets])
@@ -903,18 +907,27 @@ export default memo(function GridVisualization({
                   max={maxLineNumber}
                   value={lineNumberInput}
                   onChange={(e) => setLineNumberInput(e.target.value)}
-                  onBlur={applyLineRenumber}
+                  onBlur={() => {
+                    if (skipRenumberBlurRef.current) {
+                      skipRenumberBlurRef.current = false
+                      return
+                    }
+                    applyLineRenumber()
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
+                      skipRenumberBlurRef.current = true
                       applyLineRenumber()
+                      ;(e.target as HTMLInputElement).blur()
                     } else if (e.key === 'Escape') {
                       setLineNumberInput(String(activeValue))
+                      skipRenumberBlurRef.current = true
                       ;(e.target as HTMLInputElement).blur()
                     }
                   }}
                   className="w-14 rounded-md border border-amber-300 bg-white px-2 py-1 text-center text-xs font-semibold text-amber-950 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  title={`Перенумеровать активную линию ${prefix}${activeValue} (Enter — применить, 1–${maxLineNumber})`}
+                  title={`Перенумеровать всю активную линию ${prefix}${activeValue} (все кабинеты), Enter — применить, 1–${maxLineNumber}`}
                 />
               </label>
             )}
@@ -963,8 +976,8 @@ export default memo(function GridVisualization({
                 {' '}
                 — клики задают порядок цепочки; повторный клик по последнему снимает его;
                 Undo / Alt+клик — отменить последнее; Reverse — первый кабинет станет последним;
-                Clear line — снять все кабинеты с активной линии; Line # — перенумеровать линию
-                (если целевая занята — обмен содержимым).
+                Clear line — снять все кабинеты с активной линии; Line # — перенумеровать
+                всю активную линию (все кубики; если целевая занята — обмен).
               </>
             ) : editMode === 'start' ? (
               <>
