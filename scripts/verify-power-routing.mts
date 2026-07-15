@@ -1,5 +1,6 @@
 /**
- * Проверка авто-маршрутизации power: 7×3 м, 10×3 м, 14×8 м, кейс где max(12) лучше.
+ * Проверка авто-маршрутизации power: 3×2 м (1 линия), 7×3 м, 10×3 м, 14×8 м,
+ * кейс где max(12) лучше.
  * Запуск: npm run verify:power
  */
 import type { ChainStartEdge, ScreenConfig } from '../src/types/index.ts'
@@ -139,6 +140,18 @@ function vertCol(col: number, letters: string[]): string[] {
   return letters.map((letter) => `${letter}${col}`)
 }
 
+/*
+ * 3m×2m = 6×2 = 12 cabs ≤ max 12 → одна силовая линия (змейка снизу вверх).
+ * Без раннего выхода полосы дали бы 2 ряда × 6.
+ */
+const ok3x2Ltr = runCase(3, 2, 'left', '3m×2m 3.9 Big LTR (single line ≤ max)', [
+  ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'B6', 'B5', 'B4', 'B3', 'B2', 'B1'],
+])
+
+const ok3x2Rtl = runCase(3, 2, 'right', '3m×2m 3.9 Big RTL (single line ≤ max)', [
+  ['A6', 'A5', 'A4', 'A3', 'A2', 'A1', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6'],
+])
+
 // 7m×3m = 14×3: ширина не делится на 10 → pack 12; остаток 2 кол. — P-паттерн
 const ok7Ltr = runCase(7, 3, 'left', '7m×3m 3.9 Big LTR', [
   ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A11', 'A12'],
@@ -214,6 +227,14 @@ const okDecisions =
   assertPackWidth(28, 8, pref, max, 12, '14m×8m rem → max')
 
 const allOk =
-  ok7Ltr && ok10Ltr && ok7Rtl && ok10Rtl && ok6Ltr && ok14x8 && okDecisions
+  ok3x2Ltr &&
+  ok3x2Rtl &&
+  ok7Ltr &&
+  ok10Ltr &&
+  ok7Rtl &&
+  ok10Rtl &&
+  ok6Ltr &&
+  ok14x8 &&
+  okDecisions
 console.log(`\n${allOk ? 'ALL PASS' : 'SOME FAILED'}`)
 process.exit(allOk ? 0 : 1)

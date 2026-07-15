@@ -737,7 +737,8 @@ function partitionRemainderBand(
 }
 
 /**
- * 3.9 big/small: полосы по choosePowerPackWidth (preferred если ≤6 полных линий,
+ * 3.9 big/small: если кабинетов ≤ max — одна связная линия;
+ * иначе полосы по choosePowerPackWidth (preferred если ≤6 полных линий,
  * иначе max); в полной полосе — горизонтали снизу вверх;
  * остаток — P / горизонтали / вертикальные колонки (равные линии).
  */
@@ -779,6 +780,26 @@ function partitionComponentForPreset(
   component: Cabinet[],
   config: ScreenConfig,
 ): Cabinet[][] {
+  if (component.length === 0) return []
+
+  const maxSize = getMaxCabinetsPerPowerLine(config)
+  // Вся стена/компонента ≤ max — одна линия (не режем по рядам/полосам)
+  if (component.length <= maxSize) {
+    const start = selectPathStart(component, config)
+    const path = growPowerPath(component, start, config, maxSize)
+    if (path.length === component.length) {
+      return [path]
+    }
+    // Жадный обход застрял на дырявой форме — добираем остаток отдельно
+    const used = new Set(path.map((c) => c.label))
+    const rest = component.filter((c) => !used.has(c.label))
+    const restPaths =
+      useHorizontalStripAlgorithm(config)
+        ? partitionHorizontalStripComponent(rest, config)
+        : partitionComponent(rest, config)
+    return path.length > 0 ? [path, ...restPaths] : restPaths
+  }
+
   if (useHorizontalStripAlgorithm(config)) {
     return partitionHorizontalStripComponent(component, config)
   }
@@ -824,7 +845,8 @@ export function getPowerTrunkCabinet(
 }
 
 /**
- * Авто-разбиение power: колонковые полосы + горизонтальные ряды (3.9 big/small),
+ * Авто-разбиение power: если кабинетов ≤ max — одна линия;
+ * иначе колонковые полосы + горизонтальные ряды (3.9 big/small),
  * вертикальный жадный обход (Reshet, 2.9).
  */
 export function buildPowerLines(
