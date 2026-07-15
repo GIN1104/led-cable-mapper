@@ -34,6 +34,8 @@ interface GridVisualizationProps {
   onUndoLast?: () => void
   /** Снять конкретный кабинет (повторный клик по последнему в активной линии) */
   onUndoCabinet?: (label: string) => void
+  /** Перевернуть порядок кабинетов активной линии */
+  onReverseActiveLine?: (lineNumber: number) => void
   canUndo?: boolean
   maxAssignable?: number
   chainStartEdge?: ChainStartEdge
@@ -198,6 +200,7 @@ export default memo(function GridVisualization({
   onClearManual,
   onUndoLast,
   onUndoCabinet,
+  onReverseActiveLine,
   canUndo = false,
   maxAssignable = 1,
   chainStartEdge = 'left',
@@ -662,6 +665,21 @@ export default memo(function GridVisualization({
                 Undo / Отменить
               </button>
             )}
+            {onReverseActiveLine && (
+              <button
+                type="button"
+                onClick={() => onReverseActiveLine(activeValue)}
+                disabled={(chainOrder[activeValue] ?? []).length < 2}
+                className={`${editBtnClass} ${
+                  (chainOrder[activeValue] ?? []).length >= 2
+                    ? 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
+                    : 'cursor-not-allowed bg-white/60 text-amber-400 ring-1 ring-amber-200'
+                }`}
+                title={`Перевернуть ${prefix}${activeValue}: первый кабинет станет последним`}
+              >
+                Reverse / Перевернуть / הפוך
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setEditMode('start')}
@@ -745,7 +763,7 @@ export default memo(function GridVisualization({
               <>
                 {' '}
                 — клики задают порядок цепочки; повторный клик по последнему снимает его;
-                Undo / Alt+клик — отменить последнее заполнение.
+                Undo / Alt+клик — отменить последнее; Reverse — первый кабинет станет последним.
               </>
             ) : editMode === 'start' ? (
               <>

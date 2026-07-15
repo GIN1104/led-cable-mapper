@@ -12,6 +12,7 @@ import {
   appendLabelToChain,
   moveLabelToChainFront,
   removeLabelFromChains,
+  reverseChain,
 } from './lib/manualChains'
 import {
   getMaxCabinetsPerDataPort,
@@ -695,6 +696,70 @@ export default function App() {
     setPowerPaintUndo((u) => ({ ...u, [activeScreen.id]: [] }))
   }, [activeScreen.id])
 
+  /** Перевернуть активную data-линию: первый кабинет становится последним */
+  const handleReverseActiveDataLine = useCallback(
+    (portNumber: number) => {
+      setRoutingByScreen((prev) => {
+        const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        const dataPortChains = reverseChain(
+          { ...(current.manualOverrides.dataPortChains ?? {}) },
+          portNumber,
+        )
+        const chain = dataPortChains[portNumber]
+        if (!chain || chain.length === 0) return prev
+        const dataStartPoints = {
+          ...(current.manualOverrides.dataStartPoints ?? {}),
+          [portNumber]: chain[0],
+        }
+        return {
+          ...prev,
+          [activeScreen.id]: {
+            ...current,
+            manualModeData: true,
+            manualOverrides: {
+              ...current.manualOverrides,
+              dataPortChains,
+              dataStartPoints,
+            },
+          },
+        }
+      })
+    },
+    [activeScreen.id],
+  )
+
+  /** Перевернуть активную power-линию: первый кабинет становится последним */
+  const handleReverseActivePowerLine = useCallback(
+    (lineNumber: number) => {
+      setRoutingByScreen((prev) => {
+        const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        const powerLineChains = reverseChain(
+          { ...(current.manualOverrides.powerLineChains ?? {}) },
+          lineNumber,
+        )
+        const chain = powerLineChains[lineNumber]
+        if (!chain || chain.length === 0) return prev
+        const powerStartPoints = {
+          ...(current.manualOverrides.powerStartPoints ?? {}),
+          [lineNumber]: chain[0],
+        }
+        return {
+          ...prev,
+          [activeScreen.id]: {
+            ...current,
+            manualModePower: true,
+            manualOverrides: {
+              ...current.manualOverrides,
+              powerLineChains,
+              powerStartPoints,
+            },
+          },
+        }
+      })
+    },
+    [activeScreen.id],
+  )
+
   const handlePowerStartPoint = useCallback(
     (lineNumber: number, label: string) => {
       setRoutingByScreen((prev) => {
@@ -1034,6 +1099,7 @@ export default function App() {
                   onClearManual={handleClearDataManual}
                   onUndoLast={handleUndoDataLast}
                   onUndoCabinet={handleUndoDataCabinet}
+                  onReverseActiveLine={handleReverseActiveDataLine}
                   canUndo={(dataPaintUndo[activeScreen.id] ?? []).length > 0}
                   maxAssignable={Math.max(
                     result!.summary.dataPorts,
@@ -1061,6 +1127,7 @@ export default function App() {
                   onClearManual={handleClearPowerManual}
                   onUndoLast={handleUndoPowerLast}
                   onUndoCabinet={handleUndoPowerCabinet}
+                  onReverseActiveLine={handleReverseActivePowerLine}
                   canUndo={(powerPaintUndo[activeScreen.id] ?? []).length > 0}
                   maxAssignable={Math.max(
                     result!.summary.powerLines,

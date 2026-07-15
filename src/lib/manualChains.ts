@@ -64,6 +64,19 @@ export function startPointsFromChains(
   return map
 }
 
+/** Переворачивает цепочку одной линии: первый кабинет → последний */
+export function reverseChain(
+  chains: Record<number, string[]>,
+  line: number,
+): Record<number, string[]> {
+  const chain = chains[line]
+  if (!chain || chain.length < 2) return chains
+  return {
+    ...chains,
+    [line]: [...chain].reverse(),
+  }
+}
+
 /** Ключ для хеша маршрутизации: порядок внутри линий важен */
 export function chainsKey(chains: Record<number, string[]> | undefined): string {
   if (!chains || Object.keys(chains).length === 0) return ''

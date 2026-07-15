@@ -72,6 +72,25 @@ if (sample.length >= 3) {
     console.error('FAIL: click order not preserved', labels)
     process.exit(1)
   }
+
+  // Reverse: [a, c, b] → [b, c, a], start moves to former last
+  const reversed = computeRouting(screen, {
+    manualModeData: true,
+    manualModePower: false,
+    manualOverrides: {
+      dataPorts: { [a]: 1, [b]: 1, [c]: 1 },
+      powerLines: {},
+      dataStartPoints: { 1: b },
+      dataPortChains: { 1: [b, c, a] },
+    },
+  })
+  const revChain = reversed.dataChains.find((ch) => ch.portNumber === 1)
+  const revLabels = revChain?.cabinets.map((cab) => cab.label) ?? []
+  console.log('Reversed chain:', revLabels.join(' → '))
+  if (revLabels[0] !== b || revLabels[1] !== c || revLabels[2] !== a) {
+    console.error('FAIL: reverse order not applied', revLabels)
+    process.exit(1)
+  }
 }
 
 const dataOnly = computeRouting(screen, {
