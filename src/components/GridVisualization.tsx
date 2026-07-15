@@ -12,6 +12,7 @@ import { COLORS } from '../lib/constants'
 import { inferDataChainStart } from '../lib/dataRouting'
 import {
   capturePanelPng,
+  downloadDataUrl,
   panelExportFilename,
   type PanelPrintInfo,
   printPanelPng,
@@ -83,6 +84,7 @@ const ARROW_HEAD_LEN = 14
 const ARROW_HEAD_ANGLE = Math.PI / 5.5
 
 const TRUNK_FEED_COLOR = '#ea580c'
+const END_LABEL_COLOR = '#0f766e'
 
 const LARGE_GRID_THRESHOLD = 100
 
@@ -262,8 +264,17 @@ export default memo(function GridVisualization({
   const zoomBtnClass =
     'touch-manipulation flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50 active:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-[32px] sm:min-w-[32px] sm:text-sm'
 
-  const { cabinets, dataChains, powerLines, dataLinks, backupLinks, powerLinks, warnings } =
-    result
+  const {
+    cabinets,
+    dataChains,
+    backupChains,
+    powerLines,
+    dataLinks,
+    backupLinks,
+    powerLinks,
+    warnings,
+    summary,
+  } = result
 
   const isData = mode === 'data'
   const lineDirection = edgeToDirection(chainStartEdge)
@@ -297,6 +308,15 @@ export default memo(function GridVisualization({
   }, [pitchPreset])
 
   const printInfo = useMemo((): PanelPrintInfo => {
+    const dataLineCount =
+      summary.dataPorts > 0
+        ? summary.dataPorts
+        : dataChains.filter((c) => !c.isBackup).length
+    const backupLineCount =
+      summary.backupPorts > 0 ? summary.backupPorts : backupChains.length
+    const powerLineCount =
+      summary.powerLines > 0 ? summary.powerLines : powerLines.length
+
     return {
       screenName,
       wallWidthM,
@@ -310,6 +330,12 @@ export default memo(function GridVisualization({
         : 'Power Lines / Электричество',
       refreshRate,
       lineDirection: lineDirection.toUpperCase(),
+      ...(isData
+        ? {
+            dataLines: dataLineCount,
+            ...(backupLineCount > 0 ? { backupLines: backupLineCount } : {}),
+          }
+        : { powerLines: powerLineCount }),
     }
   }, [
     screenName,
@@ -322,6 +348,12 @@ export default memo(function GridVisualization({
     isData,
     refreshRate,
     lineDirection,
+    summary.dataPorts,
+    summary.backupPorts,
+    summary.powerLines,
+    dataChains,
+    backupChains,
+    powerLines,
   ])
 
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set())
@@ -533,6 +565,23 @@ export default memo(function GridVisualization({
     return new Set(Object.values(feedPointsByLine))
   }, [feedPointsByLine])
 
+  /** Последний кабинет каждой D/P линии — метка End (учитывает reverse: cabinets[].at(-1)) */
+  const endLabels = useMemo(() => {
+    const set = new Set<string>()
+    if (isData) {
+      for (const chain of dataChains) {
+        if (chain.isBackup || chain.cabinets.length === 0) continue
+        set.add(chain.cabinets[chain.cabinets.length - 1].label)
+      }
+    } else {
+      for (const line of powerLines) {
+        if (line.cabinets.length === 0) continue
+        set.add(line.cabinets[line.cabinets.length - 1].label)
+      }
+    }
+    return set
+  }, [isData, dataChains, powerLines])
+
   const warnedIds = useMemo(() => {
     const type = isData ? 'data' : 'power'
     return new Set(
@@ -687,6 +736,25 @@ export default memo(function GridVisualization({
     }
   }, [captureDiagram, exportBusy, isData, mode, screenName])
 
+  const handleSaveImage = useCallback(async () => {
+    if (exportBusy) return
+    setExportBusy(true)
+    try {
+      const dataUrl = await captureDiagram()
+      const filename = panelExportFilename(mode, screenName)
+      downloadDataUrl(dataUrl, filename)
+    } catch (error) {
+      console.error('Save image failed', error)
+      window.alert(
+        isData
+          ? 'Не удалось сохранить картинку Data Ports. / Save failed.'
+          : 'Не удалось сохранить картинку Power Lines. / Save failed.',
+      )
+    } finally {
+      setExportBusy(false)
+    }
+  }, [captureDiagram, exportBusy, isData, mode, screenName])
+
   return (
     <div
       ref={captureRef}
@@ -732,6 +800,15 @@ export default memo(function GridVisualization({
             className={`${editBtnClass} bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60`}
           >
             Print screen / Печать / צילום מסך
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSaveImage()}
+            disabled={exportBusy}
+            aria-label="Save image / Сохранить картинку / שמור תמונה"
+            className={`${editBtnClass} bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60`}
+          >
+            Save image / Сохранить картинку / שמור תמונה
           </button>
           <button
             type="button"
@@ -1047,6 +1124,20 @@ export default memo(function GridVisualization({
                 </span>
               </>
             )}
+            <span className="flex items-center gap-1.5 text-slate-600">
+              <span
+                className="inline-block h-3 w-3 rounded-sm border-[3px]"
+                style={{ borderColor: '#ca8a04' }}
+              />
+              ★ START
+            </span>
+            <span className="flex items-center gap-1.5 text-slate-600">
+              <span
+                className="inline-block h-3 w-3 rounded-sm border-[3px]"
+                style={{ borderColor: END_LABEL_COLOR }}
+              />
+              End
+            </span>
           </>
         ) : (
           <>
@@ -1087,6 +1178,13 @@ export default memo(function GridVisualization({
                 style={{ borderColor: '#ca8a04' }}
               />
               ★ START (цепь)
+            </span>
+            <span className="flex items-center gap-1.5 text-slate-600">
+              <span
+                className="inline-block h-3 w-3 rounded-sm border-[3px]"
+                style={{ borderColor: END_LABEL_COLOR }}
+              />
+              End
             </span>
             <span className="flex items-center gap-1.5 text-slate-600">
               <span
@@ -1333,6 +1431,7 @@ export default memo(function GridVisualization({
             const starSize = simplifyLabels ? 10 : 12
             const labelSize = simplifyLabels ? 7 : 8
             const isAlsoFeed = !isData && feedLabels.has(cab.label)
+            const isAlsoEnd = endLabels.has(cab.label)
             return (
               <g key={`start-${cab.label}`}>
                 <rect
@@ -1382,7 +1481,7 @@ export default memo(function GridVisualization({
                     strokeWidth={simplifyLabels ? 2 : 1}
                     paintOrder="stroke"
                   >
-                    START
+                    {isAlsoEnd ? 'START/End' : 'START'}
                   </text>
                 )}
               </g>
@@ -1398,6 +1497,14 @@ export default memo(function GridVisualization({
               const y = PAD + cab.row * (CELL_H + GAP)
               const labelSize = simplifyLabels ? 7 : 8
               const isAlsoStart = startLabels.has(cab.label)
+              const isAlsoEnd = endLabels.has(cab.label)
+              const feedText = isAlsoStart
+                ? isAlsoEnd
+                  ? 'FEED/START/End'
+                  : 'FEED/START'
+                : isAlsoEnd
+                  ? 'FEED/End'
+                  : 'FEED'
               return (
                 <g key={`feed-${cab.label}`}>
                   {!isAlsoStart && (
@@ -1421,11 +1528,53 @@ export default memo(function GridVisualization({
                     strokeWidth={simplifyLabels ? 2 : 1.5}
                     paintOrder="stroke"
                   >
-                    {isAlsoStart ? 'FEED/START' : 'FEED'}
+                    {feedText}
                   </text>
                 </g>
               )
             })}
+        </g>
+
+        <g id="end-markers" pointerEvents="none">
+          {cabinets.map((cab) => {
+            if (emptySet.has(cab.label) || !endLabels.has(cab.label)) return null
+            // На короткой линии Start/FEED уже показывают End в комбинированной подписи
+            if (startLabels.has(cab.label) || feedLabels.has(cab.label)) return null
+            const x = PAD + cab.col * (CELL_W + GAP)
+            const y = PAD + cab.row * (CELL_H + GAP)
+            const endFont =
+              simplifyLabels || isMobile ? (isMobile && simplifyLabels ? 12 : 10) : 8
+            const badgePadX = simplifyLabels || isMobile ? 5 : 4
+            const badgeH = endFont + (simplifyLabels || isMobile ? 6 : 4)
+            const badgeW = Math.ceil(3 * endFont * 0.72) + badgePadX * 2
+            const badgeX = x + (CELL_W - badgeW) / 2
+            const badgeY = y + CELL_H - badgeH - 2
+            return (
+              <g key={`end-${cab.label}`}>
+                <rect
+                  x={badgeX}
+                  y={badgeY}
+                  width={badgeW}
+                  height={badgeH}
+                  rx={badgeH / 2}
+                  fill={END_LABEL_COLOR}
+                  stroke="#ffffff"
+                  strokeWidth={simplifyLabels || isMobile ? 2 : 1.5}
+                />
+                <text
+                  x={badgeX + badgeW / 2}
+                  y={badgeY + badgeH / 2 + endFont * 0.35}
+                  textAnchor="middle"
+                  fontSize={endFont}
+                  fontWeight={800}
+                  fill="#ffffff"
+                  letterSpacing={0.3}
+                >
+                  End
+                </text>
+              </g>
+            )
+          })}
         </g>
 
         <text x={PAD} y={svgH - 8} fontSize={11} fill="#94a3b8">

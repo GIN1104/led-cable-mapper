@@ -13,6 +13,12 @@ export interface PanelPrintInfo {
   panelType: string
   refreshRate?: number
   lineDirection?: string
+  /** Число data-линий (для Data-панели) */
+  dataLines?: number
+  /** Число power-линий (для Power-панели) */
+  powerLines?: number
+  /** Число backup-линий (если backup включён, Data-панель) */
+  backupLines?: number
   /** Локализованная дата; если не задана — подставляется при форматировании */
   date?: string
 }
@@ -54,6 +60,16 @@ export function formatPanelPrintInfoLines(info: PanelPrintInfo): string[] {
     `Pitch: ${info.pitchLabel} · ${info.controllerModel}`,
     info.panelType,
   ]
+
+  if (info.dataLines != null) {
+    lines.push(`Data lines: ${info.dataLines} / Линий data: ${info.dataLines}`)
+  }
+  if (info.backupLines != null && info.backupLines > 0) {
+    lines.push(`Backup lines: ${info.backupLines} / Линий backup: ${info.backupLines}`)
+  }
+  if (info.powerLines != null) {
+    lines.push(`Power lines: ${info.powerLines} / Линий power: ${info.powerLines}`)
+  }
 
   const extras: string[] = []
   if (info.refreshRate != null) extras.push(`${info.refreshRate} Hz`)
