@@ -1086,6 +1086,10 @@ export default function App() {
                   high={config.cabinetsHigh}
                   mode="data"
                   screenName={activeScreen.name}
+                  wallWidthM={config.wallWidthM}
+                  wallHeightM={config.wallHeightM}
+                  controllerModel={config.controllerModel}
+                  refreshRate={config.refreshRate}
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
                   manualMode={manualModeData}
@@ -1115,6 +1119,10 @@ export default function App() {
                   high={config.cabinetsHigh}
                   mode="power"
                   screenName={activeScreen.name}
+                  wallWidthM={config.wallWidthM}
+                  wallHeightM={config.wallHeightM}
+                  controllerModel={config.controllerModel}
+                  refreshRate={config.refreshRate}
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
                   powerFeedMode={config.powerFeedMode}

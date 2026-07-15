@@ -1,14 +1,23 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ChainStartEdge, PitchPresetId, PowerFeedMode, RoutingResult } from '../types'
+import type {
+  ChainStartEdge,
+  ControllerModel,
+  PitchPresetId,
+  PowerFeedMode,
+  RefreshRate,
+  RoutingResult,
+} from '../types'
 import { edgeToDirection } from '../lib/cabinetGrid'
 import { COLORS } from '../lib/constants'
 import { inferDataChainStart } from '../lib/dataRouting'
 import {
   capturePanelPng,
   panelExportFilename,
+  type PanelPrintInfo,
   printPanelPng,
   sharePanelViaWhatsApp,
 } from '../lib/panelExport'
+import { CUSTOM_PRESET_LABEL, getPitchPreset } from '../lib/pitchPresets'
 import { getPowerTrunkCabinet, inferPowerLineStart } from '../lib/powerRouting'
 import {
   backupLineColor,
@@ -26,6 +35,11 @@ interface GridVisualizationProps {
   mode: GridVisualizationMode
   /** Имя экрана — для имени файла data-ports-/power-lines-*.png */
   screenName?: string
+  /** Физический размер стены — для Print screen info */
+  wallWidthM?: number
+  wallHeightM?: number
+  controllerModel?: ControllerModel
+  refreshRate?: RefreshRate
   manualMode?: boolean
   onManualModeChange?: (enabled: boolean) => void
   emptyCabinets?: string[]
@@ -196,6 +210,10 @@ export default memo(function GridVisualization({
   high,
   mode,
   screenName = 'Screen',
+  wallWidthM = 0,
+  wallHeightM = 0,
+  controllerModel = 'Generic 1G Controller',
+  refreshRate = 60,
   manualMode = false,
   onManualModeChange,
   emptyCabinets = [],
@@ -265,6 +283,39 @@ export default memo(function GridVisualization({
     ? 'Data Ports / Тикшорет / תקשורת'
     : 'Power Lines / Электричество / חשמל'
   const prefix = isData ? 'D' : 'P'
+
+  const pitchLabel = useMemo(() => {
+    if (pitchPreset === 'custom') return CUSTOM_PRESET_LABEL
+    return getPitchPreset(pitchPreset)?.label ?? pitchPreset
+  }, [pitchPreset])
+
+  const printInfo = useMemo((): PanelPrintInfo => {
+    return {
+      screenName,
+      wallWidthM,
+      wallHeightM,
+      cabinetsWide: wide,
+      cabinetsHigh: high,
+      pitchLabel,
+      controllerModel,
+      panelType: isData
+        ? 'Data Ports / Тикшорет'
+        : 'Power Lines / Электричество',
+      refreshRate,
+      lineDirection: lineDirection.toUpperCase(),
+    }
+  }, [
+    screenName,
+    wallWidthM,
+    wallHeightM,
+    wide,
+    high,
+    pitchLabel,
+    controllerModel,
+    isData,
+    refreshRate,
+    lineDirection,
+  ])
 
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set())
   const [activeValue, setActiveValue] = useState(1)
@@ -563,7 +614,10 @@ export default memo(function GridVisualization({
     try {
       const dataUrl = await captureDiagram()
       const filename = panelExportFilename(mode, screenName)
-      await printPanelPng(dataUrl, title, filename)
+      await printPanelPng(dataUrl, title, filename, {
+        ...printInfo,
+        date: new Date().toLocaleDateString(),
+      })
     } catch (error) {
       console.error('Print screen failed', error)
       window.alert(
@@ -574,7 +628,7 @@ export default memo(function GridVisualization({
     } finally {
       setExportBusy(false)
     }
-  }, [captureDiagram, exportBusy, isData, mode, screenName, title])
+  }, [captureDiagram, exportBusy, isData, mode, printInfo, screenName, title])
 
   const handleWhatsAppShare = useCallback(async () => {
     if (exportBusy) return
