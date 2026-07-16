@@ -85,19 +85,19 @@ const ZOOM_MIN = 0.5
 const ZOOM_MAX = 3
 const ZOOM_STEP = 0.1
 
-/** Чистая линия + крупный наконечник в конце сегмента (без промежуточных шевронов) */
+/** Линия + наконечник; на mobile меньше — ячейки 56×44, крупные стрелки перекрывают подписи */
 const ARROW_METRICS = {
   desktop: {
-    stroke: 5,
-    outline: 8,
-    headLen: 16,
-    headAngle: Math.PI / 5,
+    stroke: 4.5,
+    outline: 7,
+    headLen: 14,
+    headAngle: Math.PI / 5.5,
   },
   mobile: {
-    stroke: 6,
-    outline: 10,
-    headLen: 22,
-    headAngle: Math.PI / 5,
+    stroke: 3.5,
+    outline: 5.5,
+    headLen: 10,
+    headAngle: Math.PI / 5.5,
   },
 } as const
 
@@ -152,12 +152,12 @@ function cabinetCenter(
   }
 }
 
-/** Расстояние data/backup линий от центрального пути кабинетов (px) — только горизонталь */
-const DATA_LANE_OFFSET = 18
+/** Расстояние data/backup от центра (горизонталь); на mobile меньше, иначе съедают подписи */
+const DATA_LANE_OFFSET = { desktop: 13, mobile: 8 } as const
 /** Зазор между data и backup на вертикальном переходе */
-const VERTICAL_PAIR_GAP = 16
+const VERTICAL_PAIR_GAP = { desktop: 14, mobile: 9 } as const
 /** Отступ вертикальных линий от внешнего края кубика */
-const VERTICAL_EDGE_INSET = 14
+const VERTICAL_EDGE_INSET = { desktop: 12, mobile: 7 } as const
 
 /**
  * Перпендикулярное смещение data/backup для горизонтальных сегментов.
@@ -169,11 +169,12 @@ function dataLaneOffset(
   x2: number,
   y2: number,
   kind: 'data' | 'backup',
+  isMobile = false,
 ): number {
   const dx = x2 - x1
   const dy = y2 - y1
   const len = Math.sqrt(dx * dx + dy * dy) || 1
-  const mag = DATA_LANE_OFFSET
+  const mag = isMobile ? DATA_LANE_OFFSET.mobile : DATA_LANE_OFFSET.desktop
   const desiredNy = kind === 'data' ? -mag : mag
   return (desiredNy * len) / dx
 }
@@ -195,12 +196,14 @@ function verticalLaneDesiredNx(
   wide: number,
   cellW: number,
   isRtl: boolean,
+  isMobile = false,
 ): number {
   const outer = verticalOuterSign(col, wide, isRtl)
-  const outerFromCenter = cellW / 2 - VERTICAL_EDGE_INSET
-  // data ближе к внешнему краю, backup на 8px внутрь
+  const edgeInset = isMobile ? VERTICAL_EDGE_INSET.mobile : VERTICAL_EDGE_INSET.desktop
+  const pairGap = isMobile ? VERTICAL_PAIR_GAP.mobile : VERTICAL_PAIR_GAP.desktop
+  const outerFromCenter = cellW / 2 - edgeInset
   if (kind === 'data') return outer * outerFromCenter
-  return outer * (outerFromCenter - VERTICAL_PAIR_GAP)
+  return outer * (outerFromCenter - pairGap)
 }
 
 /** Преобразует desiredNx (px) в параметр offset для ArrowPath */
@@ -253,13 +256,14 @@ function ArrowPath({
   const ux = dx / len
   const uy = dy / len
 
-  // Основные линии длиннее; backup (dashed) короче, чтобы не накладывались
+  // Основные линии длиннее; backup короче. На mobile сильнее отступаем от центров —
+  // чтобы наконечники не накрывали A1/B2…
   const startInset = dashed
-    ? Math.min(len * 0.22, isMobile ? 22 : 26)
-    : Math.min(len * 0.12, isMobile ? 12 : 14)
+    ? Math.min(len * 0.26, isMobile ? 16 : 26)
+    : Math.min(len * 0.16, isMobile ? 10 : 14)
   const tipInset = dashed
-    ? Math.min(len * 0.22, Math.max(metrics.headLen * 0.85, isMobile ? 20 : 24))
-    : Math.min(len * 0.12, Math.max(metrics.headLen * 0.45, isMobile ? 10 : 12))
+    ? Math.min(len * 0.28, Math.max(metrics.headLen * 0.9, isMobile ? 14 : 24))
+    : Math.min(len * 0.18, Math.max(metrics.headLen * 0.55, isMobile ? 9 : 12))
   const ax = sx + ux * startInset
   const ay = sy + uy * startInset
   const bx = sx + ux * (len - tipInset)
@@ -287,12 +291,12 @@ function ArrowPath({
         stroke={color}
         strokeWidth={
           emphasizeHorizontal
-            ? metrics.stroke + 1
+            ? metrics.stroke + 0.5
             : isVertical
-              ? metrics.stroke - 1
+              ? Math.max(2.5, metrics.stroke - 0.5)
               : metrics.stroke
         }
-        strokeDasharray={dashed ? '7 5' : undefined}
+        strokeDasharray={dashed ? (isMobile ? '5 4' : '7 5') : undefined}
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -300,7 +304,7 @@ function ArrowPath({
         points={arrowHeadPoints(bx, by, angle, metrics.headLen, metrics.headAngle)}
         fill={color}
         stroke="#ffffff"
-        strokeWidth={isMobile ? 2.5 : 2}
+        strokeWidth={isMobile ? 1.25 : 1.5}
         strokeLinejoin="round"
       />
     </g>
@@ -1617,9 +1621,9 @@ export default memo(function GridVisualization({
                       from.y,
                       to.x,
                       to.y,
-                      verticalLaneDesiredNx('data', link.from.col, wide, CELL_W, isRtl),
+                      verticalLaneDesiredNx('data', link.from.col, wide, CELL_W, isRtl, isMobile),
                     )
-                  : dataLaneOffset(from.x, from.y, to.x, to.y, 'data')
+                  : dataLaneOffset(from.x, from.y, to.x, to.y, 'data', isMobile)
               return (
                 <ArrowPath
                   key={`dat-${i}`}
@@ -1648,9 +1652,9 @@ export default memo(function GridVisualization({
                       from.y,
                       to.x,
                       to.y,
-                      verticalLaneDesiredNx('backup', link.from.col, wide, CELL_W, isRtl),
+                      verticalLaneDesiredNx('backup', link.from.col, wide, CELL_W, isRtl, isMobile),
                     )
-                  : dataLaneOffset(from.x, from.y, to.x, to.y, 'backup')
+                  : dataLaneOffset(from.x, from.y, to.x, to.y, 'backup', isMobile)
               return (
                 <ArrowPath
                   key={`bkp-${i}`}
