@@ -1188,11 +1188,11 @@ export default function Sidebar({
 
           <SectionTitle>Routing</SectionTitle>
 
-          <Field label="Line Direction / Направление линии">
+          <Field label="Power Line Direction / Направление питания">
 
             <div className="flex rounded-lg border border-slate-200 p-0.5">
 
-              {(['left', 'right'] as ChainStartEdge[]).map((edge) => (
+              {(['right', 'left'] as ChainStartEdge[]).map((edge) => (
 
                 <button
 
@@ -1214,7 +1214,9 @@ export default function Sidebar({
 
                 >
 
-                  {edge === 'left' ? 'Left → Right / Слева направо' : 'Right → Left / Справа налево'}
+                  {edge === 'right'
+                    ? 'Right → Left / Справа налево'
+                    : 'Left → Right / Слева направо'}
 
                 </button>
 
@@ -1224,7 +1226,7 @@ export default function Sidebar({
 
             <p className="mt-1 text-[10px] text-slate-500">
 
-              Data и power: один горизонтальный обход в блоке, старт снизу с выбранного края.
+              Тикшорет (data) всегда линиями справа налево. Здесь — только power / электричество.
 
             </p>
 

@@ -1844,10 +1844,12 @@ export default memo(function GridVisualization({
         </g>
 
         <text x={PAD} y={svgH - 8} fontSize={11} fill="#94a3b8">
-          {isRtl ? 'Controller / PDU (control room side) →' : '← Controller / PDU (control room side)'}
+          {isData || isRtl
+            ? 'Controller / PDU (control room side) →'
+            : '← Controller / PDU (control room side)'}
           {' · '}
           {isData
-            ? `Snake / змейка (${isRtl ? 'RTL' : 'LTR'} старт)`
+            ? 'Snake / змейка (RTL / справа налево)'
             : isReshetPower
               ? 'Power ↑ только вверх (Reshet)'
               : is29Power

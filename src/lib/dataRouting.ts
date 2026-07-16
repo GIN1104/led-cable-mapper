@@ -405,13 +405,14 @@ function equalBlocksPartition(
       if (cabinetsWide % w !== 0) continue
       const area = w * h
       if (area > maxCabs) continue
-      // меньше портов (больше area), затем горизонтальные «линии», затем шире
+      // меньше портов (больше area), затем горизонтальные «линии» RTL, затем шире
       const ports = (cabinetsWide / w) * (cabinetsHigh / h)
       const score =
         -ports * 1_000_000 +
         area * 1_000 +
-        (w >= h ? 50_000 : 0) +
-        (h === 1 ? 20_000 : 0) +
+        (w >= h ? 80_000 : 0) +
+        (w === cabinetsWide ? 100_000 : 0) + // полные ряды — линии справа налево
+        (h === 1 ? 40_000 : 0) +
         w * 10 -
         h
       if (!best || score > best.score) {
@@ -743,13 +744,16 @@ export function buildDataChains(
   isActive: CellActiveFn = () => true,
   emptySet?: Set<string>,
 ): { chains: DataChain[]; links: GridLink[] } {
+  // Тикшорет: горизонтальные линии справа налево (RTL), независимо от power direction
+  const dataStartEdge: ChainStartEdge = 'right'
+
   const dataRegions = partitionDataGreedyMinPorts(
     config.cabinetsWide,
     config.cabinetsHigh,
     pixelsPerCabinet,
     config.refreshRate,
     isActive,
-    config.chainStartEdge,
+    dataStartEdge,
   )
 
   const chains: DataChain[] = []
@@ -757,7 +761,7 @@ export function buildDataChains(
 
   dataRegions.forEach((region, index) => {
     const portNumber = index + 1
-    const ordered = cabinetsInRegion(cabinets, region, config.chainStartEdge, emptySet)
+    const ordered = cabinetsInRegion(cabinets, region, dataStartEdge, emptySet)
     if (ordered.length === 0) return
 
     const totalPixels = ordered.reduce((sum, c) => sum + c.totalPixels, 0)

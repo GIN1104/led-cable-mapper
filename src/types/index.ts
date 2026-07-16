@@ -49,8 +49,8 @@ export type GridLayout = 'side-by-side' | 'stacked'
 export type LineDirection = 'ltr' | 'rtl'
 
 /**
- * Край старта цепочек: нижний левый (LTR) или нижний правый (RTL).
- * Один параметр задаёт и направление линии, и угол старта при авто-разбиении.
+ * Край старта цепочек: нижний правый (RTL) или нижний левый (LTR).
+ * Тикшорет (auto data) всегда идёт справа налево; power использует этот параметр.
  */
 
 export type ChainStartEdge = 'left' | 'right'
@@ -471,7 +471,8 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
 
   refreshRate: 50,
 
-  chainStartEdge: 'left',
+  /** Тикшорет по умолчанию: линии справа налево */
+  chainStartEdge: 'right',
 
   powerFeedMode: 'edge',
 
