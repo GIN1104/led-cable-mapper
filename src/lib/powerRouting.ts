@@ -18,6 +18,7 @@ import {
   edgeToDirection,
   inferChainStart,
   linkDirection,
+  orderCabinetsFromStart,
   orderPowerCabinetsFromStart,
   orderPowerRegionByPreset,
   orderRegionBySnake,
@@ -383,9 +384,7 @@ function buildLinksForLine(
   lineNumber: number,
   config: ScreenConfig,
 ): GridLink[] {
-  if (config.powerFeedMode === 'center') {
-    return buildCenterOutLinks(cabinets, lineNumber, config)
-  }
+  // Всегда daisy-chain в одну сторону — без ветвления из кабинета
   return buildSequentialLinksForLine(cabinets, lineNumber, config)
 }
 
@@ -414,27 +413,21 @@ function buildLinesFromGroups(
 
   for (const lineNumber of lineNumbers) {
     const raw = lineGroups.get(lineNumber) ?? []
-    if (raw.length === 0) continue
-
-    let ordered: Cabinet[]
-    if (config.powerFeedMode === 'center' && !preserveOrder) {
-      ordered = orderCabinetsCenterOut(raw, config)
-    } else if (preserveOrder) {
-      ordered = raw
-    } else {
-      const startLabel =
-        startPoints[lineNumber] && raw.some((c) => c.label === startPoints[lineNumber])
-          ? startPoints[lineNumber]
-          : inferPowerLineStart(raw, config.chainStartEdge, config.powerFeedMode)
-      ordered = orderPowerCabinetsFromStart(
-        raw,
-        config.pitchPreset,
-        startLabel,
-        config.chainStartEdge,
-        config.cabinetWidthMm,
-        config.cabinetHeightMm,
-      )
-    }
+    const startLabel =
+      startPoints[lineNumber] && raw.some((c) => c.label === startPoints[lineNumber])
+        ? startPoints[lineNumber]
+        : inferPowerLineStart(raw, config.chainStartEdge, config.powerFeedMode)
+    const ordered = preserveOrder
+      ? raw
+      : orderPowerCabinetsFromStart(
+          raw,
+          config.pitchPreset,
+          startLabel,
+          config.chainStartEdge,
+          config.cabinetWidthMm,
+          config.cabinetHeightMm,
+        )
+    if (ordered.length === 0) continue
 
     lines.push({
       lineNumber,
@@ -1034,7 +1027,7 @@ function partitionComponentForPreset(
 }
 
 /**
- * Кабинет подвода trunk в режиме center feed — геометрический центр полосы.
+ * Кабинет геометрического центра полосы (якорь для center feed / PDU).
  */
 export function getPowerLineCenterCabinet(cabinets: Cabinet[]): Cabinet {
   if (cabinets.length === 0) {
@@ -1053,151 +1046,58 @@ export function getPowerLineCenterCabinet(cabinets: Cabinet[]): Cabinet {
     const distA = Math.abs(a.col - targetCol) + Math.abs(a.row - targetRow)
     const distB = Math.abs(b.col - targetCol) + Math.abs(b.row - targetRow)
     if (distA !== distB) return distA - distB
-    // При ничьей — ниже и левее стабильнее для FEED
     if (a.row !== b.row) return b.row - a.row
     return a.col - b.col
   })[0]
 }
 
 /**
- * Center feed: стрелки расходятся от FEED в стороны (влево/вправо или вверх/вниз).
- * Сначала ось полосы от центра наружу, затем остальные кабинеты по соседству.
+ * Center feed: нельзя ветвить питание из одного кабинета в две стороны.
+ * Полоса делится на две односторонние daisy-chain от центра (две линии / два outlet PDU).
+ * Горизонталь: [центр → влево] и [первый справа → вправо].
+ * Вертикаль: [центр → вниз] и [первый выше → вверх].
  */
-export function buildCenterOutLinks(
-  cabinets: Cabinet[],
-  lineNumber: number,
-  config: ScreenConfig,
-): GridLink[] {
-  if (cabinets.length <= 1) return []
+export function splitPathForCenterFeed(path: Cabinet[]): Cabinet[][] {
+  if (path.length <= 2) return [path]
 
-  const feed = getPowerLineCenterCabinet(cabinets)
-  const byPos = new Map<string, Cabinet>()
-  for (const cab of cabinets) {
-    byPos.set(`${cab.row},${cab.col}`, cab)
-  }
-
-  const minCol = Math.min(...cabinets.map((c) => c.col))
-  const maxCol = Math.max(...cabinets.map((c) => c.col))
-  const minRow = Math.min(...cabinets.map((c) => c.row))
-  const maxRow = Math.max(...cabinets.map((c) => c.row))
+  const feed = getPowerLineCenterCabinet(path)
+  const minCol = Math.min(...path.map((c) => c.col))
+  const maxCol = Math.max(...path.map((c) => c.col))
+  const minRow = Math.min(...path.map((c) => c.row))
+  const maxRow = Math.max(...path.map((c) => c.row))
   const horizontal = maxCol - minCol >= maxRow - minRow
 
-  const links: GridLink[] = []
-  const linked = new Set<string>([feed.label])
-
-  const tryLink = (from: Cabinet, to: Cabinet | undefined) => {
-    if (!to || linked.has(to.label)) return false
-    if (
-      !isValidPowerLink(
-        from,
-        to,
-        config.cabinetWidthMm,
-        config.cabinetHeightMm,
-      )
-    ) {
-      return false
-    }
-    links.push({
-      from,
-      to,
-      type: 'power',
-      chainId: lineNumber,
-      direction: linkDirection(from, to),
-    })
-    linked.add(to.label)
-    return true
-  }
-
   if (horizontal) {
-    // Влево от центра: FEED → col-1 → col-2 → …
-    let prev = feed
-    for (let col = feed.col - 1; col >= minCol; col--) {
-      const next = byPos.get(`${feed.row},${col}`)
-      if (tryLink(prev, next) && next) prev = next
-      else break
+    const left = path.filter((c) => c.col <= feed.col)
+    const right = path.filter((c) => c.col > feed.col)
+    const parts: Cabinet[][] = []
+    if (left.length > 0) {
+      // Одна цепь: FEED → влево (RTL)
+      parts.push(orderCabinetsFromStart(left, feed.label, 'right'))
     }
-    // Вправо от центра: FEED → col+1 → col+2 → …
-    prev = feed
-    for (let col = feed.col + 1; col <= maxCol; col++) {
-      const next = byPos.get(`${feed.row},${col}`)
-      if (tryLink(prev, next) && next) prev = next
-      else break
+    if (right.length > 0) {
+      const rightStart = [...right].sort(
+        (a, b) => a.col - b.col || b.row - a.row || a.label.localeCompare(b.label),
+      )[0]!
+      // Вторая цепь: сосед справа от центра → вправо (LTR), свой outlet с PDU
+      parts.push(orderCabinetsFromStart(right, rightStart.label, 'left'))
     }
-  } else {
-    // Вниз / вверх по столбцу FEED (row больше = ниже на стене)
-    let prev = feed
-    for (let row = feed.row + 1; row <= maxRow; row++) {
-      const next = byPos.get(`${row},${feed.col}`)
-      if (tryLink(prev, next) && next) prev = next
-      else break
-    }
-    prev = feed
-    for (let row = feed.row - 1; row >= minRow; row--) {
-      const next = byPos.get(`${row},${feed.col}`)
-      if (tryLink(prev, next) && next) prev = next
-      else break
-    }
+    return parts.length > 0 ? parts : [path]
   }
 
-  // Остаток полосы — BFS от уже подключённых, чтобы стрелки шли от центра наружу
-  const queue = cabinets.filter((c) => linked.has(c.label))
-  while (queue.length > 0) {
-    const current = queue.shift()!
-    const neighbors = getPowerNeighbors(current, cabinets, config)
-      .filter((n) => !linked.has(n.label))
-      .sort((a, b) => {
-        const da = Math.abs(a.col - feed.col) + Math.abs(a.row - feed.row)
-        const db = Math.abs(b.col - feed.col) + Math.abs(b.row - feed.row)
-        return da - db || a.label.localeCompare(b.label)
-      })
-    for (const next of neighbors) {
-      if (tryLink(current, next)) queue.push(next)
-    }
+  const down = path.filter((c) => c.row >= feed.row)
+  const up = path.filter((c) => c.row < feed.row)
+  const parts: Cabinet[][] = []
+  if (down.length > 0) {
+    parts.push(orderCabinetsFromStart(down, feed.label, 'left'))
   }
-
-  return links
-}
-
-/**
- * Порядок кабинетов для center feed: FEED первым, затем ветки в стороны.
- */
-export function orderCabinetsCenterOut(
-  cabinets: Cabinet[],
-  config: ScreenConfig,
-): Cabinet[] {
-  if (cabinets.length === 0) return []
-  const feed = getPowerLineCenterCabinet(cabinets)
-  const treeLinks = buildCenterOutLinks(cabinets, 0, config)
-  const children = new Map<string, Cabinet[]>()
-  for (const link of treeLinks) {
-    const list = children.get(link.from.label) ?? []
-    list.push(link.to)
-    children.set(link.from.label, list)
+  if (up.length > 0) {
+    const upStart = [...up].sort(
+      (a, b) => b.row - a.row || a.col - b.col || a.label.localeCompare(b.label),
+    )[0]!
+    parts.push(orderCabinetsFromStart(up, upStart.label, 'left'))
   }
-  for (const [key, list] of children) {
-    children.set(
-      key,
-      [...list].sort((a, b) => {
-        // Сначала влево/вниз, потом вправо/вверх — стабильный обход «в стороны»
-        if (a.col !== b.col) return a.col - b.col
-        return b.row - a.row
-      }),
-    )
-  }
-
-  const ordered: Cabinet[] = []
-  const seen = new Set<string>()
-  const visit = (cab: Cabinet) => {
-    if (seen.has(cab.label)) return
-    seen.add(cab.label)
-    ordered.push(cab)
-    for (const child of children.get(cab.label) ?? []) visit(child)
-  }
-  visit(feed)
-  for (const cab of cabinets) {
-    if (!seen.has(cab.label)) ordered.push(cab)
-  }
-  return ordered
+  return parts.length > 0 ? parts : [path]
 }
 
 /** Подпись источника силового trunk в ведомости */
@@ -1205,14 +1105,11 @@ export function getPowerTrunkSourceLabel(feedMode: ScreenConfig['powerFeedMode']
   return feedMode === 'center' ? '32A Robot / PDU Distro' : 'PDU / Power Distro'
 }
 
-/** Точка подключения силового trunk для линии */
+/** Точка подключения силового trunk для линии = старт daisy-chain */
 export function getPowerTrunkCabinet(
   line: PowerLine,
-  feedMode: ScreenConfig['powerFeedMode'],
+  _feedMode: ScreenConfig['powerFeedMode'],
 ): Cabinet {
-  if (feedMode === 'center') {
-    return getPowerLineCenterCabinet(line.cabinets)
-  }
   return line.cabinets[0]
 }
 
@@ -1254,28 +1151,30 @@ export function buildPowerLines(
     }
     const paths = partitionComponentForPreset(component, config)
     for (const path of paths) {
-      if (path.length > 0) {
-        lineGroups.set(lineNumber, path)
+      if (path.length === 0) continue
+      const segments =
+        config.powerFeedMode === 'center' ? splitPathForCenterFeed(path) : [path]
+      for (const segment of segments) {
+        if (segment.length === 0) continue
+        lineGroups.set(lineNumber, segment)
         lineNumber++
       }
     }
   }
 
   const startPoints: Record<number, string> = {}
-  const centerFeed = config.powerFeedMode === 'center'
   for (const [num, path] of lineGroups) {
     if (path.length === 0) continue
-    startPoints[num] = centerFeed
-      ? getPowerLineCenterCabinet(path).label
-      : path[0].label
+    // Уже упорядоченные сегменты center feed: START = первый = FEED
+    startPoints[num] = path[0]!.label
   }
 
-  // Edge: сохраняем порядок partition (змейка/полосы). Center: перестраиваем от центра полосы.
+  // Порядок сегментов уже задан (edge partition / center split) — не перестраиваем
   const { lines, links } = buildLinesFromGroups(
     lineGroups,
     config,
     startPoints,
-    !centerFeed,
+    true,
   )
   return { lines, links, cabinetsPerLine: packWidth }
 }

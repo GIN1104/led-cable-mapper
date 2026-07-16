@@ -1,6 +1,6 @@
 /**
  * Проверка powerFeedMode: edge vs center на 10×3 м, 3.9 Big.
- * Center: chain START = FEED = центр полосы; стрелки (links) от центра.
+ * Center: полоса делится на две односторонние daisy-chain (без ветвления из кубика).
  * Запуск: npm run verify:feed
  */
 import type { PowerFeedMode, ScreenConfig } from '../src/types/index.ts'
@@ -58,20 +58,27 @@ console.log('Edge trunk destinations:', edge.join(', '))
 console.log('Center trunk destinations:', center.join(', '))
 
 const expectedEdge = ['A1', 'B1', 'C1', 'A11', 'B11', 'C11']
-const expectedCenter = ['A5', 'B5', 'C5', 'A15', 'B15', 'C15']
 
 let ok = true
 if (JSON.stringify(edge) !== JSON.stringify(expectedEdge)) {
   ok = false
   console.error('Edge mismatch: expected', expectedEdge, 'got', edge)
 }
-if (JSON.stringify(center) !== JSON.stringify(expectedCenter)) {
-  ok = false
-  console.error('Center mismatch: expected', expectedCenter, 'got', center)
-}
 if (JSON.stringify(edge) === JSON.stringify(center)) {
   ok = false
   console.error('Edge and center produce identical trunk destinations')
+}
+// Center: вдвое больше линий (влево + вправо от центра каждой полосы)
+if (center.length !== expectedEdge.length * 2) {
+  ok = false
+  console.error(
+    'Center should split each band into 2 one-way lines:',
+    'expected',
+    expectedEdge.length * 2,
+    'got',
+    center.length,
+    center,
+  )
 }
 
 const edgeResult = computeRouting(makeConfig('edge'))
@@ -86,15 +93,6 @@ const config = makeConfig('center')
 const result = computeRouting(config)
 const centerStarts = result.powerLines.map((l) => l.cabinets[0]?.label)
 console.log('Center chain starts:', centerStarts.join(', '))
-if (JSON.stringify(centerStarts) !== JSON.stringify(expectedCenter)) {
-  ok = false
-  console.error(
-    'Center chain starts mismatch: expected',
-    expectedCenter,
-    'got',
-    centerStarts,
-  )
-}
 
 for (const line of result.powerLines) {
   const feed = getPowerTrunkCabinet(line, 'center')
@@ -107,22 +105,20 @@ for (const line of result.powerLines) {
   }
 }
 
-// Стрелки: от центра должны уходить к обоим соседям на полосе из ≥3 кабинетов
+// Нет ветвления: из старта не больше одного исходящего линка
 for (const line of result.powerLines) {
-  if (line.cabinets.length < 3) continue
+  if (line.cabinets.length < 2) continue
   const start = line.cabinets[0].label
   const out = result.powerLinks.filter(
     (l) => l.chainId === line.lineNumber && l.from.label === start,
   )
-  if (out.length < 2) {
+  if (out.length !== 1) {
     ok = false
     console.error(
-      `P${line.lineNumber}: expected ≥2 outgoing links from center ${start}, got ${out.length}`,
+      `P${line.lineNumber}: expected exactly 1 outgoing link from ${start} (no branch), got ${out.length}`,
     )
   } else {
-    console.log(
-      `P${line.lineNumber}: ${start} → ${out.map((l) => l.to.label).join(', ')}`,
-    )
+    console.log(`P${line.lineNumber}: ${start} → ${out[0]!.to.label}`)
   }
 }
 
@@ -131,13 +127,13 @@ if (!schema.includes('center feed') || !schema.includes('32A Robot')) {
   ok = false
   console.error('Routing schema missing center feed / 32A Robot labels')
 }
-if (!schema.includes('chain start ★')) {
-  ok = false
-  console.error('Routing schema missing chain start marker for center feed')
-}
 
 const packing = result.packingList.find((item) => item.item.includes('Power Trunk'))
-if (!packing?.notes.includes('32A PDU distro') || !packing.notes.includes('6 outlet')) {
+const outletCount = result.powerLines.length
+if (
+  !packing?.notes.includes('32A PDU distro') ||
+  !packing.notes.includes(`${outletCount} outlet`)
+) {
   ok = false
   console.error('Packing list missing center feed distro notes:', packing?.notes)
 }
