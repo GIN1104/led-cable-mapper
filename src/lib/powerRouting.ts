@@ -626,29 +626,19 @@ function pickPChainStarts(
 
 type ColBand = { colStart: number; colEnd: number }
 
-/** Бюджет линий: preferred (10/20) допустим только если план даёт ≤ этого числа полных линий */
-const MAX_PREFERRED_POWER_LINES = 6
-
 /**
- * Выбор ширины полосы / цели заполнения: preferred при чистом делении
- * на полные горизонтальные линии и lineCount ≤ 6; иначе max (плотнее упаковка).
+ * Выбор ширины полосы: стараемся линию на всю длину экрана.
+ * Если ширина ≤ max — одна полоса на всю ширину; иначе max (максимально длинные горизонтали).
  */
 export function choosePowerPackWidth(
   colsWide: number,
-  rowsHigh: number,
-  preferred: number,
+  _rowsHigh: number,
+  _preferred: number,
   maxSize: number,
 ): number {
-  const pref = Math.min(preferred, maxSize)
   const max = Math.max(1, maxSize)
-  if (colsWide <= 0 || rowsHigh <= 0) return pref
-
-  // Чистый план preferred: полосы ширины preferred на всю высоту — полные горизонтали
-  if (colsWide % pref === 0) {
-    const lineCount = (colsWide / pref) * rowsHigh
-    if (lineCount <= MAX_PREFERRED_POWER_LINES) return pref
-  }
-
+  if (colsWide <= 0) return max
+  if (colsWide <= max) return colsWide
   return max
 }
 
@@ -1052,39 +1042,49 @@ export function getPowerLineCenterCabinet(cabinets: Cabinet[]): Cabinet {
 }
 
 /**
- * Center feed: нельзя ветвить питание из одного кабинета в две стороны.
- * Полоса делится на две односторонние daisy-chain от центра (две линии / два outlet PDU).
- * Горизонталь: [центр → влево] и [первый справа → вправо].
- * Вертикаль: [центр → вниз] и [первый выше → вверх].
+ * Center feed: линии начинаются в центре экрана и идут в разные стороны
+ * (одна влево, другая вправо) — без ветвления из одного кабинета.
+ * Горизонталь: [центр экрана → влево] и [следующий справа → вправо].
  */
-export function splitPathForCenterFeed(path: Cabinet[]): Cabinet[][] {
+export function splitPathForCenterFeed(
+  path: Cabinet[],
+  cabinetsWide: number,
+): Cabinet[][] {
   if (path.length <= 2) return [path]
 
-  const feed = getPowerLineCenterCabinet(path)
-  const minCol = Math.min(...path.map((c) => c.col))
-  const maxCol = Math.max(...path.map((c) => c.col))
-  const minRow = Math.min(...path.map((c) => c.row))
-  const maxRow = Math.max(...path.map((c) => c.row))
-  const horizontal = maxCol - minCol >= maxRow - minRow
+  const pathMinCol = Math.min(...path.map((c) => c.col))
+  const pathMaxCol = Math.max(...path.map((c) => c.col))
+  const pathMinRow = Math.min(...path.map((c) => c.row))
+  const pathMaxRow = Math.max(...path.map((c) => c.row))
+  const horizontal = pathMaxCol - pathMinCol >= pathMaxRow - pathMinRow
+
+  // Центр экрана (не «центра куска»), если полоса его покрывает
+  const screenCenterCol = Math.floor((Math.max(1, cabinetsWide) - 1) / 2)
+  const splitCol =
+    horizontal && screenCenterCol >= pathMinCol && screenCenterCol <= pathMaxCol
+      ? screenCenterCol
+      : Math.floor((pathMinCol + pathMaxCol) / 2)
 
   if (horizontal) {
-    const left = path.filter((c) => c.col <= feed.col)
-    const right = path.filter((c) => c.col > feed.col)
+    const left = path.filter((c) => c.col <= splitCol)
+    const right = path.filter((c) => c.col > splitCol)
     const parts: Cabinet[][] = []
     if (left.length > 0) {
-      // Одна цепь: FEED → влево (RTL)
+      const feed = [...left].sort(
+        (a, b) => b.col - a.col || b.row - a.row || a.label.localeCompare(b.label),
+      )[0]!
       parts.push(orderCabinetsFromStart(left, feed.label, 'right'))
     }
     if (right.length > 0) {
       const rightStart = [...right].sort(
         (a, b) => a.col - b.col || b.row - a.row || a.label.localeCompare(b.label),
       )[0]!
-      // Вторая цепь: сосед справа от центра → вправо (LTR), свой outlet с PDU
       parts.push(orderCabinetsFromStart(right, rightStart.label, 'left'))
     }
     return parts.length > 0 ? parts : [path]
   }
 
+  const feed = getPowerLineCenterCabinet(path)
   const down = path.filter((c) => c.row >= feed.row)
   const up = path.filter((c) => c.row < feed.row)
   const parts: Cabinet[][] = []
@@ -1153,7 +1153,9 @@ export function buildPowerLines(
     for (const path of paths) {
       if (path.length === 0) continue
       const segments =
-        config.powerFeedMode === 'center' ? splitPathForCenterFeed(path) : [path]
+        config.powerFeedMode === 'center'
+          ? splitPathForCenterFeed(path, config.cabinetsWide)
+          : [path]
       for (const segment of segments) {
         if (segment.length === 0) continue
         lineGroups.set(lineNumber, segment)

@@ -1417,8 +1417,8 @@ export default memo(function GridVisualization({
             </span>
             <span className="text-slate-500">
               {powerFeedMode === 'center'
-                ? 'Center: PDU в центре → две односторонние линии'
-                : 'Edge: FEED/START на краю полосы (по Line Direction)'}
+                ? 'Center: из центра экрана — линия влево и линия вправо'
+                : 'Edge: FEED/START на краю, линия на всю ширину'}
             </span>
           </>
         )}
@@ -1859,8 +1859,8 @@ export default memo(function GridVisualization({
             <>
               {' · '}
               {powerFeedMode === 'center'
-                ? 'Center: две daisy-chain от центра (без ветвления)'
-                : 'Edge: подвод на краю линии (P★ FEED/START)'}
+                ? 'Center: из центра экрана влево и вправо'
+                : 'Edge: подвод с края (P★ FEED/START)'}
             </>
           )}
         </text>

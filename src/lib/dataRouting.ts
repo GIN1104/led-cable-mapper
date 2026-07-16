@@ -386,8 +386,8 @@ function planUniformityScore(regions: RectRegion[]): number {
 }
 
 /**
- * Одинаковые прямоугольные блоки «линиями» (предпочитаем ширину ≥ высоты).
- * Идеально: wide и high делятся на размер плитки без остатка.
+ * Одинаковые блоки «линиями на всю ширину экрана» (тикшорет RTL).
+ * Приоритет: width === cabinetsWide, высота — максимум влезающий в лимит порта.
  */
 function equalBlocksPartition(
   cabinetsWide: number,
@@ -396,80 +396,63 @@ function equalBlocksPartition(
 ): RectRegion[] | null {
   if (cabinetsWide <= 0 || cabinetsHigh <= 0 || maxCabs <= 0) return null
 
+  // Полная ширина экрана в один порт
+  if (cabinetsWide <= maxCabs) {
+    const maxH = Math.max(1, Math.floor(maxCabs / cabinetsWide))
+    // Стараемся равные полосы: наибольший h ≤ maxH, делящий high
+    let bandH = 1
+    for (let h = maxH; h >= 1; h--) {
+      if (cabinetsHigh % h === 0) {
+        bandH = h
+        break
+      }
+    }
+    // Если не делится нацело — пакуем maxH + остаток сверху
+    if (cabinetsHigh % bandH !== 0) bandH = maxH
+
+    const regions: RectRegion[] = []
+    let rowEnd = cabinetsHigh
+    while (rowEnd > 0) {
+      const h = Math.min(bandH, rowEnd)
+      regions.push({
+        colStart: 0,
+        rowStart: rowEnd - h,
+        width: cabinetsWide,
+        height: h,
+      })
+      rowEnd -= h
+    }
+    return regions
+  }
+
+  // Экран шире лимита порта — максимально длинные горизонтали (не на всю ширину)
   type Tile = { w: number; h: number; area: number; score: number }
   let best: Tile | null = null
-
   for (let h = 1; h <= cabinetsHigh; h++) {
     if (cabinetsHigh % h !== 0) continue
     for (let w = 1; w <= cabinetsWide; w++) {
       if (cabinetsWide % w !== 0) continue
       const area = w * h
       if (area > maxCabs) continue
-      // меньше портов (больше area), затем горизонтальные «линии» RTL, затем шире
       const ports = (cabinetsWide / w) * (cabinetsHigh / h)
       const score =
         -ports * 1_000_000 +
         area * 1_000 +
-        (w >= h ? 80_000 : 0) +
-        (w === cabinetsWide ? 100_000 : 0) + // полные ряды — линии справа налево
-        (h === 1 ? 40_000 : 0) +
-        w * 10 -
-        h
-      if (!best || score > best.score) {
-        best = { w, h, area, score }
-      }
+        w * 100 + // длиннее по горизонтали лучше
+        (w >= h ? 50_000 : 0)
+      if (!best || score > best.score) best = { w, h, area, score }
     }
   }
-
-  // Нет идеального деления — равные горизонтальные полосы на всю ширину
-  if (!best && cabinetsWide <= maxCabs) {
-    const bandH = Math.max(1, Math.floor(maxCabs / cabinetsWide))
-    const fullBands = Math.floor(cabinetsHigh / bandH)
-    const rem = cabinetsHigh % bandH
-    // Если остаток — тоже ок, полосы одинаковой высоты bandH + одна rem
-    if (fullBands > 0) {
-      best = {
-        w: cabinetsWide,
-        h: bandH,
-        area: cabinetsWide * bandH,
-        score: 0,
-      }
-      const regions: RectRegion[] = []
-      let rowEnd = cabinetsHigh
-      for (let i = 0; i < fullBands; i++) {
-        const h = bandH
-        const rowStart = rowEnd - h
-        regions.push({
-          colStart: 0,
-          rowStart,
-          width: cabinetsWide,
-          height: h,
-        })
-        rowEnd = rowStart
-      }
-      if (rem > 0) {
-        regions.push({
-          colStart: 0,
-          rowStart: 0,
-          width: cabinetsWide,
-          height: rem,
-        })
-      }
-      return regions
-    }
-  }
-
   if (!best) return null
 
-  const { w: tileW, h: tileH } = best
   const regions: RectRegion[] = []
-  for (let rowStart = cabinetsHigh - tileH; rowStart >= 0; rowStart -= tileH) {
-    for (let colStart = 0; colStart < cabinetsWide; colStart += tileW) {
+  for (let rowStart = cabinetsHigh - best.h; rowStart >= 0; rowStart -= best.h) {
+    for (let colStart = 0; colStart < cabinetsWide; colStart += best.w) {
       regions.push({
         colStart,
         rowStart,
-        width: tileW,
-        height: tileH,
+        width: best.w,
+        height: best.h,
       })
     }
   }
@@ -678,9 +661,13 @@ export function partitionDataGreedyMinPorts(
   const pool = valid.length > 0 ? valid : candidates
   const minPorts = Math.min(...pool.map((r) => r.length))
   const tied = pool.filter((r) => r.length === minPorts)
-  const best = tied.reduce((a, b) =>
-    planUniformityScore(a) >= planUniformityScore(b) ? a : b,
-  )
+  // При равном числе портов — максимум линий на всю ширину экрана
+  const best = tied.reduce((a, b) => {
+    const fullA = a.filter((r) => r.width === cabinetsWide).length
+    const fullB = b.filter((r) => r.width === cabinetsWide).length
+    if (fullA !== fullB) return fullA > fullB ? a : b
+    return planUniformityScore(a) >= planUniformityScore(b) ? a : b
+  })
 
   return sortRegionsBottomFirst(best, startEdge)
 }
