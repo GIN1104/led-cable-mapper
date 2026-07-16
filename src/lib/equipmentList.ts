@@ -1,4 +1,5 @@
 import type { CableScheduleEntry, ControllerModel, PackingListItem, RoutingResult, ScreenConfig } from '../types'
+import { normalizeStripWidths } from './cabinetGrid'
 
 /** Ключи строк, для которых количество можно вывести из маршрутизации */
 export type EquipmentAutoKey =
@@ -251,12 +252,29 @@ export function resolveEquipmentScreenResults(
 }
 
 /**
- * Шпрайцы: ceil(ширина в м) + 1 — только экраны без подвеса (hangMount === false).
+ * Шпрайцы на один экран: ceil(ширина м) + 1.
+ * Со стрипами — каждый стрип как отдельный экран (пример: 2 м → 3 шт).
+ */
+function sprayersForScreen(screen: ScreenConfig): number {
+  if (screen.hangMount) return 0
+
+  const stripWidths = normalizeStripWidths(screen.stripWidths, screen.cabinetsWide)
+  if (stripWidths.length <= 1) {
+    return Math.ceil(screen.wallWidthM) + 1
+  }
+
+  const wide = Math.max(1, screen.cabinetsWide)
+  return stripWidths.reduce((sum, cols) => {
+    const stripWidthM = (screen.wallWidthM * cols) / wide
+    return sum + Math.ceil(stripWidthM) + 1
+  }, 0)
+}
+
+/**
+ * Шпрайцы: сумма по экранам без подвеса (hangMount === false).
  */
 function sumSprayers(screens: ScreenConfig[]): number {
-  return screens
-    .filter((screen) => !screen.hangMount)
-    .reduce((sum, screen) => sum + Math.ceil(screen.wallWidthM) + 1, 0)
+  return screens.reduce((sum, screen) => sum + sprayersForScreen(screen), 0)
 }
 
 /**

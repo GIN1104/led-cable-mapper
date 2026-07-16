@@ -42,9 +42,11 @@ import {
   calcCabinetsFromMeters,
   calcPixelsPerCabinet,
   clampWallDimensionM,
+  equalStripWidths,
   isMeterDraftEditable,
   parseMeterDraftForCommit,
   previewMeterFromDraft,
+  setStripWidthAt,
   syncCabinetGridFromMeters,
 } from '../lib/cabinetGrid'
 
@@ -509,6 +511,70 @@ export default function Sidebar({
               {config.hangMount ? 'ON — тросы/подвес по м' : 'OFF — шпрайцы'}
             </span>
           </Field>
+
+          <Field label="Strips / Полосы (отдельные блоки)">
+            <select
+              className={inputClass}
+              value={config.stripWidths?.length ?? 1}
+              onChange={(e) => {
+                const count = Math.max(1, parseInt(e.target.value, 10) || 1)
+                update(
+                  'stripWidths',
+                  equalStripWidths(count, config.cabinetsWide),
+                )
+              }}
+            >
+              {Array.from(
+                { length: Math.min(8, config.cabinetsWide) },
+                (_, i) => i + 1,
+              ).map((n) => (
+                <option key={n} value={n}>
+                  {n === 1 ? '1 — один экран' : `${n} блока (data + power отдельно)`}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          {(config.stripWidths?.length ?? 1) > 1 && (
+            <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-2.5">
+              <p className="text-[10px] text-slate-500">
+                Каждый стрип — отдельный блок: data и электричество считаются внутри полосы,
+                линии не переходят через зазор. Ширина в кабинетах (сумма ={' '}
+                {config.cabinetsWide}).
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {(config.stripWidths ?? [config.cabinetsWide]).map((w, i) => (
+                  <label key={i} className="block text-[10px] font-medium text-slate-600">
+                    Strip {i + 1}
+                    <input
+                      type="number"
+                      min={1}
+                      max={config.cabinetsWide - ((config.stripWidths?.length ?? 1) - 1)}
+                      className={`${inputClass} mt-0.5`}
+                      value={w}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10)
+                        if (Number.isNaN(val)) return
+                        update(
+                          'stripWidths',
+                          setStripWidthAt(
+                            config.stripWidths ?? [config.cabinetsWide],
+                            i,
+                            val,
+                            config.cabinetsWide,
+                          ),
+                        )
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-400">
+                Σ {(config.stripWidths ?? []).reduce((a, b) => a + b, 0)} /{' '}
+                {config.cabinetsWide} cab
+              </p>
+            </div>
+          )}
 
         </section>
 

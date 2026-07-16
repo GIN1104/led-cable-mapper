@@ -373,6 +373,108 @@ function planHorizontalScore(regions: RectRegion[]): number {
   )
 }
 
+/** Насколько блоки одинаковые (больше = лучше) + горизонтальность */
+function planUniformityScore(regions: RectRegion[]): number {
+  if (regions.length === 0) return 0
+  const counts = new Map<string, number>()
+  for (const r of regions) {
+    const key = `${r.width}x${r.height}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const maxSame = Math.max(...counts.values())
+  return maxSame * 10_000_000 + planHorizontalScore(regions)
+}
+
+/**
+ * Одинаковые прямоугольные блоки «линиями» (предпочитаем ширину ≥ высоты).
+ * Идеально: wide и high делятся на размер плитки без остатка.
+ */
+function equalBlocksPartition(
+  cabinetsWide: number,
+  cabinetsHigh: number,
+  maxCabs: number,
+): RectRegion[] | null {
+  if (cabinetsWide <= 0 || cabinetsHigh <= 0 || maxCabs <= 0) return null
+
+  type Tile = { w: number; h: number; area: number; score: number }
+  let best: Tile | null = null
+
+  for (let h = 1; h <= cabinetsHigh; h++) {
+    if (cabinetsHigh % h !== 0) continue
+    for (let w = 1; w <= cabinetsWide; w++) {
+      if (cabinetsWide % w !== 0) continue
+      const area = w * h
+      if (area > maxCabs) continue
+      // меньше портов (больше area), затем горизонтальные «линии», затем шире
+      const ports = (cabinetsWide / w) * (cabinetsHigh / h)
+      const score =
+        -ports * 1_000_000 +
+        area * 1_000 +
+        (w >= h ? 50_000 : 0) +
+        (h === 1 ? 20_000 : 0) +
+        w * 10 -
+        h
+      if (!best || score > best.score) {
+        best = { w, h, area, score }
+      }
+    }
+  }
+
+  // Нет идеального деления — равные горизонтальные полосы на всю ширину
+  if (!best && cabinetsWide <= maxCabs) {
+    const bandH = Math.max(1, Math.floor(maxCabs / cabinetsWide))
+    const fullBands = Math.floor(cabinetsHigh / bandH)
+    const rem = cabinetsHigh % bandH
+    // Если остаток — тоже ок, полосы одинаковой высоты bandH + одна rem
+    if (fullBands > 0) {
+      best = {
+        w: cabinetsWide,
+        h: bandH,
+        area: cabinetsWide * bandH,
+        score: 0,
+      }
+      const regions: RectRegion[] = []
+      let rowEnd = cabinetsHigh
+      for (let i = 0; i < fullBands; i++) {
+        const h = bandH
+        const rowStart = rowEnd - h
+        regions.push({
+          colStart: 0,
+          rowStart,
+          width: cabinetsWide,
+          height: h,
+        })
+        rowEnd = rowStart
+      }
+      if (rem > 0) {
+        regions.push({
+          colStart: 0,
+          rowStart: 0,
+          width: cabinetsWide,
+          height: rem,
+        })
+      }
+      return regions
+    }
+  }
+
+  if (!best) return null
+
+  const { w: tileW, h: tileH } = best
+  const regions: RectRegion[] = []
+  for (let rowStart = cabinetsHigh - tileH; rowStart >= 0; rowStart -= tileH) {
+    for (let colStart = 0; colStart < cabinetsWide; colStart += tileW) {
+      regions.push({
+        colStart,
+        rowStart,
+        width: tileW,
+        height: tileH,
+      })
+    }
+  }
+  return regions
+}
+
 /**
  * Рекурсивно находит разбиение прямоугольника на минимальное число data-портов.
  * Первый блок — с нижнего левого угла текущего прямоугольника.
@@ -531,8 +633,7 @@ function greedyPartition(
 }
 
 /**
- * Жадная упаковка data-портов с минимизацией числа портов.
- * Пробует жадный обход и grid-стратегии, выбирает план с минимумом портов.
+ * Упаковка data-портов: минимум портов, при равенстве — одинаковые блоки «линиями».
  */
 export function partitionDataGreedyMinPorts(
   cabinetsWide: number,
@@ -547,6 +648,8 @@ export function partitionDataGreedyMinPorts(
   const candidates: RectRegion[][] = []
 
   if (isSolidRectGrid(cabinetsWide, cabinetsHigh, isActive)) {
+    const equal = equalBlocksPartition(cabinetsWide, cabinetsHigh, maxCabs)
+    if (equal) candidates.push(equal)
     candidates.push(minPortsPartition(cabinetsWide, cabinetsHigh, maxCabs, isActive))
   }
 
@@ -575,7 +678,7 @@ export function partitionDataGreedyMinPorts(
   const minPorts = Math.min(...pool.map((r) => r.length))
   const tied = pool.filter((r) => r.length === minPorts)
   const best = tied.reduce((a, b) =>
-    planHorizontalScore(a) >= planHorizontalScore(b) ? a : b,
+    planUniformityScore(a) >= planUniformityScore(b) ? a : b,
   )
 
   return sortRegionsBottomFirst(best, startEdge)

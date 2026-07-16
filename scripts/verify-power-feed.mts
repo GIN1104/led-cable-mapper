@@ -38,6 +38,7 @@ function makeConfig(powerFeedMode: PowerFeedMode): ScreenConfig {
     chainStartEdge: 'left',
     powerFeedMode,
     hangMount: false,
+    stripWidths: [],
   })
   return applyPitchPreset(base, '3.9-big')
 }

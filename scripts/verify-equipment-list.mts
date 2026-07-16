@@ -51,6 +51,7 @@ function makeConfig(
     chainStartEdge: 'left',
     powerFeedMode: 'edge',
     hangMount: false,
+    stripWidths: [],
     ...overrides,
   })
   return applyPitchPreset(base, '3.9-big')

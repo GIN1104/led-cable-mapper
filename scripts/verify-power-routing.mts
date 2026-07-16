@@ -53,6 +53,7 @@ function makeConfig(
     chainStartEdge,
     powerFeedMode: 'edge',
     hangMount: false,
+    stripWidths: [],
   })
   // Как в UI: после пресета пересчитываем сетку из метров (2.9 = 500×500)
   return syncCabinetGridFromMeters(applyPitchPreset(base, preset))

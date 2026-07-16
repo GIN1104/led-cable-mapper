@@ -62,6 +62,110 @@ export function calcCabinetsFromMeters(
   return { cabinetsWide, cabinetsHigh }
 }
 
+/** Равномерно делит cabinetsWide на count вертикальных полос (минимум 1 колонка) */
+export function equalStripWidths(count: number, cabinetsWide: number): number[] {
+  const total = Math.max(1, cabinetsWide)
+  const n = Math.max(1, Math.min(Math.floor(count) || 1, total))
+  const base = Math.floor(total / n)
+  const rem = total % n
+  return Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0))
+}
+
+/**
+ * Нормализует ширины полос: ≥1 колонка каждая, сумма === cabinetsWide.
+ * При смене ширины стены сохраняет пропорции.
+ */
+export function normalizeStripWidths(
+  widths: number[] | undefined,
+  cabinetsWide: number,
+): number[] {
+  const total = Math.max(1, cabinetsWide)
+  if (!widths || widths.length === 0) return [total]
+
+  const count = Math.max(1, Math.min(widths.length, total))
+  const parts = widths.slice(0, count).map((w) => Math.max(1, Math.round(Number(w)) || 1))
+  const sum = parts.reduce((a, b) => a + b, 0)
+  if (sum === total) return parts
+
+  const scaled = parts.map((w) => Math.max(1, Math.round((w / sum) * total)))
+  let scaledSum = scaled.reduce((a, b) => a + b, 0)
+  let diff = total - scaledSum
+  let i = scaled.length - 1
+  let guard = 0
+  while (diff !== 0 && guard < total * 4) {
+    guard++
+    if (diff > 0) {
+      scaled[i]! += 1
+      diff -= 1
+    } else if (scaled[i]! > 1) {
+      scaled[i]! -= 1
+      diff += 1
+    }
+    i = (i - 1 + scaled.length) % scaled.length
+  }
+  return scaled
+}
+
+/** Меняет ширину одной полосы; избыток/недостаток берёт соседняя (обычно последняя) */
+export function setStripWidthAt(
+  widths: number[],
+  index: number,
+  newWidth: number,
+  cabinetsWide: number,
+): number[] {
+  const normalized = normalizeStripWidths(widths, cabinetsWide)
+  if (normalized.length === 1) return [cabinetsWide]
+  if (index < 0 || index >= normalized.length) return normalized
+
+  const othersMin = normalized.length - 1
+  const clamped = Math.max(1, Math.min(Math.floor(newWidth) || 1, cabinetsWide - othersMin))
+  const absorbIdx = index === normalized.length - 1 ? normalized.length - 2 : normalized.length - 1
+  const next = [...normalized]
+  const delta = clamped - next[index]!
+  next[index] = clamped
+  next[absorbIdx]! -= delta
+
+  if (next[absorbIdx]! < 1) {
+    return normalizeStripWidths(
+      next.map((w) => Math.max(1, w)),
+      cabinetsWide,
+    )
+  }
+  return next
+}
+
+/** Сколько визуальных зазоров между полосами стоит слева от колонки col */
+export function stripGapsBeforeCol(col: number, stripWidths: number[]): number {
+  if (stripWidths.length <= 1 || col <= 0) return 0
+  let acc = 0
+  let gaps = 0
+  for (let i = 0; i < stripWidths.length - 1; i++) {
+    acc += stripWidths[i]!
+    if (col >= acc) gaps++
+    else break
+  }
+  return gaps
+}
+
+/** Диапазоны колонок каждой полосы: [startCol, endCol) */
+export function stripColumnRanges(
+  stripWidths: number[],
+): Array<{ index: number; startCol: number; endCol: number; width: number }> {
+  const ranges: Array<{
+    index: number
+    startCol: number
+    endCol: number
+    width: number
+  }> = []
+  let start = 0
+  for (let i = 0; i < stripWidths.length; i++) {
+    const width = Math.max(1, stripWidths[i]!)
+    ranges.push({ index: i, startCol: start, endCol: start + width, width })
+    start += width
+  }
+  return ranges
+}
+
 /** Пересчитывает cabinetsWide/High из wallWidthM/wallHeightM и размеров кабинета */
 export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
   const { cabinetsWide, cabinetsHigh } = calcCabinetsFromMeters(
@@ -70,10 +174,19 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
     config.cabinetWidthMm,
     config.cabinetHeightMm,
   )
-  if (cabinetsWide === config.cabinetsWide && cabinetsHigh === config.cabinetsHigh) {
+  const stripWidths = normalizeStripWidths(config.stripWidths, cabinetsWide)
+  const stripsSame =
+    stripWidths.length === (config.stripWidths?.length ?? 0) &&
+    stripWidths.every((w, i) => w === config.stripWidths?.[i])
+
+  if (
+    cabinetsWide === config.cabinetsWide &&
+    cabinetsHigh === config.cabinetsHigh &&
+    stripsSame
+  ) {
     return config
   }
-  return { ...config, cabinetsWide, cabinetsHigh }
+  return { ...config, cabinetsWide, cabinetsHigh, stripWidths }
 }
 
 /** Преобразует индекс буквы в букву (0 → A, 1 → B, …) */

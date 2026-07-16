@@ -20,6 +20,8 @@ import {
   getMaxCabinetsPerDataPort,
   getPowerLineLimitHint,
   getMaxPixelsPerDataPort,
+  HIGH_PIXEL_SCREEN_THRESHOLD,
+  needsHighPixelController,
 } from './lib/constants'
 import { isLargeGrid, fullRoutingKey } from './lib/screenConfigHash'
 import { useActiveRouting, useAllScreensRouting } from './hooks/useRoutingResults'
@@ -1129,7 +1131,12 @@ export default function App() {
                   <span className="text-slate-400">Расчёт маршрутизации…</span>
                 ) : (
                   <>
-                    {result!.summary.totalPixels.toLocaleString()} px · {result!.summary.dataPorts}{' '}
+                    Screen{' '}
+                    <strong className="font-semibold text-slate-700">
+                      {result!.summary.totalPixels.toLocaleString()} px
+                    </strong>
+                    {' · '}
+                    {result!.summary.dataPorts}{' '}
                     data port{result!.summary.dataPorts !== 1 ? 's' : ''} ·{' '}
                     {result!.summary.powerLines} power line
                     {result!.summary.powerLines !== 1 ? 's' : ''}
@@ -1178,6 +1185,35 @@ export default function App() {
               </button>
             </div>
           </header>
+
+          {!showInitialSpinner &&
+            result &&
+            needsHighPixelController(
+              result.summary.totalPixels,
+              config.controllerModel,
+            ) && (
+              <div
+                className="no-print shrink-0 border-b border-red-500 bg-red-100 px-4 py-2.5 text-sm font-medium text-red-800 sm:px-6"
+                role="alert"
+              >
+                <strong className="font-bold text-red-900">
+                  {result.summary.totalPixels.toLocaleString()} px
+                </strong>
+                {' > '}
+                {(HIGH_PIXEL_SCREEN_THRESHOLD / 1_000_000).toFixed(1)}M — выберите
+                контроллер <strong className="text-red-950">VX2000</strong>,{' '}
+                <strong className="text-red-950">H2</strong> или{' '}
+                <strong className="text-red-950">MCTRL4K</strong>
+                {' / '}
+                Select <strong className="text-red-950">VX2000</strong>,{' '}
+                <strong className="text-red-950">H2</strong> or{' '}
+                <strong className="text-red-950">MCTRL4K</strong>
+                {' / '}
+                בחר <strong className="text-red-950">VX2000</strong>,{' '}
+                <strong className="text-red-950">H2</strong> או{' '}
+                <strong className="text-red-950">MCTRL4K</strong>
+              </div>
+            )}
 
           <div className="print-only border-b border-slate-300 px-6 py-4">
             <h1 className="text-lg font-bold">
@@ -1262,6 +1298,7 @@ export default function App() {
                   refreshRate={config.refreshRate}
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
+                  stripWidths={config.stripWidths}
                   manualMode={manualModeData}
                   onManualModeChange={handleManualModeDataChange}
                   emptyCabinets={activeScreen.emptyCabinets}
@@ -1298,6 +1335,7 @@ export default function App() {
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
                   powerFeedMode={config.powerFeedMode}
+                  stripWidths={config.stripWidths}
                   manualMode={manualModePower}
                   onManualModeChange={handleManualModePowerChange}
                   emptyCabinets={activeScreen.emptyCabinets}

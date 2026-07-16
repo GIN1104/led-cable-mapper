@@ -1,5 +1,13 @@
 import type {
 
+  Cabinet,
+
+  DataChain,
+
+  GridLink,
+
+  PowerLine,
+
   RoutingOptions,
 
   RoutingResult,
@@ -23,6 +31,10 @@ import {
   generateCabinetGrid,
 
   cabinetLabel,
+
+  normalizeStripWidths,
+
+  stripColumnRanges,
 
 } from './cabinetGrid'
 
@@ -77,6 +89,174 @@ function isActiveFromEmpty(emptySet: Set<string>, cabinetsHigh: number): CellAct
 
   return (col, row) => !emptySet.has(cabinetLabel(row, col, cabinetsHigh))
 
+}
+
+
+
+/** Кабинеты полосы в локальных колонках 0…width-1 — те же правила упаковки, что у целой стены */
+function remapStripCabinetsLocal(
+  stripCabinets: Cabinet[],
+  startCol: number,
+): { local: Cabinet[]; byLabel: Map<string, Cabinet> } {
+  const byLabel = new Map(stripCabinets.map((c) => [c.label, c]))
+  const local = stripCabinets.map((c) => ({ ...c, col: c.col - startCol }))
+  return { local, byLabel }
+}
+
+function restoreCabinet(byLabel: Map<string, Cabinet>, cab: Cabinet): Cabinet {
+  return byLabel.get(cab.label) ?? cab
+}
+
+function restoreChainCabinets<T extends { cabinets: Cabinet[] }>(
+  item: T,
+  byLabel: Map<string, Cabinet>,
+): T {
+  return {
+    ...item,
+    cabinets: item.cabinets.map((c) => restoreCabinet(byLabel, c)),
+  }
+}
+
+function restoreLinkCabinets(
+  link: GridLink,
+  byLabel: Map<string, Cabinet>,
+): GridLink {
+  return {
+    ...link,
+    from: restoreCabinet(byLabel, link.from),
+    to: restoreCabinet(byLabel, link.to),
+  }
+}
+
+/** Auto data: каждая полоса считается как отдельная стена по тем же правилам */
+function buildDataChainsByStrips(
+  activeCabinets: Cabinet[],
+  config: ScreenConfig,
+  pixelsPerCabinet: number,
+  isActive: CellActiveFn,
+): { chains: DataChain[]; links: GridLink[] } {
+  const stripWidths = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
+  const ranges = stripColumnRanges(stripWidths)
+  if (ranges.length <= 1) {
+    return buildDataChains(activeCabinets, config, pixelsPerCabinet, isActive)
+  }
+
+  const chains: DataChain[] = []
+  const links: GridLink[] = []
+  let portOffset = 0
+
+  for (const { startCol, endCol, width } of ranges) {
+    const stripCabinets = activeCabinets.filter(
+      (c) => c.col >= startCol && c.col < endCol,
+    )
+    if (stripCabinets.length === 0) continue
+
+    const { local, byLabel } = remapStripCabinetsLocal(stripCabinets, startCol)
+    const stripConfig: ScreenConfig = {
+      ...config,
+      cabinetsWide: width,
+      stripWidths: [width],
+    }
+    const stripIsActive: CellActiveFn = (col, row) =>
+      col >= 0 && col < width && isActive(col + startCol, row)
+
+    const auto = buildDataChains(
+      local,
+      stripConfig,
+      pixelsPerCabinet,
+      stripIsActive,
+    )
+    for (const chain of auto.chains) {
+      chains.push({
+        ...restoreChainCabinets(chain, byLabel),
+        portNumber: chain.portNumber + portOffset,
+      })
+    }
+    for (const link of auto.links) {
+      links.push({
+        ...restoreLinkCabinets(link, byLabel),
+        chainId: link.chainId + portOffset,
+      })
+    }
+    const maxPort = auto.chains.reduce(
+      (m, c) => Math.max(m, c.portNumber),
+      0,
+    )
+    portOffset += maxPort
+  }
+
+  return { chains, links }
+}
+
+/** Auto power: каждая полоса считается как отдельная стена по тем же правилам */
+function buildPowerLinesByStrips(
+  activeCabinets: Cabinet[],
+  config: ScreenConfig,
+  isActive: CellActiveFn,
+  emptySet: Set<string>,
+  pixelsPerCabinet: number,
+): { lines: PowerLine[]; links: GridLink[]; cabinetsPerLine: number } {
+  const stripWidths = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
+  const ranges = stripColumnRanges(stripWidths)
+  if (ranges.length <= 1) {
+    return buildPowerLines(
+      activeCabinets,
+      config,
+      isActive,
+      emptySet,
+      pixelsPerCabinet,
+    )
+  }
+
+  const lines: PowerLine[] = []
+  const links: GridLink[] = []
+  let lineOffset = 0
+  let cabinetsPerLine = 0
+
+  for (const { startCol, endCol, width } of ranges) {
+    const stripCabinets = activeCabinets.filter(
+      (c) => c.col >= startCol && c.col < endCol,
+    )
+    if (stripCabinets.length === 0) continue
+
+    const { local, byLabel } = remapStripCabinetsLocal(stripCabinets, startCol)
+    const stripConfig: ScreenConfig = {
+      ...config,
+      cabinetsWide: width,
+      stripWidths: [width],
+    }
+    const stripIsActive: CellActiveFn = (col, row) =>
+      col >= 0 && col < width && isActive(col + startCol, row)
+
+    // emptySet по глобальным label — без изменений
+    const auto = buildPowerLines(
+      local,
+      stripConfig,
+      stripIsActive,
+      emptySet,
+      pixelsPerCabinet,
+    )
+    cabinetsPerLine = Math.max(cabinetsPerLine, auto.cabinetsPerLine)
+    for (const line of auto.lines) {
+      lines.push({
+        ...restoreChainCabinets(line, byLabel),
+        lineNumber: line.lineNumber + lineOffset,
+      })
+    }
+    for (const link of auto.links) {
+      links.push({
+        ...restoreLinkCabinets(link, byLabel),
+        chainId: link.chainId + lineOffset,
+      })
+    }
+    const maxLine = auto.lines.reduce(
+      (m, l) => Math.max(m, l.lineNumber),
+      0,
+    )
+    lineOffset += maxLine
+  }
+
+  return { lines, links, cabinetsPerLine }
 }
 
 
@@ -147,7 +327,12 @@ export function computeRouting(
 
   } else {
 
-    const auto = buildDataChains(activeCabinets, config, pixelsPerCabinet, isActive)
+    const auto = buildDataChainsByStrips(
+      activeCabinets,
+      config,
+      pixelsPerCabinet,
+      isActive,
+    )
 
     dataChains = auto.chains
 
@@ -207,7 +392,13 @@ export function computeRouting(
 
   } else {
 
-    const auto = buildPowerLines(activeCabinets, config, isActive, emptySet, pixelsPerCabinet)
+    const auto = buildPowerLinesByStrips(
+      activeCabinets,
+      config,
+      isActive,
+      emptySet,
+      pixelsPerCabinet,
+    )
 
     powerLines = auto.lines
 
@@ -321,9 +512,14 @@ export function buildAutoManualOverrides(config: ScreenConfig) {
 
   const { totalPixels: pixelsPerCabinet } = calcPixelsPerCabinet(config)
 
-  const { chains: dataChains } = buildDataChains(activeCabinets, config, pixelsPerCabinet, isActive)
+  const { chains: dataChains } = buildDataChainsByStrips(
+    activeCabinets,
+    config,
+    pixelsPerCabinet,
+    isActive,
+  )
 
-  const { lines: powerLines } = buildPowerLines(
+  const { lines: powerLines } = buildPowerLinesByStrips(
     activeCabinets,
     config,
     isActive,

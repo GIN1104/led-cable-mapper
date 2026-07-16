@@ -1,4 +1,4 @@
-import type { RefreshRate, ScreenConfig } from '../types'
+import type { ControllerModel, RefreshRate, ScreenConfig } from '../types'
 import { getPitchPreset } from './pitchPresets'
 
 /** Константы маршрутизации LED-стен */
@@ -27,6 +27,27 @@ export function getMaxCabinetsPerDataPort(
   if (pixelsPerCabinet <= 0) return 1
   const maxPixels = getMaxPixelsPerDataPort(refreshRate)
   return Math.max(1, Math.floor(maxPixels / pixelsPerCabinet))
+}
+
+/** Порог пикселей экрана: выше — нужен VX2000 / H2 / MCTRL4K */
+export const HIGH_PIXEL_SCREEN_THRESHOLD = 6_500_000
+
+/** Контроллеры, подходящие для экранов > 6.5M px */
+export const HIGH_PIXEL_CONTROLLERS: readonly ControllerModel[] = [
+  'NovaStar VX2000',
+  'NovaStar H2',
+  'NovaStar MCTRL4K',
+] as const
+
+/** Нужно ли предупредить о выборе VX2000 / H2 / 4K */
+export function needsHighPixelController(
+  totalPixels: number,
+  controllerModel: ControllerModel,
+): boolean {
+  return (
+    totalPixels > HIGH_PIXEL_SCREEN_THRESHOLD &&
+    !HIGH_PIXEL_CONTROLLERS.includes(controllerModel)
+  )
 }
 
 /** @deprecated Используйте getMaxCabinetsPerDataPort(refreshRate, pixelsPerCabinet) */

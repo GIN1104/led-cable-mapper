@@ -3,10 +3,12 @@
 export interface LineColorSet {
   /** Полупрозрачная заливка кабинета */
   fill: string
-  /** Цвет обводки кабинета / стрелки */
+  /** Цвет обводки кабинета */
   stroke: string
   /** Более тёмный оттенок для подписей */
   label: string
+  /** Цвет стрелки — насыщенный, отдельно от заливки кубика */
+  arrow: string
 }
 
 /**
@@ -63,6 +65,10 @@ function darken(r: number, g: number, b: number, factor: number): string {
   return `#${[dr, dg, db].map((c) => c.toString(16).padStart(2, '0')).join('')}`
 }
 
+function toHex(r: number, g: number, b: number): string {
+  return `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`
+}
+
 function toColorSet(
   rgb: { r: number; g: number; b: number },
   fillAlpha: number,
@@ -72,6 +78,8 @@ function toColorSet(
     fill: `rgba(${r}, ${g}, ${b}, ${fillAlpha})`,
     stroke: darken(r, g, b, 0.78),
     label: darken(r, g, b, 0.48),
+    // Полный насыщенный hue — не сливается с полупрозрачной заливкой кубика
+    arrow: toHex(r, g, b),
   }
 }
 
@@ -90,31 +98,36 @@ export const POWER_LINE_PALETTE: LineColorSet[] = POWER_HUES.map((rgb) =>
  * Чистый forest/emerald — отдельно от лайма/aqua в DATA_HUES.
  */
 export const BACKUP_LINE_PALETTE: LineColorSet[] = [
-  { fill: 'rgba(22, 101, 52, 0.24)', stroke: '#14532d', label: '#052e16' },
-  { fill: 'rgba(21, 128, 61, 0.24)', stroke: '#166534', label: '#14532d' },
-  { fill: 'rgba(4, 120, 87, 0.24)', stroke: '#047857', label: '#064e3b' },
-  { fill: 'rgba(6, 95, 70, 0.24)', stroke: '#065f46', label: '#022c22' },
-  { fill: 'rgba(34, 197, 94, 0.2)', stroke: '#15803d', label: '#14532d' },
-  { fill: 'rgba(16, 185, 129, 0.2)', stroke: '#059669', label: '#064e3b' },
+  { fill: 'rgba(22, 101, 52, 0.24)', stroke: '#14532d', label: '#052e16', arrow: '#16a34a' },
+  { fill: 'rgba(21, 128, 61, 0.24)', stroke: '#166534', label: '#14532d', arrow: '#22c55e' },
+  { fill: 'rgba(4, 120, 87, 0.24)', stroke: '#047857', label: '#064e3b', arrow: '#10b981' },
+  { fill: 'rgba(6, 95, 70, 0.24)', stroke: '#065f46', label: '#022c22', arrow: '#059669' },
+  { fill: 'rgba(34, 197, 94, 0.2)', stroke: '#15803d', label: '#14532d', arrow: '#22c55e' },
+  { fill: 'rgba(16, 185, 129, 0.2)', stroke: '#059669', label: '#064e3b', arrow: '#34d399' },
 ]
 
+const EMPTY_COLORS: LineColorSet = {
+  fill: '#f8fafc',
+  stroke: '#cbd5e1',
+  label: '#64748b',
+  arrow: '#64748b',
+}
+
 export function dataLineColor(portNum: number): LineColorSet {
-  if (portNum <= 0) {
-    return { fill: '#f8fafc', stroke: '#cbd5e1', label: '#64748b' }
-  }
+  if (portNum <= 0) return EMPTY_COLORS
   return DATA_LINE_PALETTE[(portNum - 1) % DATA_LINE_PALETTE.length]
 }
 
 export function powerLineColor(lineNum: number): LineColorSet {
   if (lineNum <= 0) {
-    return { fill: 'transparent', stroke: '#cbd5e1', label: '#64748b' }
+    return { fill: 'transparent', stroke: '#cbd5e1', label: '#64748b', arrow: '#64748b' }
   }
   return POWER_LINE_PALETTE[(lineNum - 1) % POWER_LINE_PALETTE.length]
 }
 
 export function backupLineColor(portNum: number): LineColorSet {
   if (portNum <= 0) {
-    return { fill: 'transparent', stroke: '#16a34a', label: '#166534' }
+    return { fill: 'transparent', stroke: '#16a34a', label: '#166534', arrow: '#16a34a' }
   }
   return BACKUP_LINE_PALETTE[(portNum - 1) % BACKUP_LINE_PALETTE.length]
 }

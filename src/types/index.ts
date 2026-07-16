@@ -176,6 +176,13 @@ export interface ScreenConfig {
    */
   hangMount: boolean
 
+  /**
+   * Вертикальные полосы (группы колонок). Ширины в кабинетах; сумма = cabinetsWide.
+   * Одна полоса [cabinetsWide] — без зазоров (поведение по умолчанию).
+   * Каждая полоса — отдельный блок для auto data и power (линии не переходят через зазор).
+   */
+  stripWidths: number[]
+
 }
 
 
@@ -469,6 +476,8 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
   powerFeedMode: 'edge',
 
   hangMount: false,
+
+  stripWidths: [6],
 
 }
 
