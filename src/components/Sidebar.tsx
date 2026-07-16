@@ -1268,7 +1268,8 @@ export default function Sidebar({
 
             <p className="mt-1 text-[10px] text-slate-500">
 
-              Edge: подвод на краю полосы (FEED/START). Center: подвод в центре полосы — P★ и стрелки от центра.
+              Edge: подвод на краю полосы, цепочка вдоль линии. Center: подвод в центре —
+              питание расходится влево и вправо (стрелки от ★ FEED).
 
             </p>
 

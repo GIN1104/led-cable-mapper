@@ -1417,7 +1417,7 @@ export default memo(function GridVisualization({
             </span>
             <span className="text-slate-500">
               {powerFeedMode === 'center'
-                ? 'Center: FEED/START в центре полосы, стрелки от центра'
+                ? 'Center: FEED в центре → стрелки влево и вправо'
                 : 'Edge: FEED/START на краю полосы (по Line Direction)'}
             </span>
           </>
@@ -1859,7 +1859,7 @@ export default memo(function GridVisualization({
             <>
               {' · '}
               {powerFeedMode === 'center'
-                ? 'Center: подвод в центре полосы (P★ FEED/START)'
+                ? 'Center: питание из центра в стороны (P★ FEED)'
                 : 'Edge: подвод на краю линии (P★ FEED/START)'}
             </>
           )}
