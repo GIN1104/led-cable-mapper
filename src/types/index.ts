@@ -184,13 +184,13 @@ export interface ScreenConfig {
   stripWidths: number[]
 
   /**
-   * Два NovaStar VX1000: стрипы делятся между контроллерами.
-   * Нумерация линий вида 1-1, 2-1 (контроллер-линия).
+   * Два NovaStar VX1000: стрипы делятся между контроллерами (только data/тикшорет).
+   * Нумерация data-портов вида 1-1, 2-1. Power / электричество не зависит от режима.
    */
   dualVx1000: boolean
 
   /**
-   * Какой VX1000 обслуживает стрип (1 или 2). Длина = число полос.
+   * Какой VX1000 обслуживает стрип для data (1 или 2). Длина = число полос.
    * Имеет смысл при dualVx1000 && stripWidths.length > 1.
    */
   stripControllerIds: number[]
@@ -263,6 +263,8 @@ export interface PowerLine {
   cabinets: Cabinet[]
 
   totalPowerW: number
+
+  /** Не используется: dual VX1000 не влияет на power */
 
   controllerId?: number
 

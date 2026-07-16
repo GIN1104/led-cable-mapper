@@ -230,12 +230,7 @@ function buildPowerLinesByStrips(
     )
   }
 
-  const dual = Boolean(config.dualVx1000) && stripWidths.length > 1
-  const controllerIds = dual
-    ? normalizeStripControllerIds(config.stripControllerIds, stripWidths.length)
-    : null
-  const localCounters = new Map<number, number>()
-
+  // dual VX1000 влияет только на data/тикшорет — power остаётся глобальной нумерацией P1, P2…
   const lines: PowerLine[] = []
   const links: GridLink[] = []
   let lineOffset = 0
@@ -266,23 +261,12 @@ function buildPowerLinesByStrips(
       pixelsPerCabinet,
     )
     cabinetsPerLine = Math.max(cabinetsPerLine, auto.cabinetsPerLine)
-    const controllerId = controllerIds?.[stripIdx] ?? 1
     for (const line of auto.lines) {
       const restored = restoreChainCabinets(line, byLabel)
-      const lineNumber = line.lineNumber + lineOffset
-      if (dual) {
-        const localNumber = (localCounters.get(controllerId) ?? 0) + 1
-        localCounters.set(controllerId, localNumber)
-        lines.push({
-          ...restored,
-          lineNumber,
-          controllerId,
-          localNumber,
-          displayId: `${controllerId}-${localNumber}`,
-        })
-      } else {
-        lines.push({ ...restored, lineNumber })
-      }
+      lines.push({
+        ...restored,
+        lineNumber: line.lineNumber + lineOffset,
+      })
     }
     for (const link of auto.links) {
       links.push({

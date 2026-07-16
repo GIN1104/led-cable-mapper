@@ -427,20 +427,15 @@ export default memo(function GridVisualization({
     : 'Power Lines / Электричество / חשמל'
   const prefix = isData ? 'D' : 'P'
 
-  /** portNumber/lineNumber → displayId (например «1-1» при dual VX1000) */
+  /** Data portNumber → displayId (например «1-1» при dual VX1000). Power всегда P{n}. */
   const displayIdByNumber = useMemo(() => {
     const map = new Map<number, string>()
-    if (isData) {
-      for (const chain of dataChains) {
-        if (chain.displayId) map.set(chain.portNumber, chain.displayId)
-      }
-    } else {
-      for (const line of powerLines) {
-        if (line.displayId) map.set(line.lineNumber, line.displayId)
-      }
+    if (!isData) return map
+    for (const chain of dataChains) {
+      if (chain.displayId) map.set(chain.portNumber, chain.displayId)
     }
     return map
-  }, [isData, dataChains, powerLines])
+  }, [isData, dataChains])
 
   const formatLineId = useCallback(
     (n: number) => {
@@ -1008,7 +1003,7 @@ export default memo(function GridVisualization({
             <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
             <p className="mt-0.5 text-[10px] tabular-nums text-slate-500">
               {headerStats}
-              {dualVx1000 ? ' · 2× VX1000' : ''}
+              {isData && dualVx1000 ? ' · 2× VX1000' : ''}
             </p>
           </div>
           {(manualMode || emptyPaintMode) && (
@@ -1427,7 +1422,7 @@ export default memo(function GridVisualization({
                     className="inline-block h-3 w-3 rounded-sm border-2"
                     style={{ backgroundColor: c.fill, borderColor: c.stroke }}
                   />
-                  P{displayIdByNumber.get(line) ?? line}
+                  P{line}
                   {hasWarning && (
                     <span className="rounded bg-red-100 px-1 text-[9px] font-bold text-red-700">
                       !

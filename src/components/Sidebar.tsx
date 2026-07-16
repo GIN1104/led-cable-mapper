@@ -616,7 +616,7 @@ export default function Sidebar({
                 2× VX1000 / Два контроллера
               </p>
               <p className="text-[11px] leading-snug text-slate-600">
-                Добавьте ≥2 полосы, чтобы включить 2× VX1000. Края → VX1, центр → VX2.
+                Добавьте ≥2 полосы, чтобы включить 2× VX1000 (только тикшорет/data). Края → VX1, центр → VX2.
               </p>
               {config.cabinetsWide >= 2 ? (
                 <button
@@ -646,7 +646,7 @@ export default function Sidebar({
                     2× VX1000 / Два контроллера
                   </p>
                   <p className="mt-1 text-[11px] leading-snug text-slate-600">
-                    Края → VX1, центр → VX2. Нумерация портов 1-1, 2-1…
+                    Только тикшорет/data: края → VX1, центр → VX2. Порты D1-1, D2-1… Электричество без изменений.
                   </p>
                 </div>
                 <button
@@ -668,7 +668,7 @@ export default function Sidebar({
               </div>
               <p className="text-[11px] font-medium text-slate-700">
                 {config.dualVx1000
-                  ? 'Включено — два VX1000, порты 1-1 / 2-1'
+                  ? 'Включено — два VX1000, data-порты D1-1 / D2-1 (power: P1, P2…)'
                   : 'Выключено — один контроллер, обычная нумерация D1, P1'}
               </p>
 
@@ -1039,7 +1039,7 @@ export default function Sidebar({
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-900">2× VX1000</p>
                 <p className="text-[10px] text-slate-600">
-                  Два контроллера · порты 1-1 / 2-1
+                  Два контроллера · только data D1-1 / D2-1
                 </p>
               </div>
               <button
