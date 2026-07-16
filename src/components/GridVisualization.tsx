@@ -76,6 +76,11 @@ interface GridVisualizationProps {
   powerFeedMode?: PowerFeedMode
   /** Вертикальные полосы: ширины в колонках; зазоры только визуальные */
   stripWidths?: number[]
+  /** Два VX1000 — подсказки UI / лейблы D1-1 */
+  dualVx1000?: boolean
+  /** Разрешение экрана в пикселях (W×H) */
+  screenPixelsWide?: number
+  screenPixelsHigh?: number
 }
 
 const DESKTOP_CELL = { w: 88, h: 64, gap: 12, pad: 40, stripGap: 32 }
@@ -343,6 +348,9 @@ export default memo(function GridVisualization({
   pitchPreset = '3.9-small',
   powerFeedMode = 'edge',
   stripWidths: stripWidthsProp,
+  dualVx1000 = false,
+  screenPixelsWide = 0,
+  screenPixelsHigh = 0,
 }: GridVisualizationProps) {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
@@ -419,20 +427,51 @@ export default memo(function GridVisualization({
     : 'Power Lines / Электричество / חשמל'
   const prefix = isData ? 'D' : 'P'
 
+  /** portNumber/lineNumber → displayId (например «1-1» при dual VX1000) */
+  const displayIdByNumber = useMemo(() => {
+    const map = new Map<number, string>()
+    if (isData) {
+      for (const chain of dataChains) {
+        if (chain.displayId) map.set(chain.portNumber, chain.displayId)
+      }
+    } else {
+      for (const line of powerLines) {
+        if (line.displayId) map.set(line.lineNumber, line.displayId)
+      }
+    }
+    return map
+  }, [isData, dataChains, powerLines])
+
+  const formatLineId = useCallback(
+    (n: number) => {
+      const display = displayIdByNumber.get(n)
+      return display ? `${prefix}${display}` : `${prefix}${n}`
+    },
+    [displayIdByNumber, prefix],
+  )
+
+  const dataLineCount =
+    summary.dataPorts > 0
+      ? summary.dataPorts
+      : dataChains.filter((c) => !c.isBackup).length
+  const powerLineCount =
+    summary.powerLines > 0 ? summary.powerLines : powerLines.length
+  const resolutionLabel =
+    screenPixelsWide > 0 && screenPixelsHigh > 0
+      ? `${screenPixelsWide}×${screenPixelsHigh}`
+      : null
+  const headerStats = resolutionLabel
+    ? `Data: ${dataLineCount} линий · ${resolutionLabel} · Power: ${powerLineCount} линий`
+    : `Data: ${dataLineCount} линий · Power: ${powerLineCount} линий`
+
   const pitchLabel = useMemo(() => {
     if (pitchPreset === 'custom') return CUSTOM_PRESET_LABEL
     return getPitchPreset(pitchPreset)?.label ?? pitchPreset
   }, [pitchPreset])
 
   const printInfo = useMemo((): PanelPrintInfo => {
-    const dataLineCount =
-      summary.dataPorts > 0
-        ? summary.dataPorts
-        : dataChains.filter((c) => !c.isBackup).length
     const backupLineCount =
       summary.backupPorts > 0 ? summary.backupPorts : backupChains.length
-    const powerLineCount =
-      summary.powerLines > 0 ? summary.powerLines : powerLines.length
 
     return {
       screenName,
@@ -465,12 +504,10 @@ export default memo(function GridVisualization({
     isData,
     refreshRate,
     lineDirection,
-    summary.dataPorts,
     summary.backupPorts,
-    summary.powerLines,
-    dataChains,
+    dataLineCount,
+    powerLineCount,
     backupChains,
-    powerLines,
   ])
 
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set())
@@ -967,7 +1004,13 @@ export default memo(function GridVisualization({
     >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+            <p className="mt-0.5 text-[10px] tabular-nums text-slate-500">
+              {headerStats}
+              {dualVx1000 ? ' · 2× VX1000' : ''}
+            </p>
+          </div>
           {(manualMode || emptyPaintMode) && (
             <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
               {emptyPaintMode && (!manualMode || editMode === 'empty')
@@ -1119,7 +1162,7 @@ export default memo(function GridVisualization({
                     ? 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
                     : 'cursor-not-allowed bg-white/60 text-amber-400 ring-1 ring-amber-200'
                 }`}
-                title={`Перевернуть ${prefix}${activeValue}: первый кабинет станет последним`}
+                title={`Перевернуть ${formatLineId(activeValue)}: первый кабинет станет последним`}
               >
                 Reverse / Перевернуть / הפוך
               </button>
@@ -1134,7 +1177,7 @@ export default memo(function GridVisualization({
                     ? 'bg-white text-red-700 ring-1 ring-red-300 hover:bg-red-50'
                     : 'cursor-not-allowed bg-white/60 text-red-300 ring-1 ring-red-200'
                 }`}
-                title={`Очистить ${prefix}${activeValue}: снять все кабинеты с линии`}
+                title={`Очистить ${formatLineId(activeValue)}: снять все кабинеты с линии`}
               >
                 Clear line / Очистить линию / נקה שורה
               </button>
@@ -1221,7 +1264,7 @@ export default memo(function GridVisualization({
                     }
                   }}
                   className="w-14 rounded-md border border-amber-300 bg-white px-2 py-1 text-center text-xs font-semibold text-amber-950 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  title={`Перенумеровать всю активную линию ${prefix}${activeValue} (все кабинеты), Enter — применить, 1–${maxLineNumber}`}
+                  title={`Перенумеровать всю активную линию ${formatLineId(activeValue)} (все кабинеты), Enter — применить, 1–${maxLineNumber}`}
                 />
               </label>
             )}
@@ -1236,7 +1279,7 @@ export default memo(function GridVisualization({
                     : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
                 }`}
               >
-                {prefix}{n}
+                {formatLineId(n)}
                 {editMode === 'start' && effectiveStartPoints[n] && (
                   <span className="ml-1 text-[9px] opacity-80">★{effectiveStartPoints[n]}</span>
                 )}
@@ -1264,7 +1307,7 @@ export default memo(function GridVisualization({
             )}
           </div>
           <p className="text-amber-800/90">
-            Активно: <strong>{prefix}{activeValue}</strong>
+            Активно: <strong>{formatLineId(activeValue)}</strong>
             {editMode === 'assign' ? (
               <>
                 {' '}
@@ -1283,9 +1326,8 @@ export default memo(function GridVisualization({
             ) : editMode === 'start' ? (
               <>
                 {' '}
-                — клик по любому кабинету задаёт START для {prefix}
-                {activeValue}: бейдж {prefix}
-                {activeValue} и ★ переезжают туда (кабинет добавляется в начало линии, если ещё не
+                — клик по любому кабинету задаёт START для {formatLineId(activeValue)}
+                : бейдж {formatLineId(activeValue)} и ★ переезжают туда (кабинет добавляется в начало линии, если ещё не
                 был).
               </>
             ) : (
@@ -1325,7 +1367,7 @@ export default memo(function GridVisualization({
                     className="inline-block h-3 w-3 rounded-sm border-2"
                     style={{ backgroundColor: c.fill, borderColor: c.stroke }}
                   />
-                  D{port}
+                  D{displayIdByNumber.get(port) ?? port}
                   {hasWarning && (
                     <span className="rounded bg-red-100 px-1 text-[9px] font-bold text-red-700">
                       !
@@ -1385,7 +1427,7 @@ export default memo(function GridVisualization({
                     className="inline-block h-3 w-3 rounded-sm border-2"
                     style={{ backgroundColor: c.fill, borderColor: c.stroke }}
                   />
-                  P{line}
+                  P{displayIdByNumber.get(line) ?? line}
                   {hasWarning && (
                     <span className="rounded bg-red-100 px-1 text-[9px] font-bold text-red-700">
                       !
@@ -1682,7 +1724,7 @@ export default memo(function GridVisualization({
             const lineColors = isData
               ? dataLineColor(lineNum)
               : powerLineColor(lineNum)
-            const lineId = lineNum > 0 ? `${prefix}${lineNum}` : prefix
+            const lineId = lineNum > 0 ? formatLineId(lineNum) : prefix
             // Крупный бейдж: читается на телефоне и при fitScale сетки 14×8
             const badgeFont =
               simplifyLabels || isMobile ? (isMobile && simplifyLabels ? 15 : 13) : 11

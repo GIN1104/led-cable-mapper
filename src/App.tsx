@@ -7,7 +7,7 @@ import {
 } from './types'
 import { buildAutoManualOverrides } from './lib/routingEngine'
 import { buildCombinedPackingList } from './lib/packingList'
-import { syncCabinetGridFromMeters } from './lib/cabinetGrid'
+import { syncCabinetGridFromMeters, calcPixelsPerCabinet } from './lib/cabinetGrid'
 import {
   appendLabelToChain,
   clearChain,
@@ -1059,6 +1059,10 @@ export default function App() {
 
   const config = activeScreen
   const cabinetCount = config.cabinetsWide * config.cabinetsHigh
+  const { pixelsWide: cabPixelsWide, pixelsHigh: cabPixelsHigh } =
+    calcPixelsPerCabinet(config)
+  const screenPixelsWide = config.cabinetsWide * cabPixelsWide
+  const screenPixelsHigh = config.cabinetsHigh * cabPixelsHigh
   const maxPixelsPerPort = getMaxPixelsPerDataPort(config.refreshRate)
   const maxCabinetsPerPort =
     result != null
@@ -1299,6 +1303,9 @@ export default function App() {
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
                   stripWidths={config.stripWidths}
+                  dualVx1000={config.dualVx1000}
+                  screenPixelsWide={screenPixelsWide}
+                  screenPixelsHigh={screenPixelsHigh}
                   manualMode={manualModeData}
                   onManualModeChange={handleManualModeDataChange}
                   emptyCabinets={activeScreen.emptyCabinets}
@@ -1336,6 +1343,9 @@ export default function App() {
                   pitchPreset={config.pitchPreset}
                   powerFeedMode={config.powerFeedMode}
                   stripWidths={config.stripWidths}
+                  dualVx1000={config.dualVx1000}
+                  screenPixelsWide={screenPixelsWide}
+                  screenPixelsHigh={screenPixelsHigh}
                   manualMode={manualModePower}
                   onManualModeChange={handleManualModePowerChange}
                   emptyCabinets={activeScreen.emptyCabinets}

@@ -27,6 +27,9 @@ export function screenRoutingKey(screen: ScreenConfig): string {
     screen.controllerModel,
     screen.trunkLengthM,
     screen.emptyCabinets.slice().sort().join(','),
+    (screen.stripWidths ?? []).join(','),
+    screen.dualVx1000 ? 1 : 0,
+    (screen.stripControllerIds ?? []).join(','),
   ].join('|')
 }
 

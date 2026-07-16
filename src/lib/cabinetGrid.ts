@@ -166,6 +166,31 @@ export function stripColumnRanges(
   return ranges
 }
 
+/**
+ * Назначение стрипов на VX1000: края → 1, центр → 2.
+ * Пример: 3 полосы → [1, 2, 1]; 2 полосы → [1, 2].
+ */
+export function defaultStripControllerIds(stripCount: number): number[] {
+  const n = Math.max(1, Math.floor(stripCount) || 1)
+  if (n === 1) return [1]
+  if (n === 2) return [1, 2]
+  return Array.from({ length: n }, (_, i) => (i === 0 || i === n - 1 ? 1 : 2))
+}
+
+/** Нормализует stripControllerIds под число полос (1|2). */
+export function normalizeStripControllerIds(
+  ids: number[] | undefined,
+  stripCount: number,
+): number[] {
+  const n = Math.max(1, stripCount)
+  const fallback = defaultStripControllerIds(n)
+  if (!ids || ids.length === 0) return fallback
+  return Array.from({ length: n }, (_, i) => {
+    const v = ids[i] ?? fallback[i] ?? 1
+    return v === 2 ? 2 : 1
+  })
+}
+
 /** Пересчитывает cabinetsWide/High из wallWidthM/wallHeightM и размеров кабинета */
 export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
   const { cabinetsWide, cabinetsHigh } = calcCabinetsFromMeters(
@@ -175,18 +200,39 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
     config.cabinetHeightMm,
   )
   const stripWidths = normalizeStripWidths(config.stripWidths, cabinetsWide)
+  // dualVx1000 сохраняем при смене числа стрипов; ids нормализуем под stripWidths
+  const dualVx1000 = config.dualVx1000 ?? false
+  const stripControllerIds = normalizeStripControllerIds(
+    config.stripControllerIds,
+    stripWidths.length,
+  )
   const stripsSame =
     stripWidths.length === (config.stripWidths?.length ?? 0) &&
     stripWidths.every((w, i) => w === config.stripWidths?.[i])
+  const idsSame =
+    stripControllerIds.length === (config.stripControllerIds?.length ?? 0) &&
+    stripControllerIds.every((id, i) => id === config.stripControllerIds?.[i])
+  const dualSame = dualVx1000 === (config.dualVx1000 ?? false)
 
   if (
     cabinetsWide === config.cabinetsWide &&
     cabinetsHigh === config.cabinetsHigh &&
-    stripsSame
+    stripsSame &&
+    idsSame &&
+    dualSame &&
+    config.dualVx1000 !== undefined &&
+    config.stripControllerIds !== undefined
   ) {
     return config
   }
-  return { ...config, cabinetsWide, cabinetsHigh, stripWidths }
+  return {
+    ...config,
+    cabinetsWide,
+    cabinetsHigh,
+    stripWidths,
+    dualVx1000,
+    stripControllerIds,
+  }
 }
 
 /** Преобразует индекс буквы в букву (0 → A, 1 → B, …) */

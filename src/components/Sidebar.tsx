@@ -42,8 +42,10 @@ import {
   calcCabinetsFromMeters,
   calcPixelsPerCabinet,
   clampWallDimensionM,
+  defaultStripControllerIds,
   equalStripWidths,
   isMeterDraftEditable,
+  normalizeStripControllerIds,
   parseMeterDraftForCommit,
   previewMeterFromDraft,
   setStripWidthAt,
@@ -220,7 +222,41 @@ export default function Sidebar({
 
   }
 
+  const stripCount = config.stripWidths?.length ?? 1
+  const canDualVx = stripCount > 1
+  /** Цель кнопки «Сделать N полосы»: 3, либо 2 если cabinetsWide < 3 */
+  const quickStripTarget = Math.min(3, Math.max(2, config.cabinetsWide))
 
+  const applyStripCount = (count: number) => {
+    const n = Math.max(1, Math.min(count, config.cabinetsWide))
+    onChange(
+      syncCabinetGridFromMeters({
+        ...config,
+        stripWidths: equalStripWidths(n, config.cabinetsWide),
+        stripControllerIds: normalizeStripControllerIds(config.stripControllerIds, n),
+      }),
+    )
+  }
+
+  const applyDualVx1000 = (next: boolean) => {
+    onChange(
+      syncCabinetGridFromMeters({
+        ...config,
+        dualVx1000: next,
+        stripControllerIds: next
+          ? normalizeStripControllerIds(
+              config.stripControllerIds?.length === stripCount
+                ? config.stripControllerIds
+                : defaultStripControllerIds(stripCount),
+              stripCount,
+            )
+          : normalizeStripControllerIds(config.stripControllerIds, stripCount),
+        ...(next && config.controllerModel !== 'NovaStar VX1000'
+          ? { controllerModel: 'NovaStar VX1000' as ControllerModel }
+          : {}),
+      }),
+    )
+  }
 
   const updateInt = (key: keyof ScreenConfig, raw: string, min = 1) => {
 
@@ -515,13 +551,10 @@ export default function Sidebar({
           <Field label="Strips / Полосы (отдельные блоки)">
             <select
               className={inputClass}
-              value={config.stripWidths?.length ?? 1}
+              value={stripCount}
               onChange={(e) => {
                 const count = Math.max(1, parseInt(e.target.value, 10) || 1)
-                update(
-                  'stripWidths',
-                  equalStripWidths(count, config.cabinetsWide),
-                )
+                applyStripCount(count)
               }}
             >
               {Array.from(
@@ -573,6 +606,109 @@ export default function Sidebar({
                 Σ {(config.stripWidths ?? []).reduce((a, b) => a + b, 0)} /{' '}
                 {config.cabinetsWide} cab
               </p>
+            </div>
+          )}
+
+          {/* 2× VX1000: всегда под Strips — при 1 полосе подсказка, при ≥2 — toggle */}
+          {!canDualVx ? (
+            <div className="space-y-2 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50/80 p-3 shadow-sm">
+              <p className="text-sm font-semibold text-slate-900">
+                2× VX1000 / Два контроллера
+              </p>
+              <p className="text-[11px] leading-snug text-slate-600">
+                Добавьте ≥2 полосы, чтобы включить 2× VX1000. Края → VX1, центр → VX2.
+              </p>
+              {config.cabinetsWide >= 2 ? (
+                <button
+                  type="button"
+                  onClick={() => applyStripCount(quickStripTarget)}
+                  className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                >
+                  Сделать {quickStripTarget} полосы
+                </button>
+              ) : (
+                <p className="text-[11px] text-amber-700">
+                  Нужно ≥2 кабинета по ширине, чтобы разбить экран на полосы.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div
+              className={`space-y-3 rounded-lg border-2 p-3 shadow-sm ${
+                config.dualVx1000
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-blue-300 bg-blue-50/70'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-slate-900">
+                    2× VX1000 / Два контроллера
+                  </p>
+                  <p className="mt-1 text-[11px] leading-snug text-slate-600">
+                    Края → VX1, центр → VX2. Нумерация портов 1-1, 2-1…
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(config.dualVx1000)}
+                  aria-label="2× VX1000 / два контроллера"
+                  onClick={() => applyDualVx1000(!config.dualVx1000)}
+                  className={`relative inline-flex h-9 w-16 shrink-0 items-center rounded-full transition ${
+                    config.dualVx1000 ? 'bg-blue-600' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-7 w-7 transform rounded-full bg-white shadow transition ${
+                      config.dualVx1000 ? 'translate-x-8' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              <p className="text-[11px] font-medium text-slate-700">
+                {config.dualVx1000
+                  ? 'Включено — два VX1000, порты 1-1 / 2-1'
+                  : 'Выключено — один контроллер, обычная нумерация D1, P1'}
+              </p>
+
+              {config.dualVx1000 && (
+                <div className="space-y-2 rounded-md border border-blue-200 bg-white p-2.5">
+                  <p className="text-xs font-semibold text-slate-800">
+                    Назначение стрипов → Controller
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {(config.stripWidths ?? [config.cabinetsWide]).map((_, i) => {
+                      const ids = normalizeStripControllerIds(
+                        config.stripControllerIds,
+                        stripCount,
+                      )
+                      return (
+                        <label
+                          key={`ctrl-${i}`}
+                          className="block text-[11px] font-medium text-slate-700"
+                        >
+                          Strip {i + 1}
+                          <select
+                            className={`${inputClass} mt-0.5`}
+                            value={ids[i] ?? 1}
+                            onChange={(e) => {
+                              const ctrl =
+                                parseInt(e.target.value, 10) === 2 ? 2 : 1
+                              const next = [...ids]
+                              next[i] = ctrl
+                              update('stripControllerIds', next)
+                            }}
+                          >
+                            <option value={1}>Controller 1</option>
+                            <option value={2}>Controller 2</option>
+                          </select>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -891,6 +1027,39 @@ export default function Sidebar({
             </select>
 
           </Field>
+
+          {canDualVx && (
+            <div
+              className={`flex items-center justify-between gap-3 rounded-lg border-2 px-3 py-2.5 ${
+                config.dualVx1000
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-blue-300 bg-blue-50/70'
+              }`}
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900">2× VX1000</p>
+                <p className="text-[10px] text-slate-600">
+                  Два контроллера · порты 1-1 / 2-1
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={Boolean(config.dualVx1000)}
+                aria-label="2× VX1000 (Controller)"
+                onClick={() => applyDualVx1000(!config.dualVx1000)}
+                className={`relative inline-flex h-8 w-14 shrink-0 items-center rounded-full transition ${
+                  config.dualVx1000 ? 'bg-blue-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-6 w-6 transform rounded-full bg-white shadow transition ${
+                    config.dualVx1000 ? 'translate-x-7' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+          )}
 
           <Field label="Signal Backup (V-Backup)">
 

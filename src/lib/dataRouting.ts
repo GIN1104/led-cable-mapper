@@ -813,6 +813,10 @@ export function buildBackupChains(dataChains: DataChain[]): {
       totalPixels: main.totalPixels,
       isBackup: true,
       backupForPort: main.portNumber,
+      controllerId: main.controllerId,
+      localNumber: main.localNumber,
+      // Резерв: тот же стиль нумерации с суффиксом b (например 1-1b)
+      displayId: main.displayId ? `${main.displayId}b` : undefined,
     })
 
     links.push(...buildLinksForChain(reversed, backupPort, 'data-backup'))

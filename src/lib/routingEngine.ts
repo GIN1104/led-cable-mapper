@@ -32,6 +32,8 @@ import {
 
   cabinetLabel,
 
+  normalizeStripControllerIds,
+
   normalizeStripWidths,
 
   stripColumnRanges,
@@ -141,11 +143,19 @@ function buildDataChainsByStrips(
     return buildDataChains(activeCabinets, config, pixelsPerCabinet, isActive)
   }
 
+  const dual = Boolean(config.dualVx1000) && stripWidths.length > 1
+  const controllerIds = dual
+    ? normalizeStripControllerIds(config.stripControllerIds, stripWidths.length)
+    : null
+  /** Локальный номер линии внутри каждого контроллера */
+  const localCounters = new Map<number, number>()
+
   const chains: DataChain[] = []
   const links: GridLink[] = []
   let portOffset = 0
 
-  for (const { startCol, endCol, width } of ranges) {
+  for (let stripIdx = 0; stripIdx < ranges.length; stripIdx++) {
+    const { startCol, endCol, width } = ranges[stripIdx]
     const stripCabinets = activeCabinets.filter(
       (c) => c.col >= startCol && c.col < endCol,
     )
@@ -166,11 +176,23 @@ function buildDataChainsByStrips(
       pixelsPerCabinet,
       stripIsActive,
     )
+    const controllerId = controllerIds?.[stripIdx] ?? 1
     for (const chain of auto.chains) {
-      chains.push({
-        ...restoreChainCabinets(chain, byLabel),
-        portNumber: chain.portNumber + portOffset,
-      })
+      const restored = restoreChainCabinets(chain, byLabel)
+      const portNumber = chain.portNumber + portOffset
+      if (dual) {
+        const localNumber = (localCounters.get(controllerId) ?? 0) + 1
+        localCounters.set(controllerId, localNumber)
+        chains.push({
+          ...restored,
+          portNumber,
+          controllerId,
+          localNumber,
+          displayId: `${controllerId}-${localNumber}`,
+        })
+      } else {
+        chains.push({ ...restored, portNumber })
+      }
     }
     for (const link of auto.links) {
       links.push({
@@ -208,12 +230,19 @@ function buildPowerLinesByStrips(
     )
   }
 
+  const dual = Boolean(config.dualVx1000) && stripWidths.length > 1
+  const controllerIds = dual
+    ? normalizeStripControllerIds(config.stripControllerIds, stripWidths.length)
+    : null
+  const localCounters = new Map<number, number>()
+
   const lines: PowerLine[] = []
   const links: GridLink[] = []
   let lineOffset = 0
   let cabinetsPerLine = 0
 
-  for (const { startCol, endCol, width } of ranges) {
+  for (let stripIdx = 0; stripIdx < ranges.length; stripIdx++) {
+    const { startCol, endCol, width } = ranges[stripIdx]
     const stripCabinets = activeCabinets.filter(
       (c) => c.col >= startCol && c.col < endCol,
     )
@@ -237,11 +266,23 @@ function buildPowerLinesByStrips(
       pixelsPerCabinet,
     )
     cabinetsPerLine = Math.max(cabinetsPerLine, auto.cabinetsPerLine)
+    const controllerId = controllerIds?.[stripIdx] ?? 1
     for (const line of auto.lines) {
-      lines.push({
-        ...restoreChainCabinets(line, byLabel),
-        lineNumber: line.lineNumber + lineOffset,
-      })
+      const restored = restoreChainCabinets(line, byLabel)
+      const lineNumber = line.lineNumber + lineOffset
+      if (dual) {
+        const localNumber = (localCounters.get(controllerId) ?? 0) + 1
+        localCounters.set(controllerId, localNumber)
+        lines.push({
+          ...restored,
+          lineNumber,
+          controllerId,
+          localNumber,
+          displayId: `${controllerId}-${localNumber}`,
+        })
+      } else {
+        lines.push({ ...restored, lineNumber })
+      }
     }
     for (const link of auto.links) {
       links.push({

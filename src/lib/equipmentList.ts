@@ -312,7 +312,13 @@ export const LED_CARD_BY_CONTROLLER: Record<ControllerModel, string> = {
   'Generic 1G Controller': 'Generic 1G Controller',
 }
 
-/** Агрегирует כרטיס לד по экранам: 1 карта на экран, имя = controllerModel */
+/** Сколько LED-карт на экран: при dual VX1000 — две */
+export function ledCardsPerScreen(screen: ScreenConfig): number {
+  const stripCount = screen.stripWidths?.length ?? 1
+  return screen.dualVx1000 && stripCount > 1 ? 2 : 1
+}
+
+/** Агрегирует כרטיס לד по экранам: 1 карта на экран (2 при dual VX1000), имя = controllerModel */
 export function aggregateLedCards(screens: ScreenConfig[]): {
   quantity: number
   russian: string
@@ -322,9 +328,12 @@ export function aggregateLedCards(screens: ScreenConfig[]): {
   }
 
   const byCard = new Map<string, number>()
+  let totalQty = 0
   for (const screen of screens) {
     const cardName = LED_CARD_BY_CONTROLLER[screen.controllerModel]
-    byCard.set(cardName, (byCard.get(cardName) ?? 0) + 1)
+    const qty = ledCardsPerScreen(screen)
+    totalQty += qty
+    byCard.set(cardName, (byCard.get(cardName) ?? 0) + qty)
   }
 
   const russian =
@@ -332,7 +341,7 @@ export function aggregateLedCards(screens: ScreenConfig[]): {
       ? [...byCard.keys()][0]
       : [...byCard.entries()].map(([name, qty]) => `${name} ×${qty}`).join('; ')
 
-  return { quantity: screens.length, russian }
+  return { quantity: totalQty, russian }
 }
 
 /**
@@ -417,8 +426,11 @@ export function resolveEquipmentAutoQuantity(
   switch (key) {
     case 'screenSummary':
       return results.length > 0 ? buildScreenSummary(results) : undefined
-    case 'ledCard':
-      return screens.length > 0 ? screens.length : undefined
+    case 'ledCard': {
+      if (screens.length === 0) return undefined
+      const qty = aggregateLedCards(screens).quantity
+      return qty > 0 ? qty : undefined
+    }
     case 'cvtOptical': {
       const cvt = aggregateCvtOptical(results)
       return cvt.quantity > 0 ? cvt.quantity : undefined

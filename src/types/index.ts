@@ -183,6 +183,18 @@ export interface ScreenConfig {
    */
   stripWidths: number[]
 
+  /**
+   * Два NovaStar VX1000: стрипы делятся между контроллерами.
+   * Нумерация линий вида 1-1, 2-1 (контроллер-линия).
+   */
+  dualVx1000: boolean
+
+  /**
+   * Какой VX1000 обслуживает стрип (1 или 2). Длина = число полос.
+   * Имеет смысл при dualVx1000 && stripWidths.length > 1.
+   */
+  stripControllerIds: number[]
+
 }
 
 
@@ -229,6 +241,15 @@ export interface DataChain {
 
   backupForPort?: number
 
+  /** При dual VX1000: номер контроллера (1|2) */
+  controllerId?: number
+
+  /** Номер линии внутри контроллера */
+  localNumber?: number
+
+  /** Подпись для UI: «1-1», «2-3»; если нет — portNumber */
+  displayId?: string
+
 }
 
 
@@ -242,6 +263,12 @@ export interface PowerLine {
   cabinets: Cabinet[]
 
   totalPowerW: number
+
+  controllerId?: number
+
+  localNumber?: number
+
+  displayId?: string
 
 }
 
@@ -480,6 +507,10 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
 
   stripWidths: [6],
 
+  dualVx1000: false,
+
+  stripControllerIds: [1],
+
 }
 
 
@@ -515,6 +546,12 @@ export function createScreen(
     name: partial?.name ?? `Screen ${index ?? 1}`,
 
     emptyCabinets: partial?.emptyCabinets ?? [],
+
+    // Обратная совместимость: старые конфиги без dual-полей
+    dualVx1000: partial?.dualVx1000 ?? DEFAULT_SCREEN_FIELDS.dualVx1000,
+
+    stripControllerIds:
+      partial?.stripControllerIds ?? DEFAULT_SCREEN_FIELDS.stripControllerIds,
 
   }
 
