@@ -16,6 +16,7 @@ import {
   linkDirection,
   orderCabinetsFromStartSnake,
   orderRegionBySnake,
+  stripIndexForCol,
 } from './cabinetGrid'
 import type { CellActiveFn, PartitionStrategy, RectRegion } from './rectangularPartition'
 import {
@@ -28,15 +29,26 @@ function buildLinksForChain(
   cabinets: Cabinet[],
   portNumber: number,
   type: 'data' | 'data-backup',
+  stripWidths?: number[],
 ): GridLink[] {
   const links: GridLink[] = []
+  const strips = stripWidths ?? [1]
   for (let i = 0; i < cabinets.length - 1; i++) {
+    const from = cabinets[i]!
+    const to = cabinets[i + 1]!
+    // Тикшорет не переходит со стрипа на стрип
+    if (
+      strips.length > 1 &&
+      stripIndexForCol(from.col, strips) !== stripIndexForCol(to.col, strips)
+    ) {
+      continue
+    }
     links.push({
-      from: cabinets[i],
-      to: cabinets[i + 1],
+      from,
+      to,
       type,
       chainId: portNumber,
-      direction: linkDirection(cabinets[i], cabinets[i + 1]),
+      direction: linkDirection(from, to),
     })
   }
   return links
@@ -83,13 +95,41 @@ function buildChainsFromPortGroups(
   startPoints: Record<number, string> = {},
   startEdge: ChainStartEdge = 'left',
   orderedChains?: Record<number, string[]>,
-): { chains: DataChain[]; links: GridLink[] } {
+  stripWidths: number[] = [1],
+): { chains: DataChain[]; links: GridLink[]; stripWarnings: RoutingValidationWarning[] } {
   const chains: DataChain[] = []
   const links: GridLink[] = []
+  const stripWarnings: RoutingValidationWarning[] = []
+  const strips = stripWidths.length > 0 ? stripWidths : [1]
   const portNumbers = [...portGroups.keys()].sort((a, b) => a - b)
 
   for (const portNumber of portNumbers) {
-    const group = portGroups.get(portNumber) ?? []
+    let group = portGroups.get(portNumber) ?? []
+    if (group.length === 0) continue
+
+    // Тикшорет: одна линия = один стрип
+    if (strips.length > 1) {
+      const startLabel = startPoints[portNumber] ?? orderedChains?.[portNumber]?.[0]
+      const startCab = startLabel
+        ? group.find((c) => c.label === startLabel)
+        : undefined
+      const preferredStrip =
+        startCab != null
+          ? stripIndexForCol(startCab.col, strips)
+          : stripIndexForCol(group[0]!.col, strips)
+      const kept = group.filter(
+        (c) => stripIndexForCol(c.col, strips) === preferredStrip,
+      )
+      if (kept.length < group.length) {
+        stripWarnings.push({
+          type: 'data',
+          id: portNumber,
+          message: `D${portNumber}: линия не может переходить между стрипами — оставлен стрип ${preferredStrip + 1}`,
+        })
+      }
+      group = kept
+    }
+
     const orderedLabels = orderedChains?.[portNumber]
     let ordered: Cabinet[]
 
@@ -120,10 +160,10 @@ function buildChainsFromPortGroups(
       totalPixels,
       isBackup: false,
     })
-    links.push(...buildLinksForChain(ordered, portNumber, 'data'))
+    links.push(...buildLinksForChain(ordered, portNumber, 'data', strips))
   }
 
-  return { chains, links }
+  return { chains, links, stripWarnings }
 }
 
 /** Считает активные ячейки в горизонтальном отрезке одного ряда */
@@ -774,6 +814,7 @@ export function buildDataChainsFromManual(
   startEdge: ChainStartEdge = 'left',
   emptySet?: Set<string>,
   orderedChains?: Record<number, string[]>,
+  stripWidths: number[] = [1],
 ): { chains: DataChain[]; links: GridLink[]; warnings: RoutingValidationWarning[] } {
   const portGroups = new Map<number, Cabinet[]>()
 
@@ -786,13 +827,21 @@ export function buildDataChainsFromManual(
     portGroups.set(port, group)
   }
 
-  const { chains, links } = buildChainsFromPortGroups(
+  const { chains, links, stripWarnings } = buildChainsFromPortGroups(
     portGroups,
     startPoints,
     startEdge,
     orderedChains,
+    stripWidths,
   )
-  return { chains, links, warnings: validateDataChains(chains, refreshRate, pixelsPerCabinet) }
+  return {
+    chains,
+    links,
+    warnings: [
+      ...stripWarnings,
+      ...validateDataChains(chains, refreshRate, pixelsPerCabinet),
+    ],
+  }
 }
 
 /** Строит резервные цепочки (обратный порядок для каждого основного порта) */

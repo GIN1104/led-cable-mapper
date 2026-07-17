@@ -49,7 +49,7 @@ export function routingOptionsKey(
 
   const dataKey =
     manualModeData && manualOverrides
-      ? `data|${sortedRecordKey(manualOverrides.dataPorts)}|${sortedRecordKey(manualOverrides.dataStartPoints ?? {})}|${chainsKey(manualOverrides.dataPortChains)}`
+      ? `data|${sortedRecordKey(manualOverrides.dataPorts)}|${sortedRecordKey(manualOverrides.dataStartPoints ?? {})}|${chainsKey(manualOverrides.dataPortChains)}|${sortedRecordKey(manualOverrides.dataPortControllers ?? {})}`
       : 'auto-data'
 
   const powerKey =

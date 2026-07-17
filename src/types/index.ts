@@ -420,6 +420,18 @@ export interface ManualRoutingOverrides {
    */
   powerLineChains?: Record<number, string[]>
 
+  /**
+   * Ручной VX1000 (1|2) для data-порта в ручной схеме.
+   * Если не задан — определяется автоматически по стрипу кабинетов линии.
+   */
+  dataPortControllers?: Record<number, number>
+
+  /** Ручной индекс цвета палитры (0-based) для data-порта */
+  dataPortColors?: Record<number, number>
+
+  /** Ручной индекс цвета палитры (0-based) для power-линии */
+  powerLineColors?: Record<number, number>
+
 }
 
 
@@ -626,6 +638,12 @@ export const EMPTY_MANUAL_OVERRIDES: ManualRoutingOverrides = {
   dataPortChains: {},
 
   powerLineChains: {},
+
+  dataPortControllers: {},
+
+  dataPortColors: {},
+
+  powerLineColors: {},
 
 }
 

@@ -182,25 +182,21 @@ function countTrunks(
   return schedule.filter((e) => e.lineType === lineType && e.cableId.startsWith('M-')).length
 }
 
-function countDataLinkCables(schedule: CableScheduleEntry[]): number {
-  return schedule.filter(
-    (e) =>
-      (e.lineType === 'Data' || e.lineType === 'Data Backup') &&
-      (e.cableId.startsWith('L-DAT-') || e.cableId.startsWith('L-DBK-')),
-  ).length
-}
-
-function countDataTrunkAndLinkCables(schedule: CableScheduleEntry[]): number {
-  const dataTrunks = countTrunks(schedule, 'Data')
-  const backupTrunks = countTrunks(schedule, 'Data Backup')
-  const links = countDataLinkCables(schedule)
-  return dataTrunks + backupTrunks + links
-}
-
 /** Округление вверх до кратного 20 (1→20, 21→40, 40→40, 0→0) */
 export function roundUpToNext20(rawQty: number): number {
   if (rawQty <= 0) return 0
   return Math.ceil(rawQty / 20) * 20
+}
+
+/**
+ * קבל תקשורת / Тикшорет (сетевой кабель):
+ * по числу кубиков (кабинетов), округление вверх до 20;
+ * если получилось больше 60 — добавляем ещё 20.
+ */
+export function tikshoretCableQuantity(cabinetCount: number): number {
+  const rounded = roundUpToNext20(cabinetCount)
+  if (rounded > 60) return rounded + 20
+  return rounded
 }
 
 /** Сумма data-линий (портов) по экранам: dataChains.length / summary.dataPorts */
@@ -346,14 +342,45 @@ export function aggregateLedCards(screens: ScreenConfig[]): {
 
 /**
  * Количество CVT на один экран:
- * - dataPortCount > 6 → 2
- * - иначе trunkLengthM > 30 → 1
- * - иначе 0
+ * - trunkLengthM > 30 → минимум 1
+ * - без dual VX: dataPortCount > 6 → 2
+ * - с dual VX: за каждый VX с >6 линиями — ещё +1 CVT
  */
-export function resolveCvtQtyForScreen(trunkLengthM: number, dataPortCount: number): number {
+export function resolveCvtQtyForScreen(
+  trunkLengthM: number,
+  dataPortCount: number,
+  linesPerController?: number[],
+): number {
+  if (linesPerController && linesPerController.length > 0) {
+    let qty = trunkLengthM > 30 ? 1 : 0
+    for (const n of linesPerController) {
+      if (n > 6) qty += 1
+    }
+    return qty
+  }
   if (dataPortCount > 6) return 2
   if (trunkLengthM > 30) return 1
   return 0
+}
+
+/** Число data-линий на каждый VX (только при dual VX1000) */
+export function dataLinesPerController(
+  screen: ScreenConfig,
+  result: RoutingResult,
+): number[] | undefined {
+  const stripCount = screen.stripWidths?.length ?? 1
+  if (!screen.dualVx1000 || stripCount <= 1) return undefined
+
+  const counts = new Map<number, number>()
+  for (const chain of result.dataChains) {
+    if (chain.isBackup || chain.cabinets.length === 0) continue
+    const cid = chain.controllerId === 2 ? 2 : 1
+    counts.set(cid, (counts.get(cid) ?? 0) + 1)
+  }
+  if (counts.size === 0) return undefined
+  return [...counts.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, n]) => n)
 }
 
 /** MCTRL4K → CVT16, остальные контроллеры → CVT10 */
@@ -371,7 +398,12 @@ export function aggregateCvtOptical(
   const byModel = new Map<CvtModel, number>()
 
   for (const { screen, result } of results) {
-    const qty = resolveCvtQtyForScreen(screen.trunkLengthM, result.summary.dataPorts)
+    const perVx = dataLinesPerController(screen, result)
+    const qty = resolveCvtQtyForScreen(
+      screen.trunkLengthM,
+      result.summary.dataPorts,
+      perVx,
+    )
     if (qty <= 0) continue
     const model = resolveCvtModel(screen.controllerModel)
     byModel.set(model, (byModel.get(model) ?? 0) + qty)
@@ -441,8 +473,14 @@ export function resolveEquipmentAutoQuantity(
       return cvt.quantity > 0 ? cvt.quantity + 1 : undefined
     }
     case 'dataCables': {
-      const raw = countDataTrunkAndLinkCables(cableSchedule)
-      return roundUpToNext20(raw)
+      // По числу кубиков → вверх до 20; если >60 — ещё +20
+      if (results.length === 0) return undefined
+      const cabinets = results.reduce(
+        (sum, { result }) => sum + result.summary.totalCabinets,
+        0,
+      )
+      const qty = tikshoretCableQuantity(cabinets)
+      return qty > 0 ? qty : undefined
     }
     case 'commCableLong': {
       // Кол-во дата-линий × 2 + 10% (с округлением вверх)

@@ -32,13 +32,13 @@ import {
 
   cabinetLabel,
 
-  normalizeStripControllerIds,
-
   normalizeStripWidths,
 
   stripColumnRanges,
 
 } from './cabinetGrid'
+
+import { enrichDataChainsWithDualVx } from './dualVxRouting'
 
 import {
 
@@ -143,13 +143,6 @@ function buildDataChainsByStrips(
     return buildDataChains(activeCabinets, config, pixelsPerCabinet, isActive)
   }
 
-  const dual = Boolean(config.dualVx1000) && stripWidths.length > 1
-  const controllerIds = dual
-    ? normalizeStripControllerIds(config.stripControllerIds, stripWidths.length)
-    : null
-  /** Локальный номер линии внутри каждого контроллера */
-  const localCounters = new Map<number, number>()
-
   const chains: DataChain[] = []
   const links: GridLink[] = []
   let portOffset = 0
@@ -176,23 +169,9 @@ function buildDataChainsByStrips(
       pixelsPerCabinet,
       stripIsActive,
     )
-    const controllerId = controllerIds?.[stripIdx] ?? 1
     for (const chain of auto.chains) {
       const restored = restoreChainCabinets(chain, byLabel)
-      const portNumber = chain.portNumber + portOffset
-      if (dual) {
-        const localNumber = (localCounters.get(controllerId) ?? 0) + 1
-        localCounters.set(controllerId, localNumber)
-        chains.push({
-          ...restored,
-          portNumber,
-          controllerId,
-          localNumber,
-          displayId: `${controllerId}-${localNumber}`,
-        })
-      } else {
-        chains.push({ ...restored, portNumber })
-      }
+      chains.push({ ...restored, portNumber: chain.portNumber + portOffset })
     }
     for (const link of auto.links) {
       links.push({
@@ -342,6 +321,8 @@ export function computeRouting(
 
       manualOverrides.dataPortChains,
 
+      normalizeStripWidths(config.stripWidths, config.cabinetsWide),
+
     )
 
     dataChains = manual.chains
@@ -364,6 +345,14 @@ export function computeRouting(
     dataLinks = auto.links
 
   }
+
+  dataChains = enrichDataChainsWithDualVx(
+    dataChains,
+    config,
+    manualModeData && manualOverrides
+      ? manualOverrides.dataPortControllers
+      : undefined,
+  )
 
 
 
@@ -501,11 +490,11 @@ export function computeRouting(
 
       totalPixels,
 
-      dataPorts: dataChains.length,
+      dataPorts: dataChains.filter((c) => !c.isBackup && c.cabinets.length > 0).length,
 
-      backupPorts: backupResult.chains.length,
+      backupPorts: backupResult.chains.filter((c) => c.cabinets.length > 0).length,
 
-      powerLines: powerLines.length,
+      powerLines: powerLines.filter((l) => l.cabinets.length > 0).length,
 
       pixelsPerCabinet,
 

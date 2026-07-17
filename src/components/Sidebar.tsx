@@ -1028,39 +1028,6 @@ export default function Sidebar({
 
           </Field>
 
-          {canDualVx && (
-            <div
-              className={`flex items-center justify-between gap-3 rounded-lg border-2 px-3 py-2.5 ${
-                config.dualVx1000
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-blue-300 bg-blue-50/70'
-              }`}
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-900">2× VX1000</p>
-                <p className="text-[10px] text-slate-600">
-                  Два контроллера · только data D1-1 / D2-1
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={Boolean(config.dualVx1000)}
-                aria-label="2× VX1000 (Controller)"
-                onClick={() => applyDualVx1000(!config.dualVx1000)}
-                className={`relative inline-flex h-8 w-14 shrink-0 items-center rounded-full transition ${
-                  config.dualVx1000 ? 'bg-blue-600' : 'bg-slate-300'
-                }`}
-              >
-                <span
-                  className={`inline-block h-6 w-6 transform rounded-full bg-white shadow transition ${
-                    config.dualVx1000 ? 'translate-x-7' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-          )}
-
           <Field label="Signal Backup (V-Backup)">
 
             <button

@@ -27,7 +27,10 @@ export interface ActiveRoutingState {
   routingKey: string
 }
 
-/** Маршрутизация активного экрана — отложенный старт после первого paint */
+/**
+ * Маршрутизация активного экрана — отложенный старт после первого paint.
+ * Важно: пересчёт только по routingKey (цвета линий в ключ не входят → не вешают UI).
+ */
 export function useActiveRouting(
   screen: ScreenConfig,
   routing: ScreenRoutingState,
@@ -40,15 +43,15 @@ export function useActiveRouting(
   const result = useMemo(() => {
     if (!afterPaint) return null
     return computeForScreen(screen, routing)
-    // routingKey — единственный триггер для ручных overrides; routing читается из замыкания текущего рендера
-  }, [afterPaint, routingKey, screen, routing])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- только routingKey; routing/screen из того же рендера
+  }, [afterPaint, routingKey])
 
   const autoResult = useMemo(() => {
     if (!afterPaint) return null
     if (!anyManual) return result
     return computeRouting(screen)
-    // autoResult зависит только от конфигурации экрана, не от ручных правок
-  }, [afterPaint, screenKey, screen, anyManual, result])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- только screenKey / anyManual
+  }, [afterPaint, screenKey, anyManual, result])
 
   return {
     result,
@@ -74,5 +77,6 @@ export function useAllScreensRouting(
       screen,
       result: computeForScreen(screen, routingByScreen[screen.id] ?? EMPTY_SCREEN_ROUTING),
     }))
-  }, [enabled, afterPaint, screens, combinedRoutingKey, routingByScreen])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- только combinedRoutingKey
+  }, [enabled, afterPaint, combinedRoutingKey])
 }

@@ -166,6 +166,25 @@ export function stripColumnRanges(
   return ranges
 }
 
+/** Индекс полосы для колонки (0-based); при одной полосе — всегда 0 */
+export function stripIndexForCol(col: number, stripWidths: number[]): number {
+  if (stripWidths.length <= 1) return 0
+  for (const { index, startCol, endCol } of stripColumnRanges(stripWidths)) {
+    if (col >= startCol && col < endCol) return index
+  }
+  return Math.max(0, stripWidths.length - 1)
+}
+
+/** Тикшорет не переходит между полосами: одна полоса или одна и та же колонка-группа */
+export function sameStripCol(
+  colA: number,
+  colB: number,
+  stripWidths: number[],
+): boolean {
+  if (stripWidths.length <= 1) return true
+  return stripIndexForCol(colA, stripWidths) === stripIndexForCol(colB, stripWidths)
+}
+
 /**
  * Назначение стрипов на VX1000: края → 1, центр → 2.
  * Пример: 3 полосы → [1, 2, 1]; 2 полосы → [1, 2].

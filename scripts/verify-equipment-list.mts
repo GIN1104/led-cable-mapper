@@ -15,6 +15,7 @@ import {
   resolveEquipmentAutoQuantity,
   resolveEquipmentScreenResults,
   roundUpToNext20,
+  tikshoretCableQuantity,
 } from '../src/lib/equipmentList.ts'
 
 function makeConfig(
@@ -240,6 +241,10 @@ assertEq('CVT qty trunk15 ports4', resolveCvtQtyForScreen(15, 4), 0)
 assertEq('CVT qty trunk50 ports4', resolveCvtQtyForScreen(50, 4), 1)
 assertEq('CVT qty trunk15 ports8', resolveCvtQtyForScreen(15, 8), 2)
 assertEq('CVT qty trunk50 ports8', resolveCvtQtyForScreen(50, 8), 2)
+assertEq('CVT dual VX1=7 VX2=3 trunk15 → +1', resolveCvtQtyForScreen(15, 10, [7, 3]), 1)
+assertEq('CVT dual VX1=7 VX2=3 trunk50 → 2', resolveCvtQtyForScreen(50, 10, [7, 3]), 2)
+assertEq('CVT dual VX1=5 VX2=5 trunk50 → 1', resolveCvtQtyForScreen(50, 10, [5, 5]), 1)
+assertEq('CVT dual VX1=7 VX2=8 trunk50 → 3', resolveCvtQtyForScreen(50, 15, [7, 8]), 3)
 assertEq('CVT model VX1000', resolveCvtModel('NovaStar VX1000'), 'CVT10')
 assertEq('CVT model MCTRL4K', resolveCvtModel('NovaStar MCTRL4K'), 'CVT16')
 
@@ -455,24 +460,23 @@ assertEq('order: hangers before rigging', hangersIdx === spraysIdx + 1 ? 1 : 0, 
 assertEq('order: rigging after hangers', hangersIdx + 1 === riggingIdx ? 1 : 0, 1)
 assertEq('order: hang gear before computer', hangersIdx < computerIdx ? 1 : 0, 1)
 
-// --- Тикшорет: округление вверх до 20; Тикшорет Длинный = ceil(dataPorts×2×1.1) ---
-console.log('\n=== Tikshoret rounding + long row ===')
+// --- Тикшорет: по кубикам, вверх до 20; если >60 — ещё +20; Длинный = ceil(dataPorts×2×1.1) ---
+console.log('\n=== Tikshoret by cabinets + long row ===')
 assertEq('roundUp 0 → 0', roundUpToNext20(0), 0)
 assertEq('roundUp 1 → 20', roundUpToNext20(1), 20)
 assertEq('roundUp 20 → 20', roundUpToNext20(20), 20)
 assertEq('roundUp 21 → 40', roundUpToNext20(21), 40)
 assertEq('roundUp 40 → 40', roundUpToNext20(40), 40)
+assertEq('tikshoret 15 → 20', tikshoretCableQuantity(15), 20)
+assertEq('tikshoret 40 → 40', tikshoretCableQuantity(40), 40)
+assertEq('tikshoret 60 → 60', tikshoretCableQuantity(60), 60)
+assertEq('tikshoret 61 → 100', tikshoretCableQuantity(61), 100)
+assertEq('tikshoret 80 → 100', tikshoretCableQuantity(80), 100)
 
-const rawDataCables = result10x3.cableSchedule.filter(
-  (e) =>
-    (e.lineType === 'Data' || e.lineType === 'Data Backup') &&
-    (e.cableId.startsWith('M-') ||
-      e.cableId.startsWith('L-DAT-') ||
-      e.cableId.startsWith('L-DBK-')),
-).length
-const expectedTikshoret = roundUpToNext20(rawDataCables)
+const cabinets10x3 = result10x3.summary.totalCabinets
+const expectedTikshoret = tikshoretCableQuantity(cabinets10x3)
 assertEq(
-  'dataCables rounded to 20',
+  'dataCables from cabinet count',
   resolveEquipmentAutoQuantity(
     'dataCables',
     [screen10x3],
@@ -481,7 +485,7 @@ assertEq(
   ),
   expectedTikshoret,
 )
-assertEq('comm-cable row rounded', qtyById(state10x3, 'comm-cable'), expectedTikshoret)
+assertEq('comm-cable row from cabinets', qtyById(state10x3, 'comm-cable'), expectedTikshoret)
 
 const expectedLong = Math.ceil(result10x3.summary.dataPorts * 2 * 1.1)
 assertEq(

@@ -7,7 +7,13 @@ import {
 } from './types'
 import { buildAutoManualOverrides } from './lib/routingEngine'
 import { buildCombinedPackingList } from './lib/packingList'
-import { syncCabinetGridFromMeters, calcPixelsPerCabinet } from './lib/cabinetGrid'
+import { syncCabinetGridFromMeters, calcPixelsPerCabinet, normalizeStripWidths, sameStripCol } from './lib/cabinetGrid'
+import {
+  remapDataPortControllers,
+  colFromCabinetLabel,
+  inferControllerFromLabel,
+} from './lib/dualVxRouting'
+import { remapLineColorOverrides } from './lib/lineColorAssignment'
 import {
   appendLabelToChain,
   clearChain,
@@ -144,6 +150,23 @@ export default function App() {
     }
     return { totalCabinets, totalPixels, totalEmpty, screenCount: screens.length }
   }, [allScreenResults, screens.length])
+
+  /** Сводка по каждому экрану: имя, резолюция, линии data/power */
+  const screenSummaries = useMemo(() => {
+    if (screens.length <= 1) return []
+    return allScreenResults.map(({ screen, result: r }) => {
+      const { pixelsWide, pixelsHigh } = calcPixelsPerCabinet(screen)
+      const resW = screen.cabinetsWide * pixelsWide
+      const resH = screen.cabinetsHigh * pixelsHigh
+      return {
+        id: screen.id,
+        name: screen.name,
+        resolution: `${resW.toLocaleString()}×${resH.toLocaleString()} px`,
+        dataLines: r.summary.dataPorts,
+        powerLines: r.summary.powerLines,
+      }
+    })
+  }, [screens.length, allScreenResults])
 
   const combinedPackingList = useMemo(
     () =>
@@ -308,6 +331,9 @@ export default function App() {
           [...v],
         ]),
       ),
+      dataPortControllers: { ...(state.manualOverrides.dataPortControllers ?? {}) },
+      dataPortColors: { ...(state.manualOverrides.dataPortColors ?? {}) },
+      powerLineColors: { ...(state.manualOverrides.powerLineColors ?? {}) },
     },
   })
 
@@ -382,19 +408,54 @@ export default function App() {
 
   const handleDataAssignment = useCallback(
     (labels: string[], portNumber: number) => {
-      const emptySet = new Set(
-        screens.find((s) => s.id === activeScreen.id)?.emptyCabinets ?? [],
-      )
-      const painted = labels.filter((label) => !emptySet.has(label))
+      const screen = screens.find((s) => s.id === activeScreen.id) ?? activeScreen
+      const emptySet = new Set(screen.emptyCabinets ?? [])
+      const stripWidths = normalizeStripWidths(screen.stripWidths, screen.cabinetsWide)
+      let painted = labels.filter((label) => !emptySet.has(label))
       if (painted.length === 0) return
+
+      // Тикшорет: линия не переходит со стрипа на стрип
+      if (stripWidths.length > 1) {
+        const existing = manualOverrides.dataPortChains?.[portNumber] ?? []
+        const anchorLabel = existing[0] ?? painted[0]!
+        const anchorCol = colFromCabinetLabel(anchorLabel)
+        if (anchorCol != null) {
+          painted = painted.filter((label) => {
+            const col = colFromCabinetLabel(label)
+            return col != null && sameStripCol(anchorCol, col, stripWidths)
+          })
+        }
+      }
+      if (painted.length === 0) return
+
+      const paintedLabels = painted
 
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         let dataPorts = { ...current.manualOverrides.dataPorts }
         let dataPortChains = { ...(current.manualOverrides.dataPortChains ?? {}) }
         let dataStartPoints = { ...(current.manualOverrides.dataStartPoints ?? {}) }
+        let dataPortControllers = {
+          ...(current.manualOverrides.dataPortControllers ?? {}),
+        }
+
+        // Доп. фильтр на актуальном состоянии (на случай гонки)
+        let toPaint = paintedLabels
+        if (stripWidths.length > 1) {
+          const existing = dataPortChains[portNumber] ?? []
+          const anchorLabel = existing[0] ?? toPaint[0]!
+          const anchorCol = colFromCabinetLabel(anchorLabel)
+          if (anchorCol != null) {
+            toPaint = toPaint.filter((label) => {
+              const col = colFromCabinetLabel(label)
+              return col != null && sameStripCol(anchorCol, col, stripWidths)
+            })
+          }
+        }
+        if (toPaint.length === 0) return prev
+
         // START не двигаем при Paint — только через Set Start
-        for (const label of painted) {
+        for (const label of toPaint) {
           for (const [port, start] of Object.entries(dataStartPoints)) {
             if (start === label && Number(port) !== portNumber) {
               delete dataStartPoints[Number(port)]
@@ -410,6 +471,13 @@ export default function App() {
         } else if (chain[0]) {
           dataStartPoints[portNumber] = chain[0]
         }
+
+        // Dual VX: контроллер по стрипу первого кабинета линии
+        if (screen.dualVx1000 && stripWidths.length > 1 && chain[0]) {
+          const cid = inferControllerFromLabel(chain[0], screen)
+          if (cid === 1 || cid === 2) dataPortControllers[portNumber] = cid
+        }
+
         return {
           ...prev,
           [activeScreen.id]: {
@@ -420,6 +488,7 @@ export default function App() {
               dataPorts,
               dataPortChains,
               dataStartPoints,
+              dataPortControllers,
             },
           },
         }
@@ -428,11 +497,82 @@ export default function App() {
         ...u,
         [activeScreen.id]: [
           ...(u[activeScreen.id] ?? []),
-          ...painted.map((label) => ({ label, value: portNumber })),
+          ...paintedLabels.map((label) => ({ label, value: portNumber })),
         ],
       }))
     },
-    [activeScreen.id, screens],
+    [activeScreen, screens, manualOverrides.dataPortChains],
+  )
+
+  const handleSetDataPortController = useCallback(
+    (portNumber: number, controllerId: 1 | 2) => {
+      setRoutingByScreen((prev) => {
+        const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        return {
+          ...prev,
+          [activeScreen.id]: {
+            ...current,
+            manualModeData: true,
+            manualOverrides: {
+              ...current.manualOverrides,
+              dataPortControllers: {
+                ...(current.manualOverrides.dataPortControllers ?? {}),
+                [portNumber]: controllerId,
+              },
+            },
+          },
+        }
+      })
+    },
+    [activeScreen.id],
+  )
+
+  const handleSetDataLineColor = useCallback(
+    (portNumber: number, colorIndex: number) => {
+      setRoutingByScreen((prev) => {
+        const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        const prevColor = current.manualOverrides.dataPortColors?.[portNumber]
+        if (prevColor === colorIndex) return prev
+        return {
+          ...prev,
+          [activeScreen.id]: {
+            ...current,
+            manualOverrides: {
+              ...current.manualOverrides,
+              dataPortColors: {
+                ...(current.manualOverrides.dataPortColors ?? {}),
+                [portNumber]: colorIndex,
+              },
+            },
+          },
+        }
+      })
+    },
+    [activeScreen.id],
+  )
+
+  const handleSetPowerLineColor = useCallback(
+    (lineNumber: number, colorIndex: number) => {
+      setRoutingByScreen((prev) => {
+        const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+        const prevColor = current.manualOverrides.powerLineColors?.[lineNumber]
+        if (prevColor === colorIndex) return prev
+        return {
+          ...prev,
+          [activeScreen.id]: {
+            ...current,
+            manualOverrides: {
+              ...current.manualOverrides,
+              powerLineColors: {
+                ...(current.manualOverrides.powerLineColors ?? {}),
+                [lineNumber]: colorIndex,
+              },
+            },
+          },
+        }
+      })
+    },
+    [activeScreen.id],
   )
 
   const handlePowerAssignment = useCallback(
@@ -492,15 +632,38 @@ export default function App() {
 
   const handleDataStartPoint = useCallback(
     (portNumber: number, label: string) => {
+      const screen = screens.find((s) => s.id === activeScreen.id) ?? activeScreen
+      const stripWidths = normalizeStripWidths(screen.stripWidths, screen.cabinetsWide)
+      const startCol = colFromCabinetLabel(label)
+
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
-        const dataPorts = { ...current.manualOverrides.dataPorts, [label]: portNumber }
-        const dataPortChains = moveLabelToChainFront(
+        let dataPorts = { ...current.manualOverrides.dataPorts, [label]: portNumber }
+        let dataPortChains = moveLabelToChainFront(
           { ...(current.manualOverrides.dataPortChains ?? {}) },
           label,
           portNumber,
         )
         const dataStartPoints = { ...(current.manualOverrides.dataStartPoints ?? {}) }
+        let dataPortControllers = {
+          ...(current.manualOverrides.dataPortControllers ?? {}),
+        }
+
+        // Старт на другом стрипе — оставляем в линии только кабинеты этого стрипа
+        if (stripWidths.length > 1 && startCol != null) {
+          const chain = dataPortChains[portNumber] ?? [label]
+          const kept = chain.filter((lab) => {
+            if (lab === label) return true
+            const col = colFromCabinetLabel(lab)
+            return col != null && sameStripCol(startCol, col, stripWidths)
+          })
+          const dropped = new Set(chain.filter((lab) => !kept.includes(lab)))
+          for (const lab of dropped) {
+            if (dataPorts[lab] === portNumber) delete dataPorts[lab]
+          }
+          dataPortChains = { ...dataPortChains, [portNumber]: kept }
+        }
+
         for (const [port, start] of Object.entries(dataStartPoints)) {
           if (start === label && Number(port) !== portNumber) {
             const first = dataPortChains[Number(port)]?.[0]
@@ -509,6 +672,12 @@ export default function App() {
           }
         }
         dataStartPoints[portNumber] = label
+
+        if (screen.dualVx1000 && stripWidths.length > 1) {
+          const cid = inferControllerFromLabel(label, screen)
+          if (cid === 1 || cid === 2) dataPortControllers[portNumber] = cid
+        }
+
         return {
           ...prev,
           [activeScreen.id]: {
@@ -519,12 +688,13 @@ export default function App() {
               dataPorts,
               dataPortChains,
               dataStartPoints,
+              dataPortControllers,
             },
           },
         }
       })
     },
-    [activeScreen.id],
+    [activeScreen, screens],
   )
 
   const removeCabinetFromData = useCallback(
@@ -673,6 +843,8 @@ export default function App() {
             dataPorts: {},
             dataStartPoints: {},
             dataPortChains: {},
+            dataPortControllers: {},
+            dataPortColors: {},
           },
         },
       }
@@ -693,6 +865,7 @@ export default function App() {
             powerLines: {},
             powerStartPoints: {},
             powerLineChains: {},
+            powerLineColors: {},
           },
         },
       }
@@ -882,6 +1055,18 @@ export default function App() {
               dataPortChains: result.chains,
               dataStartPoints: result.startPoints,
               dataPorts: result.assignments,
+              dataPortControllers: remapDataPortControllers(
+                current.manualOverrides.dataPortControllers,
+                from,
+                to,
+                swapped,
+              ),
+              dataPortColors: remapLineColorOverrides(
+                current.manualOverrides.dataPortColors,
+                from,
+                to,
+                swapped,
+              ),
             },
           },
         }
@@ -920,6 +1105,12 @@ export default function App() {
               powerLineChains: result.chains,
               powerStartPoints: result.startPoints,
               powerLines: result.assignments,
+              powerLineColors: remapLineColorOverrides(
+                current.manualOverrides.powerLineColors,
+                from,
+                to,
+                swapped,
+              ),
             },
           },
         }
@@ -1130,43 +1321,58 @@ export default function App() {
                 {activeScreen.name} — {config.wallWidthM}×{config.wallHeightM} m (
                 {config.cabinetsWide}×{config.cabinetsHigh} cabs) · {config.controllerModel}
               </h2>
-              <p className="mt-0.5 text-xs leading-relaxed text-slate-500 sm:mt-0">
-                {showInitialSpinner ? (
-                  <span className="text-slate-400">Расчёт маршрутизации…</span>
-                ) : (
-                  <>
-                    Screen{' '}
-                    <strong className="font-semibold text-slate-700">
-                      {result!.summary.totalPixels.toLocaleString()} px
-                    </strong>
+              {showInitialSpinner ? (
+                <p className="mt-2 text-xs text-slate-400">Расчёт маршрутизации…</p>
+              ) : (
+                result && (
+                  <div className="mt-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold tabular-nums text-slate-800 sm:text-sm">
+                    <span className="text-slate-900">
+                      {screenPixelsWide.toLocaleString()}×{screenPixelsHigh.toLocaleString()} px
+                    </span>
                     {' · '}
-                    {result!.summary.dataPorts}{' '}
-                    data port{result!.summary.dataPorts !== 1 ? 's' : ''} ·{' '}
-                    {result!.summary.powerLines} power line
-                    {result!.summary.powerLines !== 1 ? 's' : ''}
-                    {result!.summary.emptyCabinets > 0 && (
-                      <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 font-medium text-slate-700">
-                        {result!.summary.emptyCabinets} empty
+                    {result.summary.dataPorts} линий тикшорет ·{' '}
+                    {result.summary.powerLines} линий электричества
+                    {result.summary.emptyCabinets > 0 && (
+                      <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 sm:text-xs">
+                        {result.summary.emptyCabinets} empty
                       </span>
                     )}
-                  </>
-                )}
+                  </div>
+                )
+              )}
+              <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
                 {manualModeData && (
-                  <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
+                  <span className="mr-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
                     Manual Data
                   </span>
                 )}
                 {manualModePower && (
-                  <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
+                  <span className="mr-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
                     Manual Power
                   </span>
                 )}
                 {screens.length > 1 && (
-                  <span className="ml-2 text-slate-400">
-                    · {globalTotals.totalCabinets} cabinets all screens
+                  <span className="text-slate-400">
+                    {globalTotals.totalCabinets} cabinets all screens
                   </span>
                 )}
               </p>
+              {!showInitialSpinner && screenSummaries.length > 0 && (
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {screenSummaries.map((s) => (
+                    <span
+                      key={s.id}
+                      className={`rounded-md border px-2.5 py-1 text-[10px] font-semibold tabular-nums sm:text-xs ${
+                        s.id === activeScreenId
+                          ? 'border-blue-200 bg-blue-50 text-blue-950'
+                          : 'border-slate-200 bg-white text-slate-700'
+                      }`}
+                    >
+                      {s.name}: {s.resolution} · {s.dataLines} data · {s.powerLines} power
+                    </span>
+                  ))}
+                </div>
+              )}
               </div>
             </div>
             <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
@@ -1304,8 +1510,15 @@ export default function App() {
                   pitchPreset={config.pitchPreset}
                   stripWidths={config.stripWidths}
                   dualVx1000={config.dualVx1000}
+                  stripControllerIds={config.stripControllerIds}
+                  dataPortControllers={manualOverrides.dataPortControllers}
+                  onSetDataPortController={handleSetDataPortController}
+                  lineColorOverrides={manualOverrides.dataPortColors}
+                  onSetLineColor={handleSetDataLineColor}
                   screenPixelsWide={screenPixelsWide}
                   screenPixelsHigh={screenPixelsHigh}
+                  cabinetWidthMm={config.cabinetWidthMm}
+                  cabinetHeightMm={config.cabinetHeightMm}
                   manualMode={manualModeData}
                   onManualModeChange={handleManualModeDataChange}
                   emptyCabinets={activeScreen.emptyCabinets}
@@ -1346,6 +1559,8 @@ export default function App() {
                   dualVx1000={config.dualVx1000}
                   screenPixelsWide={screenPixelsWide}
                   screenPixelsHigh={screenPixelsHigh}
+                  cabinetWidthMm={config.cabinetWidthMm}
+                  cabinetHeightMm={config.cabinetHeightMm}
                   manualMode={manualModePower}
                   onManualModeChange={handleManualModePowerChange}
                   emptyCabinets={activeScreen.emptyCabinets}
@@ -1363,6 +1578,8 @@ export default function App() {
                   onClearActiveLine={handleClearActivePowerLine}
                   onRenumberActiveLine={handleRenumberActivePowerLine}
                   canUndo={(powerPaintUndo[activeScreen.id] ?? []).length > 0}
+                  lineColorOverrides={manualOverrides.powerLineColors}
+                  onSetLineColor={handleSetPowerLineColor}
                   maxAssignable={Math.max(
                     result!.summary.powerLines,
                     autoResult?.summary.powerLines ?? result!.summary.powerLines,

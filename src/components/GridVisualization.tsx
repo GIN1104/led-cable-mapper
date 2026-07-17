@@ -10,6 +10,7 @@ import type {
 import {
   edgeToDirection,
   normalizeStripWidths,
+  sameStripCol,
   stripColumnRanges,
   stripGapsBeforeCol,
 } from '../lib/cabinetGrid'
@@ -27,10 +28,14 @@ import { CUSTOM_PRESET_LABEL, getPitchPreset } from '../lib/pitchPresets'
 import { getPowerTrunkCabinet, inferPowerLineStart } from '../lib/powerRouting'
 import {
   backupLineColor,
-  dataLineColor,
-  powerLineColor,
+  type LineColorMode,
 } from '../lib/lineColors'
-import { maxRenumberLine } from '../lib/manualChains'
+import {
+  computeLineColorMap,
+  lineColorFromMap,
+  paletteSwatches,
+} from '../lib/lineColorAssignment'
+import { nextDualVxLocalNumber, previewDualVxLineLabels } from '../lib/dualVxRouting'
 
 export type GridVisualizationMode = 'data' | 'power'
 export type ManualEditMode = 'assign' | 'start' | 'empty'
@@ -78,13 +83,56 @@ interface GridVisualizationProps {
   stripWidths?: number[]
   /** Два VX1000 — подсказки UI / лейблы D1-1 */
   dualVx1000?: boolean
+  /** Назначение стрипов на VX (1|2) — для будущих подсказок */
+  stripControllerIds?: number[]
+  /** Ручной VX для data-порта в manual mode */
+  dataPortControllers?: Record<number, number>
+  onSetDataPortController?: (port: number, controllerId: 1 | 2) => void
+  /** Ручные индексы цвета палитры (0-based) для линий */
+  lineColorOverrides?: Record<number, number>
+  onSetLineColor?: (lineId: number, colorIndex: number) => void
   /** Разрешение экрана в пикселях (W×H) */
   screenPixelsWide?: number
   screenPixelsHigh?: number
+  /** Физический размер кабинета — для пропорций ячеек на схеме */
+  cabinetWidthMm?: number
+  cabinetHeightMm?: number
 }
 
-const DESKTOP_CELL = { w: 88, h: 64, gap: 12, pad: 40, stripGap: 32 }
-const MOBILE_CELL = { w: 56, h: 44, gap: 6, pad: 24, stripGap: 18 }
+const DESKTOP_CELL_BASE = { w: 88, h: 64, gap: 12, pad: 40, stripGap: 32 }
+const MOBILE_CELL_BASE = { w: 56, h: 44, gap: 6, pad: 24, stripGap: 18 }
+
+/** Размер ячейки сетки с сохранением пропорций кабинета (мм) */
+function cellMetricsForCabinet(
+  cabinetWidthMm: number,
+  cabinetHeightMm: number,
+  isMobile: boolean,
+): { w: number; h: number; gap: number; pad: number; stripGap: number } {
+  const base = isMobile ? MOBILE_CELL_BASE : DESKTOP_CELL_BASE
+  const minW = isMobile ? 28 : 40
+  const minH = isMobile ? 22 : 32
+
+  const cw = Math.max(100, cabinetWidthMm)
+  const ch = Math.max(100, cabinetHeightMm)
+  const aspect = cw / ch
+  const baseAspect = base.w / base.h
+
+  let w: number
+  let h: number
+  if (aspect >= baseAspect) {
+    w = base.w
+    h = base.w / aspect
+  } else {
+    h = base.h
+    w = base.h * aspect
+  }
+
+  const scaleUp = Math.max(minW / w, minH / h, 1)
+  w = Math.round(w * scaleUp)
+  h = Math.round(h * scaleUp)
+
+  return { w, h, gap: base.gap, pad: base.pad, stripGap: base.stripGap }
+}
 
 const ZOOM_MIN = 0.5
 const ZOOM_MAX = 3
@@ -341,7 +389,7 @@ export default memo(function GridVisualization({
   onUndoCabinet,
   onReverseActiveLine,
   onClearActiveLine,
-  onRenumberActiveLine,
+  onRenumberActiveLine: _onRenumberActiveLine,
   canUndo = false,
   maxAssignable = 1,
   chainStartEdge = 'left',
@@ -349,8 +397,14 @@ export default memo(function GridVisualization({
   powerFeedMode = 'edge',
   stripWidths: stripWidthsProp,
   dualVx1000 = false,
+  dataPortControllers,
+  onSetDataPortController,
+  lineColorOverrides,
+  onSetLineColor,
   screenPixelsWide = 0,
   screenPixelsHigh = 0,
+  cabinetWidthMm = 500,
+  cabinetHeightMm = 500,
 }: GridVisualizationProps) {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
@@ -365,9 +419,10 @@ export default memo(function GridVisualization({
     return () => mq.removeEventListener('change', onChange)
   }, [])
 
-  const { w: CELL_W, h: CELL_H, gap: GAP, pad: PAD, stripGap: STRIP_GAP } = isMobile
-    ? MOBILE_CELL
-    : DESKTOP_CELL
+  const { w: CELL_W, h: CELL_H, gap: GAP, pad: PAD, stripGap: STRIP_GAP } = useMemo(
+    () => cellMetricsForCabinet(cabinetWidthMm, cabinetHeightMm, isMobile),
+    [cabinetWidthMm, cabinetHeightMm, isMobile],
+  )
   const stripWidths = useMemo(
     () => normalizeStripWidths(stripWidthsProp, wide),
     [stripWidthsProp, wide],
@@ -384,6 +439,8 @@ export default memo(function GridVisualization({
   )
   const editBtnClass =
     'touch-manipulation min-h-[44px] rounded-md px-3 py-2 text-xs font-semibold transition active:scale-[0.98] sm:min-h-[36px] sm:px-2.5 sm:py-1'
+  const manualBtnClass =
+    'touch-manipulation shrink-0 rounded px-2 py-1 text-[11px] font-semibold whitespace-nowrap transition active:scale-[0.98]'
   const legendBtnClass =
     'touch-manipulation flex min-h-[40px] items-center gap-1.5 rounded-md px-2.5 py-1.5 transition active:scale-[0.98] sm:min-h-0 sm:px-1 sm:py-0.5'
   const zoomBtnClass =
@@ -409,6 +466,15 @@ export default memo(function GridVisualization({
 
   const sequenceStepMap = useMemo(() => {
     const map = new Map<string, number>()
+    // В ручном режиме — порядок кликов / цепочки
+    if (manualMode) {
+      for (const [numStr, labels] of Object.entries(chainOrder)) {
+        const list = labels ?? (chainOrder as Record<string, string[]>)[String(numStr)]
+        if (!list?.length) continue
+        list.forEach((label, idx) => map.set(label, idx + 1))
+      }
+      if (map.size > 0) return map
+    }
     if (isData) {
       for (const chain of dataChains) {
         if (chain.isBackup) continue
@@ -420,7 +486,7 @@ export default memo(function GridVisualization({
       }
     }
     return map
-  }, [isData, dataChains, powerLines])
+  }, [manualMode, chainOrder, isData, dataChains, powerLines])
 
   const title = isData
     ? 'Data Ports / Тикшорет / תקשורת'
@@ -437,27 +503,193 @@ export default memo(function GridVisualization({
     return map
   }, [isData, dataChains])
 
+  const dualVxPreviewLabels = useMemo(() => {
+    if (!isData || !dualVx1000 || stripWidths.length <= 1 || !manualMode) {
+      return new Map<number, string>()
+    }
+    return previewDualVxLineLabels(dataChains, dataPortControllers, prefix)
+  }, [
+    isData,
+    dualVx1000,
+    stripWidths.length,
+    manualMode,
+    dataChains,
+    dataPortControllers,
+    prefix,
+  ])
+
   const formatLineId = useCallback(
     (n: number) => {
+      const preview = dualVxPreviewLabels.get(n)
+      if (preview) return preview
       const display = displayIdByNumber.get(n)
       return display ? `${prefix}${display}` : `${prefix}${n}`
     },
-    [displayIdByNumber, prefix],
+    [displayIdByNumber, dualVxPreviewLabels, prefix],
   )
 
-  const dataLineCount =
-    summary.dataPorts > 0
-      ? summary.dataPorts
-      : dataChains.filter((c) => !c.isBackup).length
-  const powerLineCount =
-    summary.powerLines > 0 ? summary.powerLines : powerLines.length
+  /** Показывать номер VX в ID кубика (только data + 2× VX1000 + ≥2 стрипа) */
+  const showVxInCabinetId =
+    isData && Boolean(dualVx1000) && stripWidths.length > 1
+
+  /**
+   * Номер кубика: [VX-]линия-позиция
+   * Пример dual: 1-2-5 · без VX: 2-5 · power: 3-1
+   */
+  const cabinetIdMap = useMemo(() => {
+    const map = new Map<string, string>()
+
+    const lineKeyForDataPort = (port: number): string => {
+      if (showVxInCabinetId) {
+        const preview = dualVxPreviewLabels.get(port)
+        if (preview) {
+          // «D1-2» → «1-2»
+          return preview.replace(/^[DP]/i, '')
+        }
+        const chain = dataChains.find(
+          (c) => c.portNumber === port && !c.isBackup,
+        )
+        if (chain?.displayId) {
+          return chain.displayId.replace(/b$/i, '')
+        }
+        if (
+          (chain?.controllerId === 1 || chain?.controllerId === 2) &&
+          chain.localNumber != null
+        ) {
+          return `${chain.controllerId}-${chain.localNumber}`
+        }
+      }
+      return String(port)
+    }
+
+    if (isData) {
+      for (const chain of dataChains) {
+        if (chain.isBackup) continue
+        const lineKey = lineKeyForDataPort(chain.portNumber)
+        chain.cabinets.forEach((cab, idx) => {
+          const step = sequenceStepMap.get(cab.label) ?? idx + 1
+          map.set(cab.label, `${lineKey}-${step}`)
+        })
+      }
+      if (manualMode) {
+        for (const [label, port] of Object.entries(manualAssignments)) {
+          if (map.has(label) || port < 1) continue
+          const step = sequenceStepMap.get(label)
+          if (step == null) continue
+          map.set(label, `${lineKeyForDataPort(port)}-${step}`)
+        }
+      }
+    } else {
+      for (const line of powerLines) {
+        line.cabinets.forEach((cab, idx) => {
+          const step = sequenceStepMap.get(cab.label) ?? idx + 1
+          map.set(cab.label, `${line.lineNumber}-${step}`)
+        })
+      }
+      if (manualMode) {
+        for (const [label, lineNum] of Object.entries(manualAssignments)) {
+          if (map.has(label) || lineNum < 1) continue
+          const step = sequenceStepMap.get(label)
+          if (step == null) continue
+          map.set(label, `${lineNum}-${step}`)
+        }
+      }
+    }
+    return map
+  }, [
+    isData,
+    showVxInCabinetId,
+    dualVxPreviewLabels,
+    dataChains,
+    powerLines,
+    sequenceStepMap,
+    manualMode,
+    manualAssignments,
+  ])
+
+  /** Только линии с кабинетами — не пустые слоты и не backup */
+  const dataLineCount = useMemo(() => {
+    const used = dataChains.filter((c) => !c.isBackup && c.cabinets.length > 0).length
+    return used > 0 ? used : Math.max(0, summary.dataPorts)
+  }, [dataChains, summary.dataPorts])
+  const powerLineCount = useMemo(() => {
+    const used = powerLines.filter((l) => l.cabinets.length > 0).length
+    return used > 0 ? used : Math.max(0, summary.powerLines)
+  }, [powerLines, summary.powerLines])
+  const backupLineCount = useMemo(() => {
+    const used = backupChains.filter((c) => c.cabinets.length > 0).length
+    return used > 0 ? used : Math.max(0, summary.backupPorts)
+  }, [backupChains, summary.backupPorts])
   const resolutionLabel =
     screenPixelsWide > 0 && screenPixelsHigh > 0
-      ? `${screenPixelsWide}×${screenPixelsHigh}`
+      ? `${screenPixelsWide.toLocaleString()}×${screenPixelsHigh.toLocaleString()} px`
       : null
-  const headerStats = resolutionLabel
-    ? `Data: ${dataLineCount} линий · ${resolutionLabel} · Power: ${powerLineCount} линий`
-    : `Data: ${dataLineCount} линий · Power: ${powerLineCount} линий`
+
+  /** При 2× VX1000 — линии и нумерация по каждому контроллеру */
+  const dualVxBreakdown = useMemo(() => {
+    if (!isData || !dualVx1000) return null
+
+    const byController = new Map<number, { main: string[]; backup: string[] }>()
+    const ensure = (id: number) => {
+      if (!byController.has(id)) byController.set(id, { main: [], backup: [] })
+      return byController.get(id)!
+    }
+
+    for (const chain of dataChains) {
+      if (chain.isBackup || chain.cabinets.length === 0) continue
+      const cid = chain.controllerId ?? 1
+      const id = chain.displayId ?? String(chain.portNumber)
+      ensure(cid).main.push(`D${id}`)
+    }
+
+    for (const chain of backupChains) {
+      if (chain.cabinets.length === 0) continue
+      const cid = chain.controllerId ?? 1
+      const id = chain.displayId ?? String(chain.portNumber)
+      ensure(cid).backup.push(`D${id}`)
+    }
+
+    if (byController.size === 0) return null
+
+    return [...byController.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([controllerId, { main, backup }]) => ({
+        controllerId,
+        mainLabels: main,
+        backupLabels: backup,
+      }))
+  }, [isData, dualVx1000, dataChains, backupChains])
+
+  const headerStats = useMemo(() => {
+    if (isData && dualVxBreakdown) return null
+
+    const parts: string[] = []
+    if (screenName.trim()) parts.push(screenName.trim())
+    if (isData && resolutionLabel) parts.push(resolutionLabel)
+    if (isData) {
+      parts.push(`${dataLineCount} линий тикшорет`)
+      if (backupLineCount > 0) parts.push(`${backupLineCount} backup`)
+    } else {
+      parts.push(`${powerLineCount} линий электричества`)
+    }
+    return parts.join(' · ')
+  }, [
+    screenName,
+    resolutionLabel,
+    isData,
+    dualVxBreakdown,
+    dataLineCount,
+    backupLineCount,
+    powerLineCount,
+  ])
+
+  const headerBaseLine = useMemo(() => {
+    if (!isData || !dualVxBreakdown) return null
+    const parts: string[] = []
+    if (screenName.trim()) parts.push(screenName.trim())
+    if (resolutionLabel) parts.push(resolutionLabel)
+    return parts.length > 0 ? parts.join(' · ') : null
+  }, [isData, dualVxBreakdown, screenName, resolutionLabel])
 
   const pitchLabel = useMemo(() => {
     if (pitchPreset === 'custom') return CUSTOM_PRESET_LABEL
@@ -465,9 +697,6 @@ export default memo(function GridVisualization({
   }, [pitchPreset])
 
   const printInfo = useMemo((): PanelPrintInfo => {
-    const backupLineCount =
-      summary.backupPorts > 0 ? summary.backupPorts : backupChains.length
-
     return {
       screenName,
       wallWidthM,
@@ -500,6 +729,7 @@ export default memo(function GridVisualization({
     refreshRate,
     lineDirection,
     summary.backupPorts,
+    backupLineCount,
     dataLineCount,
     powerLineCount,
     backupChains,
@@ -507,45 +737,64 @@ export default memo(function GridVisualization({
 
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set())
   const [activeValue, setActiveValue] = useState(1)
-  const [lineNumberInput, setLineNumberInput] = useState('1')
   const [editMode, setEditMode] = useState<ManualEditMode>('assign')
   /** Продолжать активную линию стрелками ←↑↓→ от последнего кабинета */
   const [arrowContinue, setArrowContinue] = useState(true)
-  /** Чтобы Enter не вызывал apply дважды (keydown + blur) */
-  const skipRenumberBlurRef = useRef(false)
+  /** Контекст VX1/VX2 для выбора и создания линий D1-x / D2-x */
+  const [manualVxContext, setManualVxContext] = useState<1 | 2>(1)
+  const manualKeyboardRef = useRef<HTMLDivElement>(null)
 
-  const maxLineNumber = useMemo(
-    () => maxRenumberLine(chainOrder, maxAssignable),
-    [chainOrder, maxAssignable],
+  const getChainForPort = useCallback(
+    (port: number) => {
+      const direct = chainOrder[port]
+      if (direct) return direct
+      const asString = (chainOrder as Record<string, string[]>)[String(port)]
+      return asString ?? []
+    },
+    [chainOrder],
   )
+
+  const canDualVxManual =
+    isData && dualVx1000 && stripWidths.length > 1 && manualMode
+
+  const activePortController = useMemo(() => {
+    if (!canDualVxManual) return 1 as const
+    const manual = dataPortControllers?.[activeValue]
+    if (manual === 1 || manual === 2) return manual
+    const chain = dataChains.find(
+      (c) => c.portNumber === activeValue && !c.isBackup,
+    )
+    if (chain?.controllerId === 1 || chain?.controllerId === 2) {
+      return chain.controllerId
+    }
+    return 1 as const
+  }, [canDualVxManual, dataPortControllers, activeValue, dataChains])
+
+  const autoControllerHint = useMemo(() => {
+    if (!canDualVxManual) return null
+    const manual = dataPortControllers?.[activeValue]
+    if (manual === 1 || manual === 2) return `вручную: VX${manual}`
+    const chain = dataChains.find(
+      (c) => c.portNumber === activeValue && !c.isBackup,
+    )
+    if (!chain || chain.cabinets.length === 0) {
+      return 'авто по стрипу при первом клике'
+    }
+    if (chain.controllerId === 1 || chain.controllerId === 2) {
+      return `авто: VX${chain.controllerId}`
+    }
+    return null
+  }, [canDualVxManual, dataChains, activeValue, dataPortControllers])
+
+  useEffect(() => {
+    if (canDualVxManual) setManualVxContext(activePortController)
+  }, [canDualVxManual, activeValue, activePortController])
 
   useEffect(() => {
     setSelectedLabels(new Set())
     setActiveValue(1)
-    setLineNumberInput('1')
     setEditMode('assign')
   }, [manualMode, wide, high, mode])
-
-  useEffect(() => {
-    setLineNumberInput(String(activeValue))
-  }, [activeValue])
-
-  const applyLineRenumber = useCallback(() => {
-    const parsed = Number.parseInt(lineNumberInput, 10)
-    if (
-      Number.isNaN(parsed) ||
-      parsed < 1 ||
-      parsed > maxLineNumber ||
-      parsed === activeValue
-    ) {
-      setLineNumberInput(String(activeValue))
-      return
-    }
-    // Активная линия целиком (кнопка D1/P2), не выбранный кабинет
-    onRenumberActiveLine?.(activeValue, parsed)
-    setActiveValue(parsed)
-    setSelectedLabels(new Set())
-  }, [lineNumberInput, maxLineNumber, activeValue, onRenumberActiveLine])
 
   const emptySet = useMemo(() => new Set(emptyCabinets), [emptyCabinets])
 
@@ -636,15 +885,122 @@ export default memo(function GridVisualization({
     return map
   }, [manualMode, manualAssignments, cabinets, isData, dataChains, powerLines, emptySet])
 
-  const valueNumbers = useMemo(() => {
+  /** Номера линий, у которых есть хотя бы один кабинет (для легенды / цветов / счётчика) */
+  const usedLineNumbers = useMemo(() => {
+    const fromMap = new Set<number>()
+    for (const n of assignmentMap.values()) {
+      if (n >= 1) fromMap.add(n)
+    }
+    if (fromMap.size > 0) return [...fromMap].sort((a, b) => a - b)
     const fromResult = isData
-      ? [...new Set(dataChains.map((c) => c.portNumber))]
-      : [...new Set(powerLines.map((l) => l.lineNumber))]
-    const fromManual = [...new Set(Object.values(manualAssignments))]
-    const combined = new Set([...fromResult, ...fromManual])
-    for (let i = 1; i <= maxAssignable + 1; i++) combined.add(i)
+      ? dataChains.filter((c) => !c.isBackup && c.cabinets.length > 0).map((c) => c.portNumber)
+      : powerLines.filter((l) => l.cabinets.length > 0).map((l) => l.lineNumber)
+    return [...new Set(fromResult)].filter((n) => n >= 1).sort((a, b) => a - b)
+  }, [assignmentMap, isData, dataChains, powerLines])
+
+  /** Кнопки выбора линии: занятые + активная + слот «следующая» в ручном режиме */
+  const valueNumbers = useMemo(() => {
+    const combined = new Set(usedLineNumbers)
+    if (manualMode) {
+      if (activeValue >= 1) combined.add(activeValue)
+      const maxUsed = usedLineNumbers.length > 0 ? Math.max(...usedLineNumbers) : 0
+      const nextSlot = Math.max(maxAssignable, maxUsed) + 1
+      if (nextSlot >= 1 && nextSlot <= maxAssignable + 1) combined.add(nextSlot)
+      for (const n of Object.values(manualAssignments)) {
+        if (n >= 1) combined.add(n)
+      }
+    }
     return [...combined].filter((n) => n >= 1).sort((a, b) => a - b)
-  }, [isData, dataChains, powerLines, manualAssignments, maxAssignable])
+  }, [usedLineNumbers, manualMode, activeValue, maxAssignable, manualAssignments])
+
+  const colorMode: LineColorMode = isData ? 'data' : 'power'
+
+  const lineColorMap = useMemo(
+    () =>
+      computeLineColorMap(
+        colorMode,
+        cabinets,
+        assignmentMap,
+        usedLineNumbers.length > 0 ? usedLineNumbers : valueNumbers,
+        lineColorOverrides,
+      ),
+    [colorMode, cabinets, assignmentMap, usedLineNumbers, valueNumbers, lineColorOverrides],
+  )
+
+  const lineColorFor = useCallback(
+    (lineId: number) => lineColorFromMap(colorMode, lineId, lineColorMap),
+    [colorMode, lineColorMap],
+  )
+
+  const swatches = useMemo(() => paletteSwatches(colorMode), [colorMode])
+
+  const visibleLinePorts = useMemo(() => {
+    if (!canDualVxManual) return valueNumbers
+    const cid = manualVxContext
+    const ports = new Set<number>()
+    for (const [port, label] of dualVxPreviewLabels) {
+      if (label.startsWith(`${prefix}${cid}-`)) ports.add(port)
+    }
+    if (dataPortControllers?.[activeValue] === cid) ports.add(activeValue)
+    return [...ports].sort((a, b) => a - b)
+  }, [
+    canDualVxManual,
+    valueNumbers,
+    dualVxPreviewLabels,
+    manualVxContext,
+    prefix,
+    dataPortControllers,
+    activeValue,
+  ])
+
+  const handleNewLineForVx = useCallback(
+    (cid: 1 | 2 = manualVxContext) => {
+      const used = new Set([
+        ...valueNumbers,
+        ...Object.values(manualAssignments),
+        activeValue,
+      ])
+      const nextPort = Math.max(1, ...used, 0) + 1
+      onSetDataPortController?.(nextPort, cid)
+      setManualVxContext(cid)
+      setActiveValue(nextPort)
+    },
+    [
+      manualVxContext,
+      valueNumbers,
+      manualAssignments,
+      activeValue,
+      onSetDataPortController,
+    ],
+  )
+
+  const handleSelectVx = useCallback(
+    (cid: 1 | 2) => {
+      setManualVxContext(cid)
+      const portsOnVx = [...dualVxPreviewLabels.entries()]
+        .filter(([, label]) => label.startsWith(`${prefix}${cid}-`))
+        .map(([port]) => port)
+        .sort((a, b) => a - b)
+      const activeLabel = dualVxPreviewLabels.get(activeValue)
+      if (activeLabel?.startsWith(`${prefix}${cid}-`)) {
+        onSetDataPortController?.(activeValue, cid)
+        return
+      }
+      if (portsOnVx.length > 0) {
+        setActiveValue(portsOnVx[0]!)
+        onSetDataPortController?.(portsOnVx[0]!, cid)
+      } else {
+        handleNewLineForVx(cid)
+      }
+    },
+    [
+      activeValue,
+      dualVxPreviewLabels,
+      prefix,
+      onSetDataPortController,
+      handleNewLineForVx,
+    ],
+  )
 
   const effectiveStartPoints = useMemo(() => {
     const map: Record<number, string> = { ...startPoints }
@@ -679,8 +1035,6 @@ export default memo(function GridVisualization({
     chainStartEdge,
     powerFeedMode,
   ])
-
-  const startLabelForActive = effectiveStartPoints[activeValue]
 
   const startLabels = useMemo(() => {
     const set = new Set<string>()
@@ -743,10 +1097,24 @@ export default memo(function GridVisualization({
   const assignTo = useCallback(
     (labels: string[], value: number) => {
       if (!manualMode || !onAssign || labels.length === 0) return
-      onAssign(labels, value)
+      let toAssign = labels
+      // Тикшорет: не красить кабинеты с другого стрипа
+      if (isData && stripWidths.length > 1) {
+        const chain = getChainForPort(value)
+        const anchorLabel = chain[0] ?? labels[0]
+        const anchor = cabinets.find((c) => c.label === anchorLabel)
+        if (anchor) {
+          toAssign = labels.filter((lab) => {
+            const cab = cabinets.find((c) => c.label === lab)
+            return cab != null && sameStripCol(anchor.col, cab.col, stripWidths)
+          })
+        }
+      }
+      if (toAssign.length === 0) return
+      onAssign(toAssign, value)
       setSelectedLabels(new Set())
     },
-    [manualMode, onAssign],
+    [manualMode, onAssign, isData, stripWidths, getChainForPort, cabinets],
   )
 
   const labelAtCell = useCallback(
@@ -761,28 +1129,37 @@ export default memo(function GridVisualization({
     (fromLabel: string, key: string): string | null => {
       const cab = cabinets.find((c) => c.label === fromLabel)
       if (!cab) return null
-      if (key === 'ArrowLeft') return labelAtCell(cab.col - 1, cab.row)
-      if (key === 'ArrowRight') return labelAtCell(cab.col + 1, cab.row)
-      if (key === 'ArrowUp') return labelAtCell(cab.col, cab.row - 1)
-      if (key === 'ArrowDown') return labelAtCell(cab.col, cab.row + 1)
-      return null
+      let nextCol = cab.col
+      let nextRow = cab.row
+      if (key === 'ArrowLeft') nextCol = cab.col - 1
+      else if (key === 'ArrowRight') nextCol = cab.col + 1
+      else if (key === 'ArrowUp') nextRow = cab.row - 1
+      else if (key === 'ArrowDown') nextRow = cab.row + 1
+      else return null
+      // Тикшорет: стрелки не переходят через границу стрипа
+      if (
+        isData &&
+        stripWidths.length > 1 &&
+        !sameStripCol(cab.col, nextCol, stripWidths)
+      ) {
+        return null
+      }
+      return labelAtCell(nextCol, nextRow)
     },
-    [cabinets, labelAtCell],
+    [cabinets, labelAtCell, isData, stripWidths],
   )
 
   /** Стрелки продолжают активную линию от последнего кабинета (режим Paint) */
   useEffect(() => {
-    if (!manualMode || !arrowContinue || editMode !== 'assign') return
+    if (!manualMode || editMode !== 'assign') return
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.key !== 'ArrowLeft' &&
-        e.key !== 'ArrowRight' &&
-        e.key !== 'ArrowUp' &&
-        e.key !== 'ArrowDown'
-      ) {
-        return
-      }
+      const isArrow =
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowRight' ||
+        e.key === 'ArrowUp' ||
+        e.key === 'ArrowDown'
+      if (!isArrow) return
 
       const target = e.target as HTMLElement | null
       if (
@@ -795,14 +1172,17 @@ export default memo(function GridVisualization({
         return
       }
 
-      const chain = chainOrder[activeValue] ?? []
+      if (!arrowContinue) return
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      const chain = getChainForPort(activeValue)
       const last = chain.at(-1)
       if (!last) return
 
       const next = neighborLabel(last, e.key)
       if (!next || emptySet.has(next)) return
-
-      e.preventDefault()
 
       // Стрелка назад на предыдущий кабинет — снять последний (как undo)
       const prev = chain.at(-2)
@@ -811,25 +1191,30 @@ export default memo(function GridVisualization({
         return
       }
 
-      // Уже конец этой же линии — ничего
       if (next === last) return
 
       assignTo([next], activeValue)
     }
 
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [
     manualMode,
     arrowContinue,
     editMode,
-    chainOrder,
+    getChainForPort,
     activeValue,
     neighborLabel,
     emptySet,
     onUndoCabinet,
     assignTo,
   ])
+
+  useEffect(() => {
+    if (manualMode && editMode === 'assign') {
+      manualKeyboardRef.current?.focus({ preventScroll: true })
+    }
+  }, [manualMode, editMode, activeValue])
 
   const handleCabinetClick = useCallback(
     (label: string, shiftKey: boolean, altKey: boolean) => {
@@ -878,7 +1263,7 @@ export default memo(function GridVisualization({
       }
 
       // Повторный клик по последнему кабинету активной линии — отмена
-      const lastInActive = (chainOrder[activeValue] ?? []).at(-1)
+      const lastInActive = getChainForPort(activeValue).at(-1)
       if (onUndoCabinet && label === lastInActive) {
         onUndoCabinet(label)
         return
@@ -898,6 +1283,7 @@ export default memo(function GridVisualization({
       onUndoLast,
       canUndo,
       chainOrder,
+      getChainForPort,
       onUndoCabinet,
     ],
   )
@@ -1001,10 +1387,6 @@ export default memo(function GridVisualization({
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-            <p className="mt-0.5 text-[10px] tabular-nums text-slate-500">
-              {headerStats}
-              {isData && dualVx1000 ? ' · 2× VX1000' : ''}
-            </p>
           </div>
           {(manualMode || emptyPaintMode) && (
             <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
@@ -1102,6 +1484,43 @@ export default memo(function GridVisualization({
         </div>
       </div>
 
+      {(headerStats || dualVxBreakdown) && (
+        <div
+          className={`mb-3 mt-2 rounded-lg border px-3 py-2.5 text-xs font-semibold tabular-nums sm:text-sm ${
+            isData
+              ? 'border-blue-200 bg-blue-50 text-blue-950'
+              : 'border-amber-200 bg-amber-50 text-amber-950'
+          }`}
+        >
+          {dualVxBreakdown ? (
+            <div className="space-y-1.5">
+              {headerBaseLine && <div>{headerBaseLine}</div>}
+              <div className="text-[10px] font-bold uppercase tracking-wide text-blue-800/70 sm:text-[11px]">
+                2× VX1000
+              </div>
+              {dualVxBreakdown.map(({ controllerId, mainLabels, backupLabels }) => (
+                <div key={controllerId} className="leading-snug">
+                  <span className="text-blue-900">
+                    VX1000 #{controllerId}: {mainLabels.length}{' '}
+                    {mainLabels.length === 1 ? 'линия' : mainLabels.length < 5 ? 'линии' : 'линий'}
+                  </span>
+                  {' — '}
+                  <span className="font-medium">{mainLabels.join(', ')}</span>
+                  {backupLabels.length > 0 && (
+                    <span className="font-normal text-blue-900/80">
+                      {' · backup: '}
+                      {backupLabels.join(', ')}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            headerStats
+          )}
+        </div>
+      )}
+
       {emptyPaintMode && (
         <div className="mb-3 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">
           <strong>Empty / Пропущенный</strong> — клик по ячейке помечает или снимает пустую
@@ -1115,225 +1534,220 @@ export default memo(function GridVisualization({
       )}
 
       {manualMode && (
-        <div className="sticky top-0 z-10 mb-3 space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 shadow-sm">
-          <p className="font-semibold text-amber-950">
-            {title} — Ручная схема
+        <div
+          ref={manualKeyboardRef}
+          tabIndex={-1}
+          className="sticky top-0 z-10 mb-3 space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-xs text-amber-900 shadow-sm outline-none"
+        >
+          <p className="px-1 text-[11px] font-semibold text-amber-950">
+            {isData ? 'Data' : 'Power'} — ручная схема
           </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Режим:</span>
+          <div className="flex flex-nowrap items-center gap-1 overflow-x-auto pb-0.5">
             <button
               type="button"
               onClick={() => setEditMode('assign')}
-              className={`${editBtnClass} ${
+              className={`${manualBtnClass} ${
                 editMode === 'assign'
                   ? 'bg-amber-600 text-white'
-                  : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
+                  : 'bg-white text-amber-900 ring-1 ring-amber-300'
               }`}
             >
-              Paint / Краска
+              Краска
             </button>
             {onUndoLast && (
               <button
                 type="button"
                 onClick={onUndoLast}
                 disabled={!canUndo}
-                className={`${editBtnClass} ${
+                className={`${manualBtnClass} ${
                   canUndo
-                    ? 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
+                    ? 'bg-white text-amber-900 ring-1 ring-amber-300'
                     : 'cursor-not-allowed bg-white/60 text-amber-400 ring-1 ring-amber-200'
                 }`}
-                title="Отменить последнее заполнение (Alt+клик)"
+                title="Alt+клик"
               >
-                Undo / Отменить
+                Undo
               </button>
             )}
             {onReverseActiveLine && (
               <button
                 type="button"
                 onClick={() => onReverseActiveLine(activeValue)}
-                disabled={(chainOrder[activeValue] ?? []).length < 2}
-                className={`${editBtnClass} ${
-                  (chainOrder[activeValue] ?? []).length >= 2
-                    ? 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
+                disabled={getChainForPort(activeValue).length < 2}
+                className={`${manualBtnClass} ${
+                  getChainForPort(activeValue).length >= 2
+                    ? 'bg-white text-amber-900 ring-1 ring-amber-300'
                     : 'cursor-not-allowed bg-white/60 text-amber-400 ring-1 ring-amber-200'
                 }`}
-                title={`Перевернуть ${formatLineId(activeValue)}: первый кабинет станет последним`}
               >
-                Reverse / Перевернуть / הפוך
+                Reverse
               </button>
             )}
             {onClearActiveLine && (
               <button
                 type="button"
                 onClick={() => onClearActiveLine(activeValue)}
-                disabled={(chainOrder[activeValue] ?? []).length === 0}
-                className={`${editBtnClass} ${
-                  (chainOrder[activeValue] ?? []).length > 0
-                    ? 'bg-white text-red-700 ring-1 ring-red-300 hover:bg-red-50'
+                disabled={getChainForPort(activeValue).length === 0}
+                className={`${manualBtnClass} ${
+                  getChainForPort(activeValue).length > 0
+                    ? 'bg-white text-red-700 ring-1 ring-red-300'
                     : 'cursor-not-allowed bg-white/60 text-red-300 ring-1 ring-red-200'
                 }`}
-                title={`Очистить ${formatLineId(activeValue)}: снять все кабинеты с линии`}
               >
-                Clear line / Очистить линию / נקה שורה
+                Clear
               </button>
             )}
             <button
               type="button"
               onClick={() => setEditMode('start')}
-              className={`${editBtnClass} ${
+              className={`${manualBtnClass} ${
                 editMode === 'start'
                   ? 'bg-amber-600 text-white'
-                  : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
+                  : 'bg-white text-amber-900 ring-1 ring-amber-300'
               }`}
             >
-              Set Start / Старт
+              Старт
             </button>
             <button
               type="button"
               onClick={() => setEditMode('empty')}
-              className={`${editBtnClass} ${
+              className={`${manualBtnClass} ${
                 editMode === 'empty'
-                  ? 'bg-green-600 text-white ring-1 ring-green-500'
-                  : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
+                  ? 'bg-green-600 text-white'
+                  : 'bg-white text-amber-900 ring-1 ring-amber-300'
               }`}
             >
-              Empty / Пропуск
+              Empty
             </button>
             <button
               type="button"
               role="switch"
               aria-checked={arrowContinue}
-              onClick={() => setArrowContinue((v) => !v)}
-              className={`${editBtnClass} ${
+              onClick={() => {
+                setArrowContinue((v) => !v)
+                manualKeyboardRef.current?.focus({ preventScroll: true })
+              }}
+              className={`${manualBtnClass} ${
                 arrowContinue
                   ? 'bg-sky-600 text-white ring-1 ring-sky-500'
-                  : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
+                  : 'bg-white text-amber-900 ring-1 ring-amber-300'
               }`}
-              title="После первого клика продолжайте линию клавишами ← ↑ ↓ →. Стрелка назад снимает последний кабинет."
+              title="←↑↓→ продолжают линию после первого клика"
             >
-              Arrows / Стрелки {arrowContinue ? 'ON' : 'OFF'}
+              Стрелки {arrowContinue ? 'ON' : 'OFF'}
             </button>
             {onClearManual && (
               <button
                 type="button"
                 onClick={handleClearManual}
-                className={`${editBtnClass} ml-auto bg-white text-red-700 ring-1 ring-red-300 hover:bg-red-50`}
-                title={
-                  isData
-                    ? 'Удалить все назначения data-портов и точки старта'
-                    : 'Удалить все назначения power-линий и точки старта'
-                }
+                className={`${manualBtnClass} bg-white text-red-700 ring-1 ring-red-300`}
               >
-                {isData ? 'Clear Data Lines / Сбросить data' : 'Clear Power Lines / Сбросить power'}
+                Сброс
               </button>
             )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{prefix}-линия:</span>
-            {onRenumberActiveLine && (
-              <label className="flex items-center gap-1.5">
-                <span className="text-amber-800/90">Line # / Линия №</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={maxLineNumber}
-                  value={lineNumberInput}
-                  onChange={(e) => setLineNumberInput(e.target.value)}
-                  onBlur={() => {
-                    if (skipRenumberBlurRef.current) {
-                      skipRenumberBlurRef.current = false
-                      return
-                    }
-                    applyLineRenumber()
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      skipRenumberBlurRef.current = true
-                      applyLineRenumber()
-                      ;(e.target as HTMLInputElement).blur()
-                    } else if (e.key === 'Escape') {
-                      setLineNumberInput(String(activeValue))
-                      skipRenumberBlurRef.current = true
-                      ;(e.target as HTMLInputElement).blur()
-                    }
-                  }}
-                  className="w-14 rounded-md border border-amber-300 bg-white px-2 py-1 text-center text-xs font-semibold text-amber-950 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  title={`Перенумеровать всю активную линию ${formatLineId(activeValue)} (все кабинеты), Enter — применить, 1–${maxLineNumber}`}
-                />
-              </label>
+            {canDualVxManual && onSetDataPortController && (
+              <>
+                <span className="mx-0.5 text-amber-700">|</span>
+                {([1, 2] as const).map((cid) => (
+                  <button
+                    key={`vx-${cid}`}
+                    type="button"
+                    onClick={() => handleSelectVx(cid)}
+                    className={`${manualBtnClass} ${
+                      manualVxContext === cid
+                        ? 'bg-blue-600 text-white ring-1 ring-blue-500'
+                        : 'bg-white text-amber-900 ring-1 ring-amber-300'
+                    }`}
+                  >
+                    VX{cid}
+                  </button>
+                ))}
+              </>
             )}
-            {valueNumbers.map((n) => (
+            <span className="mx-0.5 text-amber-700">|</span>
+            {(canDualVxManual ? visibleLinePorts : valueNumbers).map((n) => (
               <button
                 key={`sel-${n}`}
                 type="button"
                 onClick={() => setActiveValue(n)}
-                className={`${editBtnClass} ${
+                className={`${manualBtnClass} ${
                   activeValue === n
                     ? 'bg-amber-600 text-white'
-                    : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
+                    : 'bg-white text-amber-900 ring-1 ring-amber-300'
                 }`}
               >
                 {formatLineId(n)}
                 {editMode === 'start' && effectiveStartPoints[n] && (
-                  <span className="ml-1 text-[9px] opacity-80">★{effectiveStartPoints[n]}</span>
+                  <span className="ml-0.5 text-[9px] opacity-80">★</span>
                 )}
               </button>
             ))}
             <button
               type="button"
-              onClick={() => setActiveValue(maxAssignable + 1)}
-              className={`${editBtnClass} ${
-                activeValue === maxAssignable + 1
+              onClick={() =>
+                canDualVxManual
+                  ? handleNewLineForVx(manualVxContext)
+                  : setActiveValue(maxAssignable + 1)
+              }
+              className={`${manualBtnClass} ${
+                canDualVxManual &&
+                !visibleLinePorts.includes(activeValue) &&
+                dataPortControllers?.[activeValue] === manualVxContext
                   ? 'bg-amber-600 text-white'
-                  : 'bg-white text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100'
+                  : 'bg-white text-amber-900 ring-1 ring-amber-300'
               }`}
             >
-              + New {prefix}{maxAssignable + 1}
+              {canDualVxManual
+                ? `+ ${prefix}${manualVxContext}-${nextDualVxLocalNumber(
+                    manualVxContext,
+                    dataChains,
+                    dataPortControllers,
+                    prefix,
+                  )}`
+                : `+ ${prefix}${maxAssignable + 1}`}
             </button>
             {editMode === 'assign' && selectedLabels.size > 0 && (
               <button
                 type="button"
                 onClick={() => assignTo([...selectedLabels], activeValue)}
-                className={`${editBtnClass} bg-amber-600 text-white hover:bg-amber-700`}
+                className={`${manualBtnClass} bg-amber-600 text-white`}
               >
-                Apply to {selectedLabels.size} selected
+                Apply {selectedLabels.size}
               </button>
             )}
           </div>
-          <p className="text-amber-800/90">
+          <p className="px-1 text-[10px] leading-snug text-amber-800/90">
             Активно: <strong>{formatLineId(activeValue)}</strong>
-            {editMode === 'assign' ? (
-              <>
-                {' '}
-                — клики задают порядок цепочки; повторный клик по последнему снимает его;
-                {arrowContinue && (
-                  <>
-                    {' '}
-                    <strong>←↑↓→</strong> продолжают линию от последнего кубика (назад —
-                    снять последний);
-                  </>
-                )}{' '}
-                Undo / Alt+клик — отменить последнее; Reverse — первый кабинет станет последним;
-                Clear line — снять все кабинеты с активной линии; Line # — перенумеровать
-                всю активную линию (все кубики; если целевая занята — обмен).
-              </>
-            ) : editMode === 'start' ? (
-              <>
-                {' '}
-                — клик по любому кабинету задаёт START для {formatLineId(activeValue)}
-                : бейдж {formatLineId(activeValue)} и ★ переезжают туда (кабинет добавляется в начало линии, если ещё не
-                был).
-              </>
-            ) : (
-              <> — клик помечает пустой кабинет (исключается из маршрута).</>
-            )}
-            {startLabelForActive && (
-              <span className="ml-1 font-semibold text-amber-700">
-                (старт: {startLabelForActive})
-              </span>
-            )}
+            {canDualVxManual && autoControllerHint ? ` · ${autoControllerHint}` : ''}
+            {isData && stripWidths.length > 1
+              ? ' · линия не переходит между стрипами'
+              : ''}
+            {editMode === 'assign' && arrowContinue
+              ? ' · ←↑↓→ после первого клика'
+              : ''}
           </p>
+          {onSetLineColor && editMode !== 'empty' && (
+            <div className="flex flex-wrap items-center gap-1 px-1">
+              <span className="text-[10px] font-medium text-amber-900">Цвет:</span>
+              {swatches.map((swatch, idx) => {
+                const selected = lineColorMap.get(activeValue) === idx
+                return (
+                  <button
+                    key={`color-${idx}`}
+                    type="button"
+                    onClick={() => onSetLineColor(activeValue, idx)}
+                    className={`h-5 w-5 shrink-0 rounded border-2 transition active:scale-95 ${
+                      selected ? 'ring-2 ring-amber-600 ring-offset-1' : 'hover:scale-110'
+                    }`}
+                    style={{ backgroundColor: swatch.fill, borderColor: swatch.stroke }}
+                    title={`Палитра ${idx + 1}`}
+                    aria-label={`Цвет линии ${idx + 1}`}
+                    aria-pressed={selected}
+                  />
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -1341,8 +1755,8 @@ export default memo(function GridVisualization({
         {isData ? (
           <>
             <span className="font-medium text-slate-700">Data:</span>
-            {valueNumbers.map((port) => {
-              const c = dataLineColor(port)
+            {usedLineNumbers.map((port) => {
+              const c = lineColorFor(port)
               const hasWarning = warnedIds.has(port)
               return (
                 <button
@@ -1401,8 +1815,8 @@ export default memo(function GridVisualization({
         ) : (
           <>
             <span className="font-medium text-slate-700">Power:</span>
-            {valueNumbers.map((line) => {
-              const c = powerLineColor(line)
+            {usedLineNumbers.map((line) => {
+              const c = lineColorFor(line)
               const hasWarning = warnedIds.has(line)
               return (
                 <button
@@ -1511,11 +1925,32 @@ export default memo(function GridVisualization({
             const isSelected = selectedLabels.has(cab.label)
             const isStart = !isEmpty && startLabels.has(cab.label)
             const isFeed = !isEmpty && !isData && feedLabels.has(cab.label)
-            const step = sequenceStepMap.get(cab.label)
+            const cabId = cabinetIdMap.get(cab.label)
+            const idFont = isData
+              ? cabId && cabId.length >= 7
+                ? simplifyLabels || isMobile
+                  ? 9
+                  : 10
+                : cabId && cabId.length >= 5
+                  ? simplifyLabels || isMobile
+                    ? 10
+                    : 11
+                  : simplifyLabels || isMobile
+                    ? 11
+                    : 12
+              : cabId && cabId.length >= 7
+                ? simplifyLabels || isMobile
+                  ? 11
+                  : 12
+                : cabId && cabId.length >= 5
+                  ? simplifyLabels || isMobile
+                    ? 13
+                    : 14
+                  : simplifyLabels || isMobile
+                    ? 15
+                    : 16
 
-            const dataColors = dataLineColor(lineNum)
-            const pwrColors = powerLineColor(lineNum)
-            const lineColors = isData ? dataColors : pwrColors
+            const lineColors = lineColorFor(lineNum)
             const isInteractive = manualMode || emptyPaintMode
 
             return (
@@ -1581,30 +2016,49 @@ export default memo(function GridVisualization({
                   </>
                 ) : (
                   <>
-                {step != null && step > 0 && !simplifyLabels && !isStart && (
+                {cabId ? (
+                  <>
+                    <text
+                      x={x + CELL_W / 2}
+                      y={y + CELL_H / 2}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fontSize={idFont}
+                      fontWeight={isData ? 700 : 800}
+                      fill={lineColors.label}
+                      pointerEvents="none"
+                    >
+                      {cabId}
+                    </text>
+                    {!simplifyLabels && (
+                      <text
+                        x={x + CELL_W / 2}
+                        y={y + CELL_H - 5}
+                        textAnchor="middle"
+                        fontSize={8}
+                        fontWeight={500}
+                        fill={COLORS.cabinetText}
+                        opacity={0.55}
+                        pointerEvents="none"
+                      >
+                        {cab.label}
+                      </text>
+                    )}
+                  </>
+                ) : (
                   <text
-                    x={isRtl ? x + CELL_W - 10 : x + 10}
-                    y={y + 14}
-                    textAnchor={isRtl ? 'end' : 'start'}
-                    fontSize={10}
+                    x={x + CELL_W / 2}
+                    y={y + CELL_H / 2}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize={14}
                     fontWeight={700}
-                    fill={lineColors.stroke}
+                    fill={COLORS.cabinetText}
                     pointerEvents="none"
                   >
-                    {step}
+                    {cab.label}
                   </text>
                 )}
-                <text
-                  x={x + CELL_W / 2}
-                  y={y + CELL_H / 2 - (simplifyLabels ? 0 : 6)}
-                  textAnchor="middle"
-                  fontSize={14}
-                  fontWeight={700}
-                  fill={COLORS.cabinetText}
-                  pointerEvents="none"
-                >
-                  {cab.label}
-                </text>
                 {/* D/P бейдж только на START (см. start-markers) */}
                   </>
                 )}
@@ -1618,7 +2072,7 @@ export default memo(function GridVisualization({
             powerLinks.map((link, i) => {
               const from = cabCenter(link.from.col, link.from.row)
               const to = cabCenter(link.to.col, link.to.row)
-              const color = powerLineColor(link.chainId).arrow
+              const color = lineColorFor(link.chainId).arrow
               return (
                 <ArrowPath
                   key={`pwr-${i}`}
@@ -1650,7 +2104,7 @@ export default memo(function GridVisualization({
             dataLinks.map((link, i) => {
               const from = cabCenter(link.from.col, link.from.row)
               const to = cabCenter(link.to.col, link.to.row)
-              const color = dataLineColor(link.chainId).arrow
+              const color = lineColorFor(link.chainId).arrow
               const offset =
                 link.direction === 'vertical'
                   ? offsetForDesiredNx(
@@ -1716,9 +2170,7 @@ export default memo(function GridVisualization({
             const y = PAD + cab.row * (CELL_H + GAP)
             const lineNum =
               startLineByLabel.get(cab.label) ?? assignmentMap.get(cab.label) ?? 0
-            const lineColors = isData
-              ? dataLineColor(lineNum)
-              : powerLineColor(lineNum)
+            const lineColors = lineColorFor(lineNum)
             const lineId = lineNum > 0 ? formatLineId(lineNum) : prefix
             // Крупный бейдж: читается на телефоне и при fitScale сетки 14×8
             const badgeFont =
