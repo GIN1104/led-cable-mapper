@@ -3,14 +3,14 @@ import type { GridLayout, ScreenConfig, ScreenRoutingState } from './types'
 import {
   createScreen,
   DEFAULT_PROJECT,
+  EMPTY_MANUAL_OVERRIDES,
   EMPTY_SCREEN_ROUTING,
 } from './types'
 import { buildAutoManualOverrides } from './lib/routingEngine'
 import { buildCombinedPackingList } from './lib/packingList'
-import { syncCabinetGridFromMeters, calcPixelsPerCabinet, normalizeStripWidths, sameStripCol } from './lib/cabinetGrid'
+import { syncCabinetGridFromMeters, calcPixelsPerCabinet, normalizeStripWidths } from './lib/cabinetGrid'
 import {
   remapDataPortControllers,
-  colFromCabinetLabel,
   inferControllerFromLabel,
 } from './lib/dualVxRouting'
 import { remapLineColorOverrides } from './lib/lineColorAssignment'
@@ -45,8 +45,52 @@ import {
 } from './lib/equipmentList'
 import type { EquipmentListState } from './lib/equipmentList'
 
-/** Запись стека отмены последнего Paint */
-type PaintUndoEntry = { label: string; value: number }
+type ManualOverrides = ScreenRoutingState['manualOverrides']
+type DataUndoSnapshot = Pick<
+  ManualOverrides,
+  | 'dataPorts'
+  | 'dataStartPoints'
+  | 'dataPortChains'
+  | 'dataPortControllers'
+  | 'dataPortColors'
+>
+type PowerUndoSnapshot = Pick<
+  ManualOverrides,
+  'powerLines' | 'powerStartPoints' | 'powerLineChains' | 'powerLineColors'
+>
+
+const MANUAL_UNDO_LIMIT = 100
+
+/** Полный снимок ручной data-схемы перед одним действием пользователя. */
+function snapshotDataManual(state: ScreenRoutingState): DataUndoSnapshot {
+  return {
+    dataPorts: { ...state.manualOverrides.dataPorts },
+    dataStartPoints: { ...state.manualOverrides.dataStartPoints },
+    dataPortChains: Object.fromEntries(
+      Object.entries(state.manualOverrides.dataPortChains ?? {}).map(([key, labels]) => [
+        Number(key),
+        [...labels],
+      ]),
+    ),
+    dataPortControllers: { ...(state.manualOverrides.dataPortControllers ?? {}) },
+    dataPortColors: { ...(state.manualOverrides.dataPortColors ?? {}) },
+  }
+}
+
+/** Полный снимок ручной power-схемы перед одним действием пользователя. */
+function snapshotPowerManual(state: ScreenRoutingState): PowerUndoSnapshot {
+  return {
+    powerLines: { ...state.manualOverrides.powerLines },
+    powerStartPoints: { ...state.manualOverrides.powerStartPoints },
+    powerLineChains: Object.fromEntries(
+      Object.entries(state.manualOverrides.powerLineChains ?? {}).map(([key, labels]) => [
+        Number(key),
+        [...labels],
+      ]),
+    ),
+    powerLineColors: { ...(state.manualOverrides.powerLineColors ?? {}) },
+  }
+}
 function SummaryCard({
   label,
   value,
@@ -93,9 +137,9 @@ export default function App() {
   const [gridLayout, setGridLayout] = useState<GridLayout>('stacked')
   const [showCombinedPacking, setShowCombinedPacking] = useState(false)
   const [equipmentList, setEquipmentList] = useState<EquipmentListState | null>(null)
-  /** Стеки отмены последнего заполнения — отдельно для Data и Power по экрану */
-  const [dataPaintUndo, setDataPaintUndo] = useState<Record<string, PaintUndoEntry[]>>({})
-  const [powerPaintUndo, setPowerPaintUndo] = useState<Record<string, PaintUndoEntry[]>>({})
+  /** История полных состояний — одно действие пользователя = один снимок. */
+  const [dataPaintUndo, setDataPaintUndo] = useState<Record<string, DataUndoSnapshot[]>>({})
+  const [powerPaintUndo, setPowerPaintUndo] = useState<Record<string, PowerUndoSnapshot[]>>({})
 
   const activeScreen = useMemo(
     () => screens.find((s) => s.id === activeScreenId) ?? screens[0],
@@ -105,6 +149,28 @@ export default function App() {
   const activeRouting = routingByScreen[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
   const { manualModeData, manualModePower, manualOverrides } = activeRouting
   const anyManual = manualModeData || manualModePower
+
+  const pushDataUndo = useCallback(() => {
+    const snapshot = snapshotDataManual(activeRouting)
+    setDataPaintUndo((history) => ({
+      ...history,
+      [activeScreen.id]: [
+        ...(history[activeScreen.id] ?? []),
+        snapshot,
+      ].slice(-MANUAL_UNDO_LIMIT),
+    }))
+  }, [activeRouting, activeScreen.id])
+
+  const pushPowerUndo = useCallback(() => {
+    const snapshot = snapshotPowerManual(activeRouting)
+    setPowerPaintUndo((history) => ({
+      ...history,
+      [activeScreen.id]: [
+        ...(history[activeScreen.id] ?? []),
+        snapshot,
+      ].slice(-MANUAL_UNDO_LIMIT),
+    }))
+  }, [activeRouting, activeScreen.id])
 
   const { result, autoResult, isRouting } = useActiveRouting(activeScreen, activeRouting)
 
@@ -140,6 +206,14 @@ export default function App() {
   )
 
   const globalTotals = useMemo(() => {
+    if (screens.length <= 1) {
+      return {
+        totalCabinets: result?.summary.totalCabinets ?? 0,
+        totalPixels: result?.summary.totalPixels ?? 0,
+        totalEmpty: result?.summary.emptyCabinets ?? 0,
+        screenCount: screens.length,
+      }
+    }
     let totalCabinets = 0
     let totalPixels = 0
     let totalEmpty = 0
@@ -149,7 +223,7 @@ export default function App() {
       totalEmpty += r.summary.emptyCabinets
     }
     return { totalCabinets, totalPixels, totalEmpty, screenCount: screens.length }
-  }, [allScreenResults, screens.length])
+  }, [allScreenResults, screens.length, result])
 
   /** Сводка по каждому экрану: имя, резолюция, линии data/power */
   const screenSummaries = useMemo(() => {
@@ -207,8 +281,35 @@ export default function App() {
     [allScreenResults, result, activeScreen],
   )
 
+  const equipmentBuildKey = useMemo(() => {
+    if (!result) return ''
+    const screensPart = screens
+      .map(
+        (s) =>
+          `${s.id}:${s.name}:${s.cabinetsWide}x${s.cabinetsHigh}:${s.wallWidthM}x${s.wallHeightM}:${s.controllerModel}:${s.dualVx1000 ? 1 : 0}:${s.hangMount ? 1 : 0}:${s.powerFeedMode}:${s.stripWidths?.join(',') ?? ''}`,
+      )
+      .join('|')
+    const resultsPart = equipmentScreenResults
+      .map(
+        ({ screen, result: r }) =>
+          `${screen.id}:${r.summary.dataPorts}:${r.summary.backupPorts}:${r.summary.powerLines}:${r.summary.totalCabinets}:${r.cableSchedule.length}`,
+      )
+      .join('|')
+    return `${screensPart}#${resultsPart}#${equipmentCableSchedule.length}#${equipmentPackingList.length}`
+  }, [
+    result,
+    screens,
+    equipmentScreenResults,
+    equipmentCableSchedule.length,
+    equipmentPackingList.length,
+  ])
+
+  const equipmentBuildKeyRef = useRef('')
+
   useEffect(() => {
-    if (!result) return
+    if (!result || !equipmentBuildKey) return
+    if (equipmentBuildKeyRef.current === equipmentBuildKey) return
+    equipmentBuildKeyRef.current = equipmentBuildKey
     setEquipmentList((prev) =>
       buildEquipmentListState(
         screens,
@@ -218,7 +319,14 @@ export default function App() {
         prev ?? undefined,
       ),
     )
-  }, [result, screens, equipmentScreenResults, equipmentCableSchedule, equipmentPackingList])
+  }, [
+    result,
+    equipmentBuildKey,
+    screens,
+    equipmentScreenResults,
+    equipmentCableSchedule,
+    equipmentPackingList,
+  ])
 
   const handleRefreshEquipmentList = useCallback(() => {
     if (!result) return
@@ -411,25 +519,12 @@ export default function App() {
       const screen = screens.find((s) => s.id === activeScreen.id) ?? activeScreen
       const emptySet = new Set(screen.emptyCabinets ?? [])
       const stripWidths = normalizeStripWidths(screen.stripWidths, screen.cabinetsWide)
-      let painted = labels.filter((label) => !emptySet.has(label))
-      if (painted.length === 0) return
-
-      // Тикшорет: линия не переходит со стрипа на стрип
-      if (stripWidths.length > 1) {
-        const existing = manualOverrides.dataPortChains?.[portNumber] ?? []
-        const anchorLabel = existing[0] ?? painted[0]!
-        const anchorCol = colFromCabinetLabel(anchorLabel)
-        if (anchorCol != null) {
-          painted = painted.filter((label) => {
-            const col = colFromCabinetLabel(label)
-            return col != null && sameStripCol(anchorCol, col, stripWidths)
-          })
-        }
-      }
+      const painted = labels.filter((label) => !emptySet.has(label))
       if (painted.length === 0) return
 
       const paintedLabels = painted
 
+      pushDataUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         let dataPorts = { ...current.manualOverrides.dataPorts }
@@ -439,23 +534,8 @@ export default function App() {
           ...(current.manualOverrides.dataPortControllers ?? {}),
         }
 
-        // Доп. фильтр на актуальном состоянии (на случай гонки)
-        let toPaint = paintedLabels
-        if (stripWidths.length > 1) {
-          const existing = dataPortChains[portNumber] ?? []
-          const anchorLabel = existing[0] ?? toPaint[0]!
-          const anchorCol = colFromCabinetLabel(anchorLabel)
-          if (anchorCol != null) {
-            toPaint = toPaint.filter((label) => {
-              const col = colFromCabinetLabel(label)
-              return col != null && sameStripCol(anchorCol, col, stripWidths)
-            })
-          }
-        }
-        if (toPaint.length === 0) return prev
-
         // START не двигаем при Paint — только через Set Start
-        for (const label of toPaint) {
+        for (const label of paintedLabels) {
           for (const [port, start] of Object.entries(dataStartPoints)) {
             if (start === label && Number(port) !== portNumber) {
               delete dataStartPoints[Number(port)]
@@ -493,19 +573,16 @@ export default function App() {
           },
         }
       })
-      setDataPaintUndo((u) => ({
-        ...u,
-        [activeScreen.id]: [
-          ...(u[activeScreen.id] ?? []),
-          ...paintedLabels.map((label) => ({ label, value: portNumber })),
-        ],
-      }))
     },
-    [activeScreen, screens, manualOverrides.dataPortChains],
+    [activeScreen, screens, pushDataUndo],
   )
 
   const handleSetDataPortController = useCallback(
     (portNumber: number, controllerId: 1 | 2) => {
+      if (activeRouting.manualOverrides.dataPortControllers?.[portNumber] === controllerId) {
+        return
+      }
+      pushDataUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         return {
@@ -524,11 +601,15 @@ export default function App() {
         }
       })
     },
-    [activeScreen.id],
+    [activeRouting, activeScreen.id, pushDataUndo],
   )
 
   const handleSetDataLineColor = useCallback(
     (portNumber: number, colorIndex: number) => {
+      if (activeRouting.manualOverrides.dataPortColors?.[portNumber] === colorIndex) {
+        return
+      }
+      pushDataUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         const prevColor = current.manualOverrides.dataPortColors?.[portNumber]
@@ -548,11 +629,15 @@ export default function App() {
         }
       })
     },
-    [activeScreen.id],
+    [activeRouting, activeScreen.id, pushDataUndo],
   )
 
   const handleSetPowerLineColor = useCallback(
     (lineNumber: number, colorIndex: number) => {
+      if (activeRouting.manualOverrides.powerLineColors?.[lineNumber] === colorIndex) {
+        return
+      }
+      pushPowerUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         const prevColor = current.manualOverrides.powerLineColors?.[lineNumber]
@@ -572,7 +657,7 @@ export default function App() {
         }
       })
     },
-    [activeScreen.id],
+    [activeRouting, activeScreen.id, pushPowerUndo],
   )
 
   const handlePowerAssignment = useCallback(
@@ -583,6 +668,7 @@ export default function App() {
       const painted = labels.filter((label) => !emptySet.has(label))
       if (painted.length === 0) return
 
+      pushPowerUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         let powerLines = { ...current.manualOverrides.powerLines }
@@ -619,27 +705,20 @@ export default function App() {
           },
         }
       })
-      setPowerPaintUndo((u) => ({
-        ...u,
-        [activeScreen.id]: [
-          ...(u[activeScreen.id] ?? []),
-          ...painted.map((label) => ({ label, value: lineNumber })),
-        ],
-      }))
     },
-    [activeScreen.id, screens],
+    [activeScreen.id, screens, pushPowerUndo],
   )
 
   const handleDataStartPoint = useCallback(
     (portNumber: number, label: string) => {
       const screen = screens.find((s) => s.id === activeScreen.id) ?? activeScreen
       const stripWidths = normalizeStripWidths(screen.stripWidths, screen.cabinetsWide)
-      const startCol = colFromCabinetLabel(label)
 
+      pushDataUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
-        let dataPorts = { ...current.manualOverrides.dataPorts, [label]: portNumber }
-        let dataPortChains = moveLabelToChainFront(
+        const dataPorts = { ...current.manualOverrides.dataPorts, [label]: portNumber }
+        const dataPortChains = moveLabelToChainFront(
           { ...(current.manualOverrides.dataPortChains ?? {}) },
           label,
           portNumber,
@@ -647,21 +726,6 @@ export default function App() {
         const dataStartPoints = { ...(current.manualOverrides.dataStartPoints ?? {}) }
         let dataPortControllers = {
           ...(current.manualOverrides.dataPortControllers ?? {}),
-        }
-
-        // Старт на другом стрипе — оставляем в линии только кабинеты этого стрипа
-        if (stripWidths.length > 1 && startCol != null) {
-          const chain = dataPortChains[portNumber] ?? [label]
-          const kept = chain.filter((lab) => {
-            if (lab === label) return true
-            const col = colFromCabinetLabel(lab)
-            return col != null && sameStripCol(startCol, col, stripWidths)
-          })
-          const dropped = new Set(chain.filter((lab) => !kept.includes(lab)))
-          for (const lab of dropped) {
-            if (dataPorts[lab] === portNumber) delete dataPorts[lab]
-          }
-          dataPortChains = { ...dataPortChains, [portNumber]: kept }
         }
 
         for (const [port, start] of Object.entries(dataStartPoints)) {
@@ -694,7 +758,7 @@ export default function App() {
         }
       })
     },
-    [activeScreen, screens],
+    [activeScreen, screens, pushDataUndo],
   )
 
   const removeCabinetFromData = useCallback(
@@ -780,57 +844,70 @@ export default function App() {
   const handleUndoDataLast = useCallback(() => {
     const stack = dataPaintUndo[activeScreen.id] ?? []
     if (stack.length === 0) return
-    const entry = stack[stack.length - 1]
+    const snapshot = stack[stack.length - 1]!
     setDataPaintUndo((u) => ({
       ...u,
       [activeScreen.id]: (u[activeScreen.id] ?? []).slice(0, -1),
     }))
-    removeCabinetFromData(entry.label)
-  }, [activeScreen.id, dataPaintUndo, removeCabinetFromData])
+    setRoutingByScreen((prev) => {
+      const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+      return {
+        ...prev,
+        [activeScreen.id]: {
+          ...current,
+          manualModeData: true,
+          manualOverrides: {
+            ...current.manualOverrides,
+            ...snapshot,
+          },
+        },
+      }
+    })
+  }, [activeScreen.id, dataPaintUndo])
 
   const handleUndoPowerLast = useCallback(() => {
     const stack = powerPaintUndo[activeScreen.id] ?? []
     if (stack.length === 0) return
-    const entry = stack[stack.length - 1]
+    const snapshot = stack[stack.length - 1]!
     setPowerPaintUndo((u) => ({
       ...u,
       [activeScreen.id]: (u[activeScreen.id] ?? []).slice(0, -1),
     }))
-    removeCabinetFromPower(entry.label)
-  }, [activeScreen.id, powerPaintUndo, removeCabinetFromPower])
+    setRoutingByScreen((prev) => {
+      const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
+      return {
+        ...prev,
+        [activeScreen.id]: {
+          ...current,
+          manualModePower: true,
+          manualOverrides: {
+            ...current.manualOverrides,
+            ...snapshot,
+          },
+        },
+      }
+    })
+  }, [activeScreen.id, powerPaintUndo])
 
   /** Клик по последнему кабинету активной линии — снять заполнение */
   const handleUndoDataCabinet = useCallback(
     (label: string) => {
-      setDataPaintUndo((u) => {
-        const stack = u[activeScreen.id] ?? []
-        const idx = [...stack].map((e) => e.label).lastIndexOf(label)
-        if (idx < 0) return u
-        const next = [...stack]
-        next.splice(idx, 1)
-        return { ...u, [activeScreen.id]: next }
-      })
+      pushDataUndo()
       removeCabinetFromData(label)
     },
-    [activeScreen.id, removeCabinetFromData],
+    [pushDataUndo, removeCabinetFromData],
   )
 
   const handleUndoPowerCabinet = useCallback(
     (label: string) => {
-      setPowerPaintUndo((u) => {
-        const stack = u[activeScreen.id] ?? []
-        const idx = [...stack].map((e) => e.label).lastIndexOf(label)
-        if (idx < 0) return u
-        const next = [...stack]
-        next.splice(idx, 1)
-        return { ...u, [activeScreen.id]: next }
-      })
+      pushPowerUndo()
       removeCabinetFromPower(label)
     },
-    [activeScreen.id, removeCabinetFromPower],
+    [pushPowerUndo, removeCabinetFromPower],
   )
 
   const handleClearDataManual = useCallback(() => {
+    pushDataUndo()
     setRoutingByScreen((prev) => {
       const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
       return {
@@ -849,10 +926,10 @@ export default function App() {
         },
       }
     })
-    setDataPaintUndo((u) => ({ ...u, [activeScreen.id]: [] }))
-  }, [activeScreen.id])
+  }, [activeScreen.id, pushDataUndo])
 
   const handleClearPowerManual = useCallback(() => {
+    pushPowerUndo()
     setRoutingByScreen((prev) => {
       const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
       return {
@@ -870,12 +947,15 @@ export default function App() {
         },
       }
     })
-    setPowerPaintUndo((u) => ({ ...u, [activeScreen.id]: [] }))
-  }, [activeScreen.id])
+  }, [activeScreen.id, pushPowerUndo])
 
   /** Перевернуть активную data-линию: первый кабинет становится последним */
   const handleReverseActiveDataLine = useCallback(
     (portNumber: number) => {
+      if ((activeRouting.manualOverrides.dataPortChains?.[portNumber]?.length ?? 0) < 2) {
+        return
+      }
+      pushDataUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         const dataPortChains = reverseChain(
@@ -902,12 +982,16 @@ export default function App() {
         }
       })
     },
-    [activeScreen.id],
+    [activeRouting, activeScreen.id, pushDataUndo],
   )
 
   /** Перевернуть активную power-линию: первый кабинет становится последним */
   const handleReverseActivePowerLine = useCallback(
     (lineNumber: number) => {
+      if ((activeRouting.manualOverrides.powerLineChains?.[lineNumber]?.length ?? 0) < 2) {
+        return
+      }
+      pushPowerUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         const powerLineChains = reverseChain(
@@ -934,12 +1018,16 @@ export default function App() {
         }
       })
     },
-    [activeScreen.id],
+    [activeRouting, activeScreen.id, pushPowerUndo],
   )
 
   /** Очистить активную data-линию: снять все кабинеты и сбросить цепочку */
   const handleClearActiveDataLine = useCallback(
     (portNumber: number) => {
+      if ((activeRouting.manualOverrides.dataPortChains?.[portNumber]?.length ?? 0) === 0) {
+        return
+      }
+      pushDataUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         const { chains: dataPortChains, labels } = clearChain(
@@ -967,17 +1055,17 @@ export default function App() {
           },
         }
       })
-      setDataPaintUndo((u) => ({
-        ...u,
-        [activeScreen.id]: (u[activeScreen.id] ?? []).filter((e) => e.value !== portNumber),
-      }))
     },
-    [activeScreen.id],
+    [activeRouting, activeScreen.id, pushDataUndo],
   )
 
   /** Очистить активную power-линию: снять все кабинеты и сбросить цепочку */
   const handleClearActivePowerLine = useCallback(
     (lineNumber: number) => {
+      if ((activeRouting.manualOverrides.powerLineChains?.[lineNumber]?.length ?? 0) === 0) {
+        return
+      }
+      pushPowerUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         const { chains: powerLineChains, labels } = clearChain(
@@ -1005,33 +1093,17 @@ export default function App() {
           },
         }
       })
-      setPowerPaintUndo((u) => ({
-        ...u,
-        [activeScreen.id]: (u[activeScreen.id] ?? []).filter((e) => e.value !== lineNumber),
-      }))
     },
-    [activeScreen.id],
-  )
-
-  /** Обновить стек undo после перенумерации линии */
-  const remapPaintUndo = useCallback(
-    (
-      stack: PaintUndoEntry[],
-      from: number,
-      to: number,
-      swapped: boolean,
-    ): PaintUndoEntry[] =>
-      stack.map((e) => {
-        if (e.value === from) return { ...e, value: to }
-        if (swapped && e.value === to) return { ...e, value: from }
-        return e
-      }),
-    [],
+    [activeRouting, activeScreen.id, pushPowerUndo],
   )
 
   /** Перенумеровать активную data-линию: move или swap с целевой */
   const handleRenumberActiveDataLine = useCallback(
     (from: number, to: number) => {
+      if (from === to || !(activeRouting.manualOverrides.dataPortChains?.[from]?.length)) {
+        return
+      }
+      pushDataUndo()
       let swapped = false
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
@@ -1071,17 +1143,17 @@ export default function App() {
           },
         }
       })
-      setDataPaintUndo((u) => ({
-        ...u,
-        [activeScreen.id]: remapPaintUndo(u[activeScreen.id] ?? [], from, to, swapped),
-      }))
     },
-    [activeScreen.id, remapPaintUndo],
+    [activeRouting, activeScreen.id, pushDataUndo],
   )
 
   /** Перенумеровать активную power-линию: move или swap с целевой */
   const handleRenumberActivePowerLine = useCallback(
     (from: number, to: number) => {
+      if (from === to || !(activeRouting.manualOverrides.powerLineChains?.[from]?.length)) {
+        return
+      }
+      pushPowerUndo()
       let swapped = false
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
@@ -1115,16 +1187,13 @@ export default function App() {
           },
         }
       })
-      setPowerPaintUndo((u) => ({
-        ...u,
-        [activeScreen.id]: remapPaintUndo(u[activeScreen.id] ?? [], from, to, swapped),
-      }))
     },
-    [activeScreen.id, remapPaintUndo],
+    [activeRouting, activeScreen.id, pushPowerUndo],
   )
 
   const handlePowerStartPoint = useCallback(
     (lineNumber: number, label: string) => {
+      pushPowerUndo()
       setRoutingByScreen((prev) => {
         const current = prev[activeScreen.id] ?? EMPTY_SCREEN_ROUTING
         const powerLines = {
@@ -1160,7 +1229,7 @@ export default function App() {
         }
       })
     },
-    [activeScreen.id],
+    [activeScreen.id, pushPowerUndo],
   )
 
   const handleToggleEmpty = useCallback(
@@ -1525,8 +1594,12 @@ export default function App() {
                   emptyPaintMode={emptyPaintMode}
                   onToggleEmpty={handleToggleEmpty}
                   manualAssignments={manualOverrides.dataPorts}
-                  chainOrder={manualOverrides.dataPortChains ?? {}}
-                  startPoints={manualOverrides.dataStartPoints ?? {}}
+                  chainOrder={
+                    manualOverrides.dataPortChains ?? EMPTY_MANUAL_OVERRIDES.dataPortChains
+                  }
+                  startPoints={
+                    manualOverrides.dataStartPoints ?? EMPTY_MANUAL_OVERRIDES.dataStartPoints
+                  }
                   onAssign={handleDataAssignment}
                   onSetStartPoint={handleDataStartPoint}
                   onClearManual={handleClearDataManual}
@@ -1567,8 +1640,12 @@ export default function App() {
                   emptyPaintMode={emptyPaintMode}
                   onToggleEmpty={handleToggleEmpty}
                   manualAssignments={manualOverrides.powerLines}
-                  chainOrder={manualOverrides.powerLineChains ?? {}}
-                  startPoints={manualOverrides.powerStartPoints ?? {}}
+                  chainOrder={
+                    manualOverrides.powerLineChains ?? EMPTY_MANUAL_OVERRIDES.powerLineChains
+                  }
+                  startPoints={
+                    manualOverrides.powerStartPoints ?? EMPTY_MANUAL_OVERRIDES.powerStartPoints
+                  }
                   onAssign={handlePowerAssignment}
                   onSetStartPoint={handlePowerStartPoint}
                   onClearManual={handleClearPowerManual}

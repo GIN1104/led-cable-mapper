@@ -10,6 +10,7 @@ import {
   aggregateCvtOptical,
   aggregateLedCards,
   buildEquipmentListState,
+  dataLinesPerController,
   resolveCvtModel,
   resolveCvtQtyForScreen,
   resolveEquipmentAutoQuantity,
@@ -241,12 +242,83 @@ assertEq('CVT qty trunk15 ports4', resolveCvtQtyForScreen(15, 4), 0)
 assertEq('CVT qty trunk50 ports4', resolveCvtQtyForScreen(50, 4), 1)
 assertEq('CVT qty trunk15 ports8', resolveCvtQtyForScreen(15, 8), 2)
 assertEq('CVT qty trunk50 ports8', resolveCvtQtyForScreen(50, 8), 2)
-assertEq('CVT dual VX1=7 VX2=3 trunk15 → +1', resolveCvtQtyForScreen(15, 10, [7, 3]), 1)
+// Dual: max(classic, dualBase+extras)
+// Dual: max(classic, trunkBase + count(VX>6)) — не занижаем при ровном сплите 4+4 и т.п.
+assertEq('CVT dual VX1=4 VX2=4 trunk15 → classic 2', resolveCvtQtyForScreen(15, 8, [4, 4]), 2)
+assertEq('CVT dual VX1=7 VX2=3 trunk15 → max(2,1)=2', resolveCvtQtyForScreen(15, 10, [7, 3]), 2)
 assertEq('CVT dual VX1=7 VX2=3 trunk50 → 2', resolveCvtQtyForScreen(50, 10, [7, 3]), 2)
-assertEq('CVT dual VX1=5 VX2=5 trunk50 → 1', resolveCvtQtyForScreen(50, 10, [5, 5]), 1)
+assertEq('CVT dual VX1=5 VX2=5 trunk50 → max(2,1)=2', resolveCvtQtyForScreen(50, 10, [5, 5]), 2)
 assertEq('CVT dual VX1=7 VX2=8 trunk50 → 3', resolveCvtQtyForScreen(50, 15, [7, 8]), 3)
+assertEq('CVT dual VX1=8 VX2=4 trunk15 → 2', resolveCvtQtyForScreen(15, 12, [8, 4]), 2)
+assertEq('CVT dual VX1=7 VX2=8 trunk15 → 2', resolveCvtQtyForScreen(15, 15, [7, 8]), 2)
 assertEq('CVT model VX1000', resolveCvtModel('NovaStar VX1000'), 'CVT10')
 assertEq('CVT model MCTRL4K', resolveCvtModel('NovaStar MCTRL4K'), 'CVT16')
+
+// Интеграция: 2× VX, ровный сплит, всего >6 линий → не 0, а classic 2
+{
+  const dualEven = makeConfig(20, 3, 'dual-even', 'DualEven', {
+    dualVx1000: true,
+    trunkLengthM: 15,
+  })
+  const half = Math.floor(dualEven.cabinetsWide / 2)
+  const dualEvenScreen = {
+    ...dualEven,
+    dualVx1000: true,
+    stripWidths: [half, dualEven.cabinetsWide - half],
+    stripControllerIds: [1, 2],
+  }
+  const dualEvenResult = computeRouting(dualEvenScreen)
+  const perVxEven = dataLinesPerController(dualEvenScreen, dualEvenResult)
+  assertEq(
+    'dual even perVx sum = dataPorts',
+    (perVxEven?.[0] ?? 0) + (perVxEven?.[1] ?? 0),
+    dualEvenResult.summary.dataPorts,
+  )
+  const dualEvenAgg = aggregateCvtOptical([
+    { screen: dualEvenScreen, result: dualEvenResult },
+  ])
+  const expectEven =
+    dualEvenResult.summary.dataPorts > 6
+      ? 2
+      : dualEvenScreen.trunkLengthM > 30
+        ? 1
+        : 0
+  assertEq('dual even CVT qty (not undercounted)', dualEvenAgg.quantity, expectEven)
+}
+
+// Интеграция: неравномерный сплит → один VX >6; trunk 50 + оба >6 → 3
+{
+  const dualUnevenBase = makeConfig(30, 4, 'dual-uneven', 'DualUneven', {
+    dualVx1000: true,
+    trunkLengthM: 50,
+    signalBackup: false,
+  })
+  const w = dualUnevenBase.cabinetsWide
+  const dualUnevenScreen = {
+    ...dualUnevenBase,
+    dualVx1000: true,
+    stripWidths: [w - 12, 12],
+    stripControllerIds: [1, 2],
+    trunkLengthM: 50,
+  }
+  const dualUnevenResult = computeRouting(dualUnevenScreen)
+  const perVxU = dataLinesPerController(dualUnevenScreen, dualUnevenResult)
+  const overloaded = (perVxU ?? []).filter((n) => n > 6).length
+  const dualUnevenAgg = aggregateCvtOptical([
+    { screen: dualUnevenScreen, result: dualUnevenResult },
+  ])
+  const expectU = resolveCvtQtyForScreen(
+    50,
+    dualUnevenResult.summary.dataPorts,
+    perVxU,
+  )
+  assertEq('dual uneven CVT matches formula', dualUnevenAgg.quantity, expectU)
+  if (overloaded >= 2) {
+    assertEq('dual uneven both overloaded → ≥3', dualUnevenAgg.quantity >= 3 ? 1 : 0, 1)
+  } else if (overloaded === 1) {
+    assertEq('dual uneven one overloaded → ≥2', dualUnevenAgg.quantity >= 2 ? 1 : 0, 1)
+  }
+}
 
 const cvtNone = aggregateCvtOptical([
   { screen: makeConfig(10, 3, 'c1', 'C1', { trunkLengthM: 15 }), result: fakeResult(4) },

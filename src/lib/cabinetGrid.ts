@@ -660,6 +660,16 @@ export function orderPowerRegionByPreset(
       )
     case '3.9-big':
     case '3.9-small':
+    case 'custom':
+      // Змейка: соседние ряды чередуют LTR/RTL — иначе стрелки power все в одну сторону
+      return orderRegionBySnake(
+        cabinets,
+        colStart,
+        rowStart,
+        width,
+        height,
+        direction === 'rtl' ? 'right' : 'left',
+      )
     default:
       return orderRegionByDirection(cabinets, colStart, rowStart, width, height, direction)
   }
@@ -818,6 +828,10 @@ export function orderPowerCabinetsFromStart(
       cabinetWidthMm,
       cabinetHeightMm,
     )
+  }
+  // 3.9 / custom: змейка от START; Reshet/2.9 — направленный обход
+  if (preset === '3.9-big' || preset === '3.9-small' || preset === 'custom') {
+    return orderCabinetsFromStartSnake(cabinets, startLabel, startEdge)
   }
   return orderCabinetsFromStart(cabinets, startLabel, startEdge)
 }

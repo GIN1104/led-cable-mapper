@@ -2,6 +2,7 @@ import type { Cabinet } from '../types'
 import {
   DATA_LINE_PALETTE,
   POWER_LINE_PALETTE,
+  basePaletteSize,
   colorSetByIndex,
   type LineColorSet,
   type LineColorMode,
@@ -42,13 +43,17 @@ export function buildLineAdjacency(
   return adj
 }
 
-function paletteSize(mode: LineColorMode): number {
-  return mode === 'data' ? DATA_LINE_PALETTE.length : POWER_LINE_PALETTE.length
+function paletteSize(mode: LineColorMode, lineCount = 0): number {
+  const base = basePaletteSize(mode)
+  // Data: всегда хватает уникальных слотов (procedural за палитрой)
+  if (mode === 'data') return Math.max(base, lineCount)
+  return base
 }
 
 /**
- * Назначает индексы палитры линиям так, чтобы соседние на сетке не совпадали.
- * manualColors: lineId → индекс палитры (0-based), ручной выбор пользователя.
+ * Назначает индексы палитры линиям.
+ * Data: каждая линия — свой уникальный цвет (+ соседние на сетке не из одной семьи).
+ * Power: как раньше — без совпадений у соседей.
  */
 export function assignDistinctLineColors(
   lineIds: number[],
@@ -56,8 +61,9 @@ export function assignDistinctLineColors(
   mode: LineColorMode,
   manualColors?: Record<number, number>,
 ): Map<number, number> {
-  const size = paletteSize(mode)
+  const size = paletteSize(mode, lineIds.length)
   const result = new Map<number, number>()
+  const used = new Set<number>()
 
   for (const id of lineIds) {
     const manual = manualColors?.[id]
@@ -65,9 +71,17 @@ export function assignDistinctLineColors(
       manual != null &&
       Number.isFinite(manual) &&
       manual >= 0 &&
-      manual < size
+      (mode !== 'data' || manual < size)
     ) {
-      result.set(id, manual)
+      const idx =
+        mode === 'data'
+          ? Math.min(Math.floor(manual), size - 1)
+          : ((manual % basePaletteSize(mode)) + basePaletteSize(mode)) %
+            basePaletteSize(mode)
+      // Data: ручной цвет тоже уникален — если занят, сдвинем ниже
+      if (mode === 'data' && used.has(idx)) continue
+      result.set(id, idx)
+      used.add(idx)
     }
   }
 
@@ -77,20 +91,46 @@ export function assignDistinctLineColors(
 
   for (const id of sorted) {
     if (result.has(id)) continue
-    const forbidden = new Set<number>()
+
+    const neighborForbidden = new Set<number>()
     for (const neighbor of adjacency.get(id) ?? []) {
       const c = result.get(neighbor)
-      if (c != null) forbidden.add(c)
+      if (c == null) continue
+      neighborForbidden.add(c)
+      if (c - 1 >= 0) neighborForbidden.add(c - 1)
+      if (c + 1 < size) neighborForbidden.add(c + 1)
     }
+
     let picked = -1
+    // 1) свободен глобально и не соседний оттенок
     for (let i = 0; i < size; i++) {
-      if (!forbidden.has(i)) {
+      if (!used.has(i) && !neighborForbidden.has(i)) {
         picked = i
         break
       }
     }
+    // 2) любой ещё не использованный (тикошрет: все линии разные)
+    if (picked < 0) {
+      for (let i = 0; i < size; i++) {
+        if (!used.has(i)) {
+          picked = i
+          break
+        }
+      }
+    }
+    // 3) power fallback / крайний случай
+    if (picked < 0) {
+      for (let i = 0; i < size; i++) {
+        if (!neighborForbidden.has(i)) {
+          picked = i
+          break
+        }
+      }
+    }
     if (picked < 0) picked = (id - 1) % size
+
     result.set(id, picked)
+    used.add(picked)
   }
 
   return result
@@ -120,10 +160,10 @@ export function lineColorFromMap(
   }
   const idx = colorMap.get(lineId)
   if (idx != null) return colorSetByIndex(mode, idx)
-  return colorSetByIndex(mode, (lineId - 1) % paletteSize(mode))
+  return colorSetByIndex(mode, (lineId - 1) % basePaletteSize(mode))
 }
 
-/** Первый свободный цвет для линии (не как у соседей) */
+/** Первый свободный цвет для линии (уникальный + не как у соседей) */
 export function suggestLineColorIndex(
   lineId: number,
   mode: LineColorMode,
@@ -132,18 +172,36 @@ export function suggestLineColorIndex(
   manualColors?: Record<number, number>,
 ): number {
   const adjacency = buildLineAdjacency(cabinets, lineOfCabinet)
-  const size = paletteSize(mode)
-  const forbidden = new Set<number>()
+  const lineIds = [...new Set([...lineOfCabinet.values(), lineId])].filter((n) => n > 0)
+  const size = paletteSize(mode, Math.max(lineIds.length, lineId))
+  const used = new Set<number>()
+  for (const [lid, idx] of Object.entries(manualColors ?? {})) {
+    if (Number(lid) === lineId) continue
+    if (idx >= 0 && idx < size) used.add(idx)
+  }
+  // Уже назначенные соседям по умолчанию
   for (const neighbor of adjacency.get(lineId) ?? []) {
     const manual = manualColors?.[neighbor]
-    if (manual != null && manual >= 0 && manual < size) {
-      forbidden.add(manual)
-      continue
-    }
-    forbidden.add((neighbor - 1) % size)
+    if (manual != null && manual >= 0 && manual < size) used.add(manual)
+  }
+
+  const neighborForbidden = new Set<number>(used)
+  for (const neighbor of adjacency.get(lineId) ?? []) {
+    const manual = manualColors?.[neighbor]
+    const idx =
+      manual != null && manual >= 0 && manual < size
+        ? manual
+        : (neighbor - 1) % basePaletteSize(mode)
+    neighborForbidden.add(idx)
+    if (idx - 1 >= 0) neighborForbidden.add(idx - 1)
+    if (idx + 1 < size) neighborForbidden.add(idx + 1)
+  }
+
+  for (let i = 0; i < size; i++) {
+    if (!used.has(i) && !neighborForbidden.has(i)) return i
   }
   for (let i = 0; i < size; i++) {
-    if (!forbidden.has(i)) return i
+    if (!used.has(i)) return i
   }
   return (lineId - 1) % size
 }

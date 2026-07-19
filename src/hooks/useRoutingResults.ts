@@ -5,11 +5,18 @@ import { computeRouting } from '../lib/routingEngine'
 import { allScreensRoutingKey, fullRoutingKey, screenRoutingKey } from '../lib/screenConfigHash'
 import { useAfterFirstPaint } from './useAfterFirstPaint'
 
-function computeForScreen(
+/** Кэш маршрутизации — один экран не считается дважды (active + allScreens) */
+const ROUTING_CACHE_MAX = 24
+const routingCache = new Map<string, RoutingResult>()
+
+function computeForScreenCached(
   screen: ScreenConfig,
   routing: ScreenRoutingState,
 ): RoutingResult {
-  return computeRouting(screen, {
+  const key = fullRoutingKey(screen, routing)
+  const hit = routingCache.get(key)
+  if (hit) return hit
+  const result = computeRouting(screen, {
     manualModeData: routing.manualModeData,
     manualModePower: routing.manualModePower,
     manualOverrides:
@@ -17,6 +24,12 @@ function computeForScreen(
         ? routing.manualOverrides
         : undefined,
   })
+  routingCache.set(key, result)
+  if (routingCache.size > ROUTING_CACHE_MAX) {
+    const oldest = routingCache.keys().next().value
+    if (oldest != null) routingCache.delete(oldest)
+  }
+  return result
 }
 
 export interface ActiveRoutingState {
@@ -42,15 +55,15 @@ export function useActiveRouting(
 
   const result = useMemo(() => {
     if (!afterPaint) return null
-    return computeForScreen(screen, routing)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- только routingKey; routing/screen из того же рендера
+    return computeForScreenCached(screen, routing)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- только routingKey
   }, [afterPaint, routingKey])
 
   const autoResult = useMemo(() => {
     if (!afterPaint) return null
     if (!anyManual) return result
-    return computeRouting(screen)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- только screenKey / anyManual
+    return computeForScreenCached(screen, EMPTY_SCREEN_ROUTING)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- screenKey / anyManual / result
   }, [afterPaint, screenKey, anyManual, result])
 
   return {
@@ -75,7 +88,10 @@ export function useAllScreensRouting(
     if (!enabled || !afterPaint) return []
     return screens.map((screen) => ({
       screen,
-      result: computeForScreen(screen, routingByScreen[screen.id] ?? EMPTY_SCREEN_ROUTING),
+      result: computeForScreenCached(
+        screen,
+        routingByScreen[screen.id] ?? EMPTY_SCREEN_ROUTING,
+      ),
     }))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- только combinedRoutingKey
   }, [enabled, afterPaint, combinedRoutingKey])

@@ -154,8 +154,35 @@ const ARROW_METRICS = {
   },
 } as const
 
+/** Стиль как на схеме: треугольник в середине каждого сегмента */
+const MID_ARROW_METRICS = {
+  desktop: {
+    stroke: 2.75,
+    outline: 4.5,
+    triSize: 11,
+  },
+  mobile: {
+    stroke: 2.25,
+    outline: 3.75,
+    triSize: 9,
+  },
+} as const
+
+/** Красный fallback для mid-стрелок (если цвет линии не задан) */
+const MID_ARROW_FALLBACK = '#e11d48'
+/** Чёрные основные линии mid */
+const MID_LINE_COLOR = '#111111'
+/** Backup — синий, явно другой от основной чёрной */
+const MID_BACKUP_LINE_COLOR = '#2563eb'
+
+type DataArrowStyle = 'classic' | 'mid'
+
 function getArrowMetrics(isMobile: boolean) {
   return isMobile ? ARROW_METRICS.mobile : ARROW_METRICS.desktop
+}
+
+function getMidArrowMetrics(isMobile: boolean) {
+  return isMobile ? MID_ARROW_METRICS.mobile : MID_ARROW_METRICS.desktop
 }
 
 function arrowHeadPoints(
@@ -170,6 +197,164 @@ function arrowHeadPoints(
   const hx2 = tipX - headLen * Math.cos(angle + headAngle)
   const hy2 = tipY - headLen * Math.sin(angle + headAngle)
   return `${tipX},${tipY} ${hx1},${hy1} ${hx2},${hy2}`
+}
+
+/** Равносторонний треугольник по центру сегмента, остриё по направлению потока */
+function midTrianglePoints(cx: number, cy: number, angle: number, size: number): string {
+  const tipX = cx + Math.cos(angle) * size
+  const tipY = cy + Math.sin(angle) * size
+  const back = size * 0.55
+  const half = size * 0.72
+  const bx = cx - Math.cos(angle) * back
+  const by = cy - Math.sin(angle) * back
+  const px = -Math.sin(angle) * half
+  const py = Math.cos(angle) * half
+  return `${tipX},${tipY} ${bx + px},${by + py} ${bx - px},${by - py}`
+}
+
+/**
+ * Mid-стиль: ровная ортогональная линия (без зигзагов на углах) +
+ * стрелки контрастного к кубикам цвета.
+ */
+function MidContinuousChain({
+  points,
+  color,
+  arrowColor = MID_ARROW_FALLBACK,
+  isMobile = false,
+  dashed = false,
+}: {
+  points: { x: number; y: number }[]
+  color: string
+  arrowColor?: string
+  isMobile?: boolean
+  dashed?: boolean
+}) {
+  if (points.length < 2) return null
+  const mid = getMidArrowMetrics(isMobile)
+  const d = points
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${p.y.toFixed(2)}`)
+    .join(' ')
+  const dash = dashed ? (isMobile ? '5 4' : '7 5') : undefined
+
+  return (
+    <g pointerEvents="none">
+      <path
+        d={d}
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth={mid.outline}
+        vectorEffect="non-scaling-stroke"
+        strokeLinecap="square"
+        strokeLinejoin="miter"
+        strokeDasharray={dash}
+      />
+      <path
+        d={d}
+        fill="none"
+        stroke={color}
+        strokeWidth={mid.stroke}
+        vectorEffect="non-scaling-stroke"
+        strokeLinecap="square"
+        strokeLinejoin="miter"
+        strokeDasharray={dash}
+      />
+      {points.slice(0, -1).map((from, i) => {
+        const to = points[i + 1]!
+        const dx = to.x - from.x
+        const dy = to.y - from.y
+        const len2 = dx * dx + dy * dy
+        if (len2 < 64) return null
+        const angle = Math.atan2(dy, dx)
+        return (
+          <polygon
+            key={`mid-tri-${i}`}
+            points={midTrianglePoints(
+              (from.x + to.x) / 2,
+              (from.y + to.y) / 2,
+              angle,
+              mid.triSize,
+            )}
+            fill={arrowColor}
+            stroke="#ffffff"
+            strokeWidth={isMobile ? 0.9 : 1.1}
+            strokeLinejoin="round"
+          />
+        )
+      })}
+    </g>
+  )
+}
+
+/** В auto каждая видимая data-линия остаётся внутри своего блока/стрипа. */
+function splitAutoChainByStrips<T extends { col: number }>(
+  cabinets: T[],
+  stripWidths: number[],
+  manualMode: boolean,
+): T[][] {
+  if (manualMode || stripWidths.length <= 1 || cabinets.length < 2) {
+    return cabinets.length > 0 ? [cabinets] : []
+  }
+
+  const segments: T[][] = []
+  let current: T[] = []
+  for (const cabinet of cabinets) {
+    const previous = current[current.length - 1]
+    if (previous && !sameStripCol(previous.col, cabinet.col, stripWidths)) {
+      if (current.length > 0) segments.push(current)
+      current = []
+    }
+    current.push(cabinet)
+  }
+  if (current.length > 0) segments.push(current)
+  return segments
+}
+
+/**
+ * Ровная «полоса» вдоль змейки: на горизонтали — сдвиг по Y, на вертикали — по X.
+ * На углу берём пересечение полос (оба сдвига) → только прямые 90°, без зигзагов.
+ */
+function buildSmoothLanePoints(
+  cabinets: { col: number; row: number }[],
+  cabCenter: (col: number, row: number) => { x: number; y: number },
+  kind: 'data' | 'backup',
+  wide: number,
+  cellW: number,
+  isRtl: boolean,
+  isMobile: boolean,
+): { x: number; y: number }[] {
+  if (cabinets.length < 2) return []
+
+  const centers = cabinets.map((c) => cabCenter(c.col, c.row))
+  const yMag = isMobile ? DATA_LANE_OFFSET_MID.mobile : DATA_LANE_OFFSET_MID.desktop
+  const yOff = kind === 'data' ? -yMag : yMag
+
+  const isHoriz = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    Math.abs(b.x - a.x) >= Math.abs(b.y - a.y)
+
+  return centers.map((c, i) => {
+    const prev = i > 0 ? centers[i - 1]! : null
+    const next = i < centers.length - 1 ? centers[i + 1]! : null
+    const touchH =
+      (prev != null && isHoriz(prev, c)) || (next != null && isHoriz(c, next))
+    const touchV =
+      (prev != null && !isHoriz(prev, c)) || (next != null && !isHoriz(c, next))
+
+    let dx = 0
+    let dy = 0
+    if (touchH) dy = yOff
+    if (touchV) {
+      dx = verticalLaneDesiredNx(
+        kind,
+        cabinets[i]!.col,
+        wide,
+        cellW,
+        isRtl,
+        isMobile,
+        true,
+      )
+    }
+    return { x: c.x + dx, y: c.y + dy }
+  })
 }
 
 const TRUNK_FEED_COLOR = '#ea580c'
@@ -205,32 +390,18 @@ function cabinetCenter(
   }
 }
 
-/** Расстояние data/backup от центра (горизонталь); на mobile меньше, иначе съедают подписи */
-const DATA_LANE_OFFSET = { desktop: 13, mobile: 8 } as const
+/** Mid: чуть ближе к центру, но не на цифры */
+const DATA_LANE_OFFSET_MID = { desktop: 16, mobile: 11 } as const
 /** Зазор между data и backup на вертикальном переходе */
 const VERTICAL_PAIR_GAP = { desktop: 14, mobile: 9 } as const
+const VERTICAL_PAIR_GAP_MID = { desktop: 16, mobile: 12 } as const
 /** Отступ вертикальных линий от внешнего края кубика */
 const VERTICAL_EDGE_INSET = { desktop: 12, mobile: 7 } as const
-
-/**
- * Перпендикулярное смещение data/backup для горизонтальных сегментов.
- * Data выше, backup ниже.
- */
-function dataLaneOffset(
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  kind: 'data' | 'backup',
-  isMobile = false,
-): number {
-  const dx = x2 - x1
-  const dy = y2 - y1
-  const len = Math.sqrt(dx * dx + dy * dy) || 1
-  const mag = isMobile ? DATA_LANE_OFFSET.mobile : DATA_LANE_OFFSET.desktop
-  const desiredNy = kind === 'data' ? -mag : mag
-  return (desiredNy * len) / dx
-}
+/** Mid: не у самого края — ближе к центру */
+const VERTICAL_EDGE_INSET_MID = { desktop: 14, mobile: 9 } as const
+/** Power: сдвиг от центра, чтобы не наезжать на номер кубика */
+const POWER_LANE_OFFSET = { desktop: 17, mobile: 12 } as const
+const POWER_VERTICAL_INSET = { desktop: 14, mobile: 9 } as const
 
 /** Внешняя сторона кубика на вертикальном переходе: -1 слева, +1 справа */
 function verticalOuterSign(col: number, wide: number, isRtl: boolean): number {
@@ -250,10 +421,13 @@ function verticalLaneDesiredNx(
   cellW: number,
   isRtl: boolean,
   isMobile = false,
+  midLanes = false,
 ): number {
   const outer = verticalOuterSign(col, wide, isRtl)
-  const edgeInset = isMobile ? VERTICAL_EDGE_INSET.mobile : VERTICAL_EDGE_INSET.desktop
-  const pairGap = isMobile ? VERTICAL_PAIR_GAP.mobile : VERTICAL_PAIR_GAP.desktop
+  const edgeTable = midLanes ? VERTICAL_EDGE_INSET_MID : VERTICAL_EDGE_INSET
+  const gapTable = midLanes ? VERTICAL_PAIR_GAP_MID : VERTICAL_PAIR_GAP
+  const edgeInset = isMobile ? edgeTable.mobile : edgeTable.desktop
+  const pairGap = isMobile ? gapTable.mobile : gapTable.desktop
   const outerFromCenter = cellW / 2 - edgeInset
   if (kind === 'data') return outer * outerFromCenter
   return outer * (outerFromCenter - pairGap)
@@ -284,6 +458,7 @@ function ArrowPath({
   isVertical = false,
   emphasizeHorizontal = false,
   isMobile = false,
+  style = 'classic',
 }: {
   x1: number
   y1: number
@@ -295,8 +470,9 @@ function ArrowPath({
   isVertical?: boolean
   emphasizeHorizontal?: boolean
   isMobile?: boolean
+  /** classic — наконечник у конца; mid — красный треугольник в середине сегмента */
+  style?: DataArrowStyle
 }) {
-  const metrics = getArrowMetrics(isMobile)
   const dx = x2 - x1
   const dy = y2 - y1
   const len = Math.sqrt(dx * dx + dy * dy) || 1
@@ -308,6 +484,60 @@ function ArrowPath({
 
   const ux = dx / len
   const uy = dy / len
+  const angle = Math.atan2(uy, ux)
+
+  if (style === 'mid') {
+    const mid = getMidArrowMetrics(isMobile)
+    // Линия почти от центра до центра — как на референс-схеме
+    const inset = dashed
+      ? Math.min(len * 0.18, isMobile ? 10 : 14)
+      : Math.min(len * 0.08, isMobile ? 5 : 7)
+    const ax = sx + ux * inset
+    const ay = sy + uy * inset
+    const bx = sx + ux * (len - inset)
+    const by = sy + uy * (len - inset)
+    const mx = (ax + bx) / 2
+    const my = (ay + by) / 2
+
+    return (
+      <g pointerEvents="none">
+        <line
+          x1={ax}
+          y1={ay}
+          x2={bx}
+          y2={by}
+          stroke="#ffffff"
+          strokeWidth={mid.outline}
+          strokeLinecap="round"
+        />
+        <line
+          x1={ax}
+          y1={ay}
+          x2={bx}
+          y2={by}
+          stroke={color}
+          strokeWidth={
+            emphasizeHorizontal
+              ? mid.stroke + 0.35
+              : isVertical
+                ? Math.max(1.75, mid.stroke - 0.25)
+                : mid.stroke
+          }
+          strokeDasharray={dashed ? (isMobile ? '4 3' : '6 4') : undefined}
+          strokeLinecap="round"
+        />
+        <polygon
+          points={midTrianglePoints(mx, my, angle, mid.triSize)}
+          fill={MID_ARROW_FALLBACK}
+          stroke="#ffffff"
+          strokeWidth={isMobile ? 0.9 : 1.1}
+          strokeLinejoin="round"
+        />
+      </g>
+    )
+  }
+
+  const metrics = getArrowMetrics(isMobile)
 
   // Основные линии длиннее; backup короче. На mobile сильнее отступаем от центров —
   // чтобы наконечники не накрывали A1/B2…
@@ -321,8 +551,6 @@ function ArrowPath({
   const ay = sy + uy * startInset
   const bx = sx + ux * (len - tipInset)
   const by = sy + uy * (len - tipInset)
-
-  const angle = Math.atan2(uy, ux)
 
   return (
     <g pointerEvents="none">
@@ -451,7 +679,6 @@ export default memo(function GridVisualization({
     dataChains,
     backupChains,
     powerLines,
-    dataLinks,
     backupLinks,
     powerLinks,
     warnings,
@@ -738,8 +965,6 @@ export default memo(function GridVisualization({
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set())
   const [activeValue, setActiveValue] = useState(1)
   const [editMode, setEditMode] = useState<ManualEditMode>('assign')
-  /** Продолжать активную линию стрелками ←↑↓→ от последнего кабинета */
-  const [arrowContinue, setArrowContinue] = useState(true)
   /** Контекст VX1/VX2 для выбора и создания линий D1-x / D2-x */
   const [manualVxContext, setManualVxContext] = useState<1 | 2>(1)
   const manualKeyboardRef = useRef<HTMLDivElement>(null)
@@ -898,10 +1123,13 @@ export default memo(function GridVisualization({
     return [...new Set(fromResult)].filter((n) => n >= 1).sort((a, b) => a - b)
   }, [assignmentMap, isData, dataChains, powerLines])
 
-  /** Кнопки выбора линии: занятые + активная + слот «следующая» в ручном режиме */
+  /** Кнопки выбора: все расчётные линии + активная + слот для новой линии. */
   const valueNumbers = useMemo(() => {
     const combined = new Set(usedLineNumbers)
     if (manualMode) {
+      // Все рассчитанные D/P остаются доступными после Clear:
+      // очищенную линию можно снова выбрать и нарисовать с нуля.
+      for (let n = 1; n <= maxAssignable; n++) combined.add(n)
       if (activeValue >= 1) combined.add(activeValue)
       const maxUsed = usedLineNumbers.length > 0 ? Math.max(...usedLineNumbers) : 0
       const nextSlot = Math.max(maxAssignable, maxUsed) + 1
@@ -1097,24 +1325,10 @@ export default memo(function GridVisualization({
   const assignTo = useCallback(
     (labels: string[], value: number) => {
       if (!manualMode || !onAssign || labels.length === 0) return
-      let toAssign = labels
-      // Тикшорет: не красить кабинеты с другого стрипа
-      if (isData && stripWidths.length > 1) {
-        const chain = getChainForPort(value)
-        const anchorLabel = chain[0] ?? labels[0]
-        const anchor = cabinets.find((c) => c.label === anchorLabel)
-        if (anchor) {
-          toAssign = labels.filter((lab) => {
-            const cab = cabinets.find((c) => c.label === lab)
-            return cab != null && sameStripCol(anchor.col, cab.col, stripWidths)
-          })
-        }
-      }
-      if (toAssign.length === 0) return
-      onAssign(toAssign, value)
+      onAssign(labels, value)
       setSelectedLabels(new Set())
     },
-    [manualMode, onAssign, isData, stripWidths, getChainForPort, cabinets],
+    [manualMode, onAssign],
   )
 
   const labelAtCell = useCallback(
@@ -1136,17 +1350,9 @@ export default memo(function GridVisualization({
       else if (key === 'ArrowUp') nextRow = cab.row - 1
       else if (key === 'ArrowDown') nextRow = cab.row + 1
       else return null
-      // Тикшорет: стрелки не переходят через границу стрипа
-      if (
-        isData &&
-        stripWidths.length > 1 &&
-        !sameStripCol(cab.col, nextCol, stripWidths)
-      ) {
-        return null
-      }
       return labelAtCell(nextCol, nextRow)
     },
-    [cabinets, labelAtCell, isData, stripWidths],
+    [cabinets, labelAtCell],
   )
 
   /** Стрелки продолжают активную линию от последнего кабинета (режим Paint) */
@@ -1171,8 +1377,6 @@ export default memo(function GridVisualization({
       ) {
         return
       }
-
-      if (!arrowContinue) return
 
       e.preventDefault()
       e.stopPropagation()
@@ -1200,7 +1404,6 @@ export default memo(function GridVisualization({
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [
     manualMode,
-    arrowContinue,
     editMode,
     getChainForPort,
     activeValue,
@@ -1619,23 +1822,6 @@ export default memo(function GridVisualization({
             >
               Empty
             </button>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={arrowContinue}
-              onClick={() => {
-                setArrowContinue((v) => !v)
-                manualKeyboardRef.current?.focus({ preventScroll: true })
-              }}
-              className={`${manualBtnClass} ${
-                arrowContinue
-                  ? 'bg-sky-600 text-white ring-1 ring-sky-500'
-                  : 'bg-white text-amber-900 ring-1 ring-amber-300'
-              }`}
-              title="←↑↓→ продолжают линию после первого клика"
-            >
-              Стрелки {arrowContinue ? 'ON' : 'OFF'}
-            </button>
             {onClearManual && (
               <button
                 type="button"
@@ -1722,9 +1908,7 @@ export default memo(function GridVisualization({
             {isData && stripWidths.length > 1
               ? ' · линия не переходит между стрипами'
               : ''}
-            {editMode === 'assign' && arrowContinue
-              ? ' · ←↑↓→ после первого клика'
-              : ''}
+            {editMode === 'assign' ? ' · ←↑↓→ после первого клика' : ''}
           </p>
           {onSetLineColor && editMode !== 'empty' && (
             <div className="flex flex-wrap items-center gap-1 px-1">
@@ -2072,7 +2256,57 @@ export default memo(function GridVisualization({
             powerLinks.map((link, i) => {
               const from = cabCenter(link.from.col, link.from.row)
               const to = cabCenter(link.to.col, link.to.row)
-              const color = lineColorFor(link.chainId).arrow
+              const colors = lineColorFor(link.chainId)
+              const isVert = link.direction === 'vertical'
+              const yMag = isMobile ? POWER_LANE_OFFSET.mobile : POWER_LANE_OFFSET.desktop
+              const xInset = isMobile
+                ? POWER_VERTICAL_INSET.mobile
+                : POWER_VERTICAL_INSET.desktop
+              const previousLink = powerLinks[i - 1]
+              const nextLink = powerLinks[i + 1]
+              const previousInChain =
+                previousLink?.chainId === link.chainId &&
+                previousLink.to.label === link.from.label
+                  ? previousLink
+                  : undefined
+              const nextInChain =
+                nextLink?.chainId === link.chainId &&
+                nextLink.from.label === link.to.label
+                  ? nextLink
+                  : undefined
+              const previousHorizontal =
+                previousInChain?.direction === 'horizontal' ? previousInChain : undefined
+              const nextHorizontal =
+                nextInChain?.direction === 'horizontal' ? nextInChain : undefined
+              const col = (link.from.col + link.to.col) / 2
+              // На повороте вертикаль остаётся у того края кубика, где закончился
+              // предыдущий горизонтальный ход (или начинается следующий).
+              const towardRight = previousHorizontal
+                ? previousHorizontal.to.col > previousHorizontal.from.col
+                : nextHorizontal
+                  ? nextHorizontal.to.col < nextHorizontal.from.col
+                  : col >= wide / 2
+              let offset = 0
+              if (isVert) {
+                const dy = to.y - from.y
+                if (Math.abs(dy) > 0.5) {
+                  offset = offsetForDesiredNx(
+                    from.x,
+                    from.y,
+                    to.x,
+                    to.y,
+                    (towardRight ? 1 : -1) * (CELL_W / 2 - xInset),
+                  )
+                }
+              } else {
+                const dx = to.x - from.x
+                const dy = to.y - from.y
+                const len = Math.sqrt(dx * dx + dy * dy) || 1
+                if (Math.abs(dx) > 0.5) {
+                  // Выше цифр независимо от LTR/RTL сегмента
+                  offset = (-yMag * len) / dx
+                }
+              }
               return (
                 <ArrowPath
                   key={`pwr-${i}`}
@@ -2080,87 +2314,70 @@ export default memo(function GridVisualization({
                   y1={from.y}
                   x2={to.x}
                   y2={to.y}
-                  color={color}
-                  offset={
-                    link.direction === 'vertical'
-                      ? isReshetPower
-                        ? 0
-                        : isRtl
-                          ? -10
-                          : 10
-                      : is29Power
-                        ? isRtl
-                          ? -6
-                          : 6
-                        : 0
-                  }
-                  isVertical={link.direction === 'vertical' || isReshetPower}
+                  color={colors.arrow}
+                  offset={Number.isFinite(offset) ? offset : 0}
+                  isVertical={isVert}
                   isMobile={isMobile}
                 />
               )
             })}
 
           {isData &&
-            dataLinks.map((link, i) => {
-              const from = cabCenter(link.from.col, link.from.row)
-              const to = cabCenter(link.to.col, link.to.row)
-              const color = lineColorFor(link.chainId).arrow
-              const offset =
-                link.direction === 'vertical'
-                  ? offsetForDesiredNx(
-                      from.x,
-                      from.y,
-                      to.x,
-                      to.y,
-                      verticalLaneDesiredNx('data', link.from.col, wide, CELL_W, isRtl, isMobile),
-                    )
-                  : dataLaneOffset(from.x, from.y, to.x, to.y, 'data', isMobile)
-              return (
-                <ArrowPath
-                  key={`dat-${i}`}
-                  x1={from.x}
-                  y1={from.y}
-                  x2={to.x}
-                  y2={to.y}
-                  color={color}
-                  offset={offset}
-                  isVertical={link.direction === 'vertical'}
-                  emphasizeHorizontal={link.direction === 'horizontal'}
-                  isMobile={isMobile}
-                />
-              )
-            })}
+            dataChains
+              .filter((c) => !c.isBackup && c.cabinets.length >= 2)
+              .flatMap((chain) => {
+                const colors = lineColorFor(chain.portNumber)
+                return splitAutoChainByStrips(
+                  chain.cabinets,
+                  stripWidths,
+                  manualMode,
+                ).map((segment, segmentIndex) => (
+                  <MidContinuousChain
+                    key={`dat-mid-${chain.portNumber}-${segmentIndex}`}
+                    points={buildSmoothLanePoints(
+                      segment,
+                      cabCenter,
+                      'data',
+                      wide,
+                      CELL_W,
+                      isRtl,
+                      isMobile,
+                    )}
+                    color={MID_LINE_COLOR}
+                    arrowColor={colors.arrow}
+                    isMobile={isMobile}
+                  />
+                ))
+              })}
 
           {isData &&
-            backupLinks.map((link, i) => {
-              const from = cabCenter(link.from.col, link.from.row)
-              const to = cabCenter(link.to.col, link.to.row)
-              const color = backupLineColor(link.chainId).arrow
-              const offset =
-                link.direction === 'vertical'
-                  ? offsetForDesiredNx(
-                      from.x,
-                      from.y,
-                      to.x,
-                      to.y,
-                      verticalLaneDesiredNx('backup', link.from.col, wide, CELL_W, isRtl, isMobile),
-                    )
-                  : dataLaneOffset(from.x, from.y, to.x, to.y, 'backup', isMobile)
-              return (
-                <ArrowPath
-                  key={`bkp-${i}`}
-                  x1={from.x}
-                  y1={from.y}
-                  x2={to.x}
-                  y2={to.y}
-                  color={color}
-                  dashed
-                  offset={offset}
-                  isVertical={link.direction === 'vertical'}
-                  isMobile={isMobile}
-                />
-              )
-            })}
+            backupChains
+              .filter((c) => c.cabinets.length >= 2)
+              .flatMap((chain) =>
+                splitAutoChainByStrips(
+                  chain.cabinets,
+                  stripWidths,
+                  manualMode,
+                ).map((segment, segmentIndex) => (
+                  <MidContinuousChain
+                    key={`bkp-mid-${chain.portNumber}-${segmentIndex}`}
+                    points={buildSmoothLanePoints(
+                      segment,
+                      cabCenter,
+                      'backup',
+                      wide,
+                      CELL_W,
+                      isRtl,
+                      isMobile,
+                    )}
+                    color={MID_BACKUP_LINE_COLOR}
+                    arrowColor={backupLineColor(chain.portNumber).arrow}
+                    isMobile={isMobile}
+                    dashed
+                  />
+                )),
+              )}
+
         </g>
 
         <g id="start-markers" pointerEvents="none">
@@ -2183,8 +2400,10 @@ export default memo(function GridVisualization({
             )
             const badgeX = isRtl ? x + CELL_W - badgeW - 2 : x + 2
             const badgeY = y + 2
-            const starSize = simplifyLabels ? 10 : 12
-            const labelSize = simplifyLabels ? 7 : 8
+            const starSize = simplifyLabels || isMobile ? 15 : 18
+            const starX = isRtl ? x + 12 : x + CELL_W - 12
+            const starY = y + 13
+            const labelSize = simplifyLabels || isMobile ? 9 : 11
             const isAlsoFeed = !isData && feedLabels.has(cab.label)
             const isAlsoEnd = endLabels.has(cab.label)
             return (
@@ -2210,15 +2429,23 @@ export default memo(function GridVisualization({
                 >
                   {lineId}
                 </text>
+                <circle
+                  cx={starX}
+                  cy={starY}
+                  r={simplifyLabels || isMobile ? 9 : 10.5}
+                  fill="#fef3c7"
+                  stroke="#b45309"
+                  strokeWidth={2}
+                />
                 <text
-                  x={isRtl ? x + 8 : x + CELL_W - 8}
-                  y={y + 14}
-                  textAnchor={isRtl ? 'start' : 'end'}
+                  x={starX}
+                  y={starY + starSize * 0.35}
+                  textAnchor="middle"
                   fontSize={starSize}
-                  fontWeight={700}
-                  fill="#ca8a04"
+                  fontWeight={900}
+                  fill="#b45309"
                   stroke="#ffffff"
-                  strokeWidth={simplifyLabels ? 2 : 1.5}
+                  strokeWidth={1}
                   paintOrder="stroke"
                 >
                   ★
@@ -2230,11 +2457,12 @@ export default memo(function GridVisualization({
                     y={y + CELL_H - (simplifyLabels || isMobile ? 5 : 6)}
                     textAnchor="middle"
                     fontSize={labelSize}
-                    fontWeight={700}
-                    fill="#ca8a04"
+                    fontWeight={900}
+                    fill="#92400e"
                     stroke="#ffffff"
-                    strokeWidth={simplifyLabels ? 2 : 1}
+                    strokeWidth={simplifyLabels || isMobile ? 2.5 : 3}
                     paintOrder="stroke"
+                    letterSpacing={0.7}
                   >
                     {isAlsoEnd ? 'START/End' : 'START'}
                   </text>
@@ -2250,9 +2478,15 @@ export default memo(function GridVisualization({
               if (emptySet.has(cab.label) || !feedLabels.has(cab.label)) return null
               const x = cabLeft(cab.col)
               const y = PAD + cab.row * (CELL_H + GAP)
-              const labelSize = simplifyLabels ? 7 : 8
               const isAlsoStart = startLabels.has(cab.label)
               const isAlsoEnd = endLabels.has(cab.label)
+              const labelSize = isAlsoStart
+                ? simplifyLabels || isMobile
+                  ? 9
+                  : 11
+                : simplifyLabels
+                  ? 7
+                  : 8
               const feedText = isAlsoStart
                 ? isAlsoEnd
                   ? 'FEED/START/End'
@@ -2277,11 +2511,12 @@ export default memo(function GridVisualization({
                     y={y + CELL_H - 6}
                     textAnchor="middle"
                     fontSize={labelSize}
-                    fontWeight={700}
-                    fill={TRUNK_FEED_COLOR}
+                    fontWeight={isAlsoStart ? 900 : 700}
+                    fill={isAlsoStart ? '#92400e' : TRUNK_FEED_COLOR}
                     stroke="#ffffff"
-                    strokeWidth={simplifyLabels ? 2 : 1.5}
+                    strokeWidth={isAlsoStart ? 3 : simplifyLabels ? 2 : 1.5}
                     paintOrder="stroke"
+                    letterSpacing={isAlsoStart ? 0.5 : undefined}
                   >
                     {feedText}
                   </text>
@@ -2343,7 +2578,7 @@ export default memo(function GridVisualization({
               ? 'Power ↑ только вверх (Reshet)'
               : is29Power
                 ? 'Power ↑↓ вертикально (2.9)'
-                : `${isRtl ? 'RTL / справа налево' : 'LTR / слева направо'} (power)`}
+                : `Змейка power (${isRtl ? 'RTL' : 'LTR'} старт)`}
           {!isData && (
             <>
               {' · '}

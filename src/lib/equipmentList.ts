@@ -1,5 +1,9 @@
 import type { CableScheduleEntry, ControllerModel, PackingListItem, RoutingResult, ScreenConfig } from '../types'
-import { normalizeStripWidths } from './cabinetGrid'
+import {
+  normalizeStripControllerIds,
+  normalizeStripWidths,
+} from './cabinetGrid'
+import { controllerForCol } from './dualVxRouting'
 
 /** Ключи строк, для которых количество можно вывести из маршрутизации */
 export type EquipmentAutoKey =
@@ -343,24 +347,27 @@ export function aggregateLedCards(screens: ScreenConfig[]): {
 /**
  * Количество CVT на один экран:
  * - trunkLengthM > 30 → минимум 1
- * - без dual VX: dataPortCount > 6 → 2
- * - с dual VX: за каждый VX с >6 линиями — ещё +1 CVT
+ * - dataPortCount > 6 → минимум 2
+ * - при 2× VX: +1 за каждый VX с >6 линиями (поверх базы; не меньше классики)
  */
 export function resolveCvtQtyForScreen(
   trunkLengthM: number,
   dataPortCount: number,
   linesPerController?: number[],
 ): number {
-  if (linesPerController && linesPerController.length > 0) {
-    let qty = trunkLengthM > 30 ? 1 : 0
-    for (const n of linesPerController) {
-      if (n > 6) qty += 1
-    }
-    return qty
+  const classic =
+    dataPortCount > 6 ? 2 : trunkLengthM > 30 ? 1 : 0
+
+  if (!linesPerController || linesPerController.length === 0) {
+    return classic
   }
-  if (dataPortCount > 6) return 2
-  if (trunkLengthM > 30) return 1
-  return 0
+
+  let dualQty = trunkLengthM > 30 ? 1 : 0
+  for (const n of linesPerController) {
+    if (n > 6) dualQty += 1
+  }
+  // Не занижаем относительно «всего >6 → 2»; при двух перегруженных VX даём 3+
+  return Math.max(classic, dualQty)
 }
 
 /** Число data-линий на каждый VX (только при dual VX1000) */
@@ -368,19 +375,47 @@ export function dataLinesPerController(
   screen: ScreenConfig,
   result: RoutingResult,
 ): number[] | undefined {
-  const stripCount = screen.stripWidths?.length ?? 1
-  if (!screen.dualVx1000 || stripCount <= 1) return undefined
+  const stripWidths = normalizeStripWidths(screen.stripWidths, screen.cabinetsWide)
+  if (!screen.dualVx1000 || stripWidths.length <= 1) return undefined
+
+  const stripControllerIds = normalizeStripControllerIds(
+    screen.stripControllerIds,
+    stripWidths.length,
+  )
 
   const counts = new Map<number, number>()
+  // Всегда учитываем оба VX, даже если на одном пока 0 линий
+  counts.set(1, 0)
+  counts.set(2, 0)
+
   for (const chain of result.dataChains) {
     if (chain.isBackup || chain.cabinets.length === 0) continue
-    const cid = chain.controllerId === 2 ? 2 : 1
+    let cid: number
+    if (chain.controllerId === 1 || chain.controllerId === 2) {
+      cid = chain.controllerId
+    } else {
+      // fallback: по стрипу кабинетов линии
+      const votes = new Map<number, number>()
+      for (const cab of chain.cabinets) {
+        const c = controllerForCol(cab.col, stripWidths, stripControllerIds)
+        votes.set(c, (votes.get(c) ?? 0) + 1)
+      }
+      let best = 1
+      let bestN = 0
+      for (const [id, n] of votes) {
+        if (n > bestN) {
+          best = id
+          bestN = n
+        }
+      }
+      cid = best === 2 ? 2 : 1
+    }
     counts.set(cid, (counts.get(cid) ?? 0) + 1)
   }
-  if (counts.size === 0) return undefined
-  return [...counts.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, n]) => n)
+
+  const total = [...counts.values()].reduce((a, b) => a + b, 0)
+  if (total === 0) return undefined
+  return [counts.get(1) ?? 0, counts.get(2) ?? 0]
 }
 
 /** MCTRL4K → CVT16, остальные контроллеры → CVT10 */

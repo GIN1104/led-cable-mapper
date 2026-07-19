@@ -3,8 +3,10 @@
  * Запуск: npx tsx scripts/verify-data-routing.mts
  */
 import type { RefreshRate, ScreenConfig } from '../src/types/index.ts'
+import { EMPTY_MANUAL_OVERRIDES } from '../src/types/index.ts'
 import { applyPitchPreset } from '../src/lib/pitchPresets.ts'
 import { buildDataChains } from '../src/lib/dataRouting.ts'
+import { computeRouting } from '../src/lib/routingEngine.ts'
 import {
   calcPixelsPerCabinet,
   filterActiveCabinets,
@@ -263,6 +265,60 @@ if (!assertChainLimits(r14x8_60.chains, r14x8_60.maxCabs, r14x8_60.maxPixels, '1
 }
 if (!assertHorizontalDataFlow(r14x8_60.chains, '14×8@60')) {
   ok = false
+}
+
+// 28×4 м, 4 блока: auto не пересекает границы, manual может пересечь намеренно.
+const stripBase = makeConfig(28, 4, 50)
+const stripConfig: ScreenConfig = {
+  ...stripBase,
+  signalBackup: true,
+  stripWidths: [14, 14, 14, 14],
+}
+const stripResult = computeRouting(stripConfig)
+const stripForCol = (col: number) => Math.floor(col / 14)
+
+for (const chain of [...stripResult.dataChains, ...stripResult.backupChains]) {
+  const strips = new Set(chain.cabinets.map((cab) => stripForCol(cab.col)))
+  if (strips.size > 1) {
+    ok = false
+    console.error(`FAIL 28×4 strips: D${chain.portNumber} crosses blocks`)
+  }
+}
+for (const link of [...stripResult.dataLinks, ...stripResult.backupLinks]) {
+  if (stripForCol(link.from.col) !== stripForCol(link.to.col)) {
+    ok = false
+    console.error(
+      `FAIL 28×4 strips: ${link.from.label}→${link.to.label} crosses blocks`,
+    )
+  }
+}
+
+const leftBoundary = stripResult.cabinets.find((cab) => cab.col === 13 && cab.row === 0)
+const rightBoundary = stripResult.cabinets.find((cab) => cab.col === 14 && cab.row === 0)
+if (!leftBoundary || !rightBoundary) {
+  ok = false
+  console.error('FAIL 28×4 strips: boundary cabinets not found')
+} else {
+  const manualResult = computeRouting(stripConfig, {
+    manualModeData: true,
+    manualModePower: false,
+    manualOverrides: {
+      ...EMPTY_MANUAL_OVERRIDES,
+      dataPorts: {
+        [leftBoundary.label]: 99,
+        [rightBoundary.label]: 99,
+      },
+      dataStartPoints: { 99: leftBoundary.label },
+      dataPortChains: {
+        99: [leftBoundary.label, rightBoundary.label],
+      },
+    },
+  })
+  const manualChain = manualResult.dataChains.find((chain) => chain.portNumber === 99)
+  if (manualChain?.cabinets.length !== 2 || manualResult.dataLinks.length !== 1) {
+    ok = false
+    console.error('FAIL 28×4 strips: manual cross-block line was blocked')
+  }
 }
 
 console.log(ok ? '\nPASS' : '\nFAIL')

@@ -321,7 +321,8 @@ export function computeRouting(
 
       manualOverrides.dataPortChains,
 
-      normalizeStripWidths(config.stripWidths, config.cabinetsWide),
+      // В ручном режиме пользователь может намеренно провести линию между блоками.
+      [config.cabinetsWide],
 
     )
 

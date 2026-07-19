@@ -281,45 +281,61 @@ const ok3x2Rtl = runCase(3, 2, 'right', '3m×2m 3.9 Big RTL (single line ≤ max
   ['A6', 'A5', 'A4', 'A3', 'A2', 'A1', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6'],
 ])
 
-// 7m×3m = 14×3: ширина не делится на 10 → pack 12; остаток 2 кол. — P-паттерн
-const ok7Ltr = runCase(7, 3, 'left', '7m×3m 3.9 Big LTR', [
+// 10m×3m = 20×3: теор. min ceil(60/12)=5; остаток змейкой
+const ok10Ltr = runCase(10, 3, 'left', '10m×3m 3.9 Big LTR (min 5 lines)', [
   ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A11', 'A12'],
   ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'B12'],
   ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12'],
-  ['A13', 'B13', 'C13', 'C14', 'B14', 'A14'],
+  [
+    'A13', 'A14', 'A15', 'A16',
+    'B16', 'B15', 'B14', 'B13',
+    'C13', 'C14', 'C15', 'C16',
+  ],
+  [
+    'A17', 'A18', 'A19', 'A20',
+    'B20', 'B19', 'B18', 'B17',
+    'C17', 'C18', 'C19', 'C20',
+  ],
 ])
 
-// 10m×3m = 20×3: две полосы по 10, 6 полных линий → preferred 10
-const ok10Ltr = runCase(10, 3, 'left', '10m×3m 3.9 Big LTR', [
+const ok7Ltr = runCase(7, 3, 'left', '7m×3m 3.9 Big LTR (min 4 lines)', [
   ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10'],
   ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10'],
   ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10'],
-  ['A11', 'A12', 'A13', 'A14', 'A15', 'A16', 'A17', 'A18', 'A19', 'A20'],
-  ['B11', 'B12', 'B13', 'B14', 'B15', 'B16', 'B17', 'B18', 'B19', 'B20'],
-  ['C11', 'C12', 'C13', 'C14', 'C15', 'C16', 'C17', 'C18', 'C19', 'C20'],
+  [
+    'A11', 'A12', 'A13', 'A14',
+    'B14', 'B13', 'B12', 'B11',
+    'C11', 'C12', 'C13', 'C14',
+  ],
 ])
 
-const ok7Rtl = runCase(7, 3, 'right', '7m×3m 3.9 Big RTL', [
-  ['A14', 'A13', 'A12', 'A11', 'A10', 'A9', 'A8', 'A7', 'A6', 'A5', 'A4', 'A3'],
-  ['B14', 'B13', 'B12', 'B11', 'B10', 'B9', 'B8', 'B7', 'B6', 'B5', 'B4', 'B3'],
-  ['C14', 'C13', 'C12', 'C11', 'C10', 'C9', 'C8', 'C7', 'C6', 'C5', 'C4', 'C3'],
-  ['A2', 'B2', 'C2', 'C1', 'B1', 'A1'],
+const ok7Rtl = runCase(7, 3, 'right', '7m×3m 3.9 Big RTL (min 4 lines)', [
+  ['A14', 'A13', 'A12', 'A11', 'A10', 'A9', 'A8', 'A7', 'A6', 'A5'],
+  ['B14', 'B13', 'B12', 'B11', 'B10', 'B9', 'B8', 'B7', 'B6', 'B5'],
+  ['C14', 'C13', 'C12', 'C11', 'C10', 'C9', 'C8', 'C7', 'C6', 'C5'],
+  [
+    'A4', 'A3', 'A2', 'A1',
+    'B1', 'B2', 'B3', 'B4',
+    'C4', 'C3', 'C2', 'C1',
+  ],
 ])
 
-const ok10Rtl = runCase(10, 3, 'right', '10m×3m 3.9 Big RTL', [
-  ['A20', 'A19', 'A18', 'A17', 'A16', 'A15', 'A14', 'A13', 'A12', 'A11'],
-  ['B20', 'B19', 'B18', 'B17', 'B16', 'B15', 'B14', 'B13', 'B12', 'B11'],
-  ['C20', 'C19', 'C18', 'C17', 'C16', 'C15', 'C14', 'C13', 'C12', 'C11'],
-  ['A10', 'A9', 'A8', 'A7', 'A6', 'A5', 'A4', 'A3', 'A2', 'A1'],
-  ['B10', 'B9', 'B8', 'B7', 'B6', 'B5', 'B4', 'B3', 'B2', 'B1'],
-  ['C10', 'C9', 'C8', 'C7', 'C6', 'C5', 'C4', 'C3', 'C2', 'C1'],
+const ok10Rtl = runCase(10, 3, 'right', '10m×3m 3.9 Big RTL (min 5 lines)', [
+  ['A20', 'A19', 'A18', 'A17', 'A16', 'A15', 'A14', 'A13', 'A12', 'A11', 'A10', 'A9'],
+  ['B20', 'B19', 'B18', 'B17', 'B16', 'B15', 'B14', 'B13', 'B12', 'B11', 'B10', 'B9'],
+  ['C20', 'C19', 'C18', 'C17', 'C16', 'C15', 'C14', 'C13', 'C12', 'C11', 'C10', 'C9'],
+  [
+    'A8', 'A7', 'A6', 'A5',
+    'B5', 'B6', 'B7', 'B8',
+    'C8', 'C7', 'C6', 'C5',
+  ],
+  [
+    'A4', 'A3', 'A2', 'A1',
+    'B1', 'B2', 'B3', 'B4',
+    'C4', 'C3', 'C2', 'C1',
+  ],
 ])
 
-/*
- * 6m×3m = 12×3.
- * preferred 10 → полоса 10 + остаток 2 → 3×10 + 1×P(6) = 4 линии.
- * max 12 → одна полоса 12 → 3 полные линии по 12 (меньше линий, без остатка).
- */
 const ok6Ltr = runCase(6, 3, 'left', '6m×3m 3.9 Big LTR (12 better than 10)', [
   ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A11', 'A12'],
   ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'B12'],
@@ -327,19 +343,19 @@ const ok6Ltr = runCase(6, 3, 'left', '6m×3m 3.9 Big LTR (12 better than 10)', [
 ])
 
 /*
- * 6m×3.5m 3.9 Small: 500×500 → 12×7 = 84 cab, max 24.
- * Было: остаток P → 6 линий по 14. Нужно: 2 ряда×12 = 24 на линию → 4 линии.
+ * 6m×3.5m 3.9 Small: 12×7 = 84 cab, max 24 → теор. min 4.
+ * Упаковка по 3 столбца (21) — 4 равные линии, змейка по рядам.
  */
 const ok6x35Small = runCase(
   6,
   3.5,
   'left',
-  '6m×3.5m 3.9 Small LTR (multi-row pack up to max 24)',
+  '6m×3.5m 3.9 Small LTR (min 4 equal packs)',
   [
-    horizSnakeRows(['A', 'B'], 1, 12),
-    horizSnakeRows(['C', 'D'], 1, 12),
-    horizSnakeRows(['E', 'F'], 1, 12),
-    horizStrip('G', 1, 12),
+    horizSnakeRows(rowLetters(7), 1, 3),
+    horizSnakeRows(rowLetters(7), 4, 6),
+    horizSnakeRows(rowLetters(7), 7, 9),
+    horizSnakeRows(rowLetters(7), 10, 12),
   ],
   '3.9-small',
 )
@@ -367,11 +383,11 @@ const pref = getPreferredCabinetsPerPowerLine(configBig)
 const max = getMaxCabinetsPerPowerLine(configBig)
 
 const okDecisions =
-  assertPackWidth(20, 3, pref, max, 10, '10m×3m clean ≤6 → preferred') &&
-  assertPackWidth(14, 3, pref, max, 12, '7m×3m rem → max') &&
+  assertPackWidth(20, 3, pref, max, 12, '10m×3m → max (min lines est.)') &&
+  assertPackWidth(14, 3, pref, max, 12, '7m×3m → max') &&
   assertPackWidth(12, 3, pref, max, 12, '6m×3m clean-at-max → max') &&
-  assertPackWidth(20, 4, pref, max, 12, '10m×4m preferred would be 8 lines → max') &&
-  assertPackWidth(28, 8, pref, max, 12, '14m×8m rem → max')
+  assertPackWidth(20, 4, pref, max, 12, '10m×4m → max') &&
+  assertPackWidth(28, 8, pref, max, 12, '14m×8m → max')
 
 /*
  * 2.9: 5m×4m = 10×8, max 40 → 2 линии по 5 полных столбцов (40), без mid-column.

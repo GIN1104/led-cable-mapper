@@ -19,6 +19,7 @@ import {
   inferChainStart,
   linkDirection,
   orderCabinetsFromStart,
+  orderCabinetsFromStartSnake,
   orderPowerCabinetsFromStart,
   orderPowerRegionByPreset,
   orderRegionBySnake,
@@ -222,19 +223,38 @@ function orderPackedVerticalLine(
   const maxCol = Math.max(...cabinets.map((c) => c.col))
   const minRow = Math.min(...cabinets.map((c) => c.row))
   const maxRow = Math.max(...cabinets.map((c) => c.row))
+  const width = maxCol - minCol + 1
+  const height = maxRow - minRow + 1
+
+  // 3.9 big/small: змейка — стрелки чередуют направление по рядам
+  const horizontalPrefer =
+    config.pitchPreset === '3.9-big' ||
+    config.pitchPreset === '3.9-small' ||
+    config.pitchPreset === 'custom'
+  if (horizontalPrefer) {
+    const snake = orderRegionBySnake(
+      cabinets,
+      minCol,
+      minRow,
+      width,
+      height,
+      config.chainStartEdge,
+    )
+    if (snake.length === cabinets.length) return snake
+  }
+
   const ordered = orderPowerRegionByPreset(
     cabinets,
     minCol,
     minRow,
-    maxCol - minCol + 1,
-    maxRow - minRow + 1,
+    width,
+    height,
     config.pitchPreset,
     edgeToDirection(config.chainStartEdge),
     config.cabinetWidthMm,
     config.cabinetHeightMm,
   )
   if (ordered.length === cabinets.length) return ordered
-  // Дырявая форма — жадный обход от нижнего края
   const start = selectPathStart(cabinets, config)
   return growPowerPath(cabinets, start, config, cabinets.length)
 }
@@ -627,19 +647,57 @@ function pickPChainStarts(
 type ColBand = { colStart: number; colEnd: number }
 
 /**
- * Выбор ширины полосы: стараемся линию на всю длину экрана.
- * Если ширина ≤ max — одна полоса на всю ширину; иначе max (максимально длинные горизонтали).
+ * Выбор ширины полосы: перебираем preferred/max и делители —
+ * берём ширину с минимальной оценкой числа линий.
  */
 export function choosePowerPackWidth(
   colsWide: number,
-  _rowsHigh: number,
-  _preferred: number,
+  rowsHigh: number,
+  preferred: number,
   maxSize: number,
 ): number {
   const max = Math.max(1, maxSize)
   if (colsWide <= 0) return max
   if (colsWide <= max) return colsWide
-  return max
+
+  const pref = Math.max(1, Math.min(preferred, max))
+  const candidates = new Set<number>([pref, max])
+  for (const w of [pref - 1, pref + 1, Math.floor(colsWide / 2), Math.floor(max / 2)]) {
+    if (w >= 1 && w <= max) candidates.add(w)
+  }
+  // Несколько делителей ширины (не все 1..max — дорого и незачем)
+  for (const w of [2, 3, 4, 5, 6, 8, 10, pref, max]) {
+    if (w >= 1 && w <= max && colsWide % w === 0) candidates.add(w)
+  }
+
+  let best = max
+  let bestLines = Infinity
+  for (const w of candidates) {
+    const lines = estimateHorizontalStripLineCount(colsWide, rowsHigh, w, max)
+    if (lines < bestLines || (lines === bestLines && w > best)) {
+      bestLines = lines
+      best = w
+    }
+  }
+  return best
+}
+
+/** Оценка числа линий для горизонтальных полос ширины packW (остаток — ceil) */
+function estimateHorizontalStripLineCount(
+  colsWide: number,
+  rowsHigh: number,
+  packW: number,
+  maxSize: number,
+): number {
+  const w = Math.max(1, Math.min(packW, maxSize))
+  const fullBands = Math.floor(colsWide / w)
+  const remCols = colsWide % w
+  const rowsPerLine = Math.max(1, Math.floor(maxSize / w))
+  let lines = fullBands * Math.ceil(rowsHigh / rowsPerLine)
+  if (remCols > 0) {
+    lines += Math.ceil((remCols * rowsHigh) / maxSize)
+  }
+  return lines
 }
 
 /**
@@ -695,12 +753,30 @@ function partitionBandHorizontalStrips(
   const maxCol = Math.max(...bandCabs.map((c) => c.col))
   const bandWidth = maxCol - minCol + 1
   const pool = new Map(bandCabs.map((c) => [c.label, c]))
+  /** Индекс по рядам — без O(n) filter на каждый ряд */
+  const byRow = new Map<number, Cabinet[]>()
+  for (const cab of bandCabs) {
+    const list = byRow.get(cab.row)
+    if (list) list.push(cab)
+    else byRow.set(cab.row, [cab])
+  }
   const paths: Cabinet[][] = []
 
   const rowsPerLine =
     stackMultipleRows && bandWidth > 0
       ? Math.max(1, Math.floor(maxSize / bandWidth))
       : 1
+
+  const removeFromIndexes = (cabs: Cabinet[]) => {
+    for (const cab of cabs) {
+      pool.delete(cab.label)
+      const list = byRow.get(cab.row)
+      if (!list) continue
+      const next = list.filter((c) => c.label !== cab.label)
+      if (next.length === 0) byRow.delete(cab.row)
+      else byRow.set(cab.row, next)
+    }
+  }
 
   for (let rowBottom = maxRow; rowBottom >= minRow; ) {
     if (rowsPerLine > 1) {
@@ -710,7 +786,7 @@ function partitionBandHorizontalStrips(
         r >= minRow && blockRows.length < rowsPerLine;
         r--
       ) {
-        const count = [...pool.values()].filter((c) => c.row === r).length
+        const count = byRow.get(r)?.length ?? 0
         if (count === 0) continue
         // Неполный ряд — не смешиваем с полной пачкой (не режем ряд)
         if (count !== bandWidth) break
@@ -719,8 +795,11 @@ function partitionBandHorizontalStrips(
       }
 
       if (blockRows.length >= 1) {
-        const blockSet = new Set(blockRows)
-        const blockCabs = [...pool.values()].filter((c) => blockSet.has(c.row))
+        const blockCabs: Cabinet[] = []
+        for (const r of blockRows) {
+          const rowList = byRow.get(r)
+          if (rowList) blockCabs.push(...rowList)
+        }
         const blockMinRow = Math.min(...blockRows)
         const blockMaxRow = Math.max(...blockRows)
         const ordered = orderRegionBySnake(
@@ -732,17 +811,15 @@ function partitionBandHorizontalStrips(
           config.chainStartEdge,
         )
         paths.push(ordered)
-        for (const cab of ordered) {
-          pool.delete(cab.label)
-        }
+        removeFromIndexes(ordered)
         rowBottom = blockMinRow - 1
         continue
       }
     }
 
-    const rowCabs = [...pool.values()]
-      .filter((c) => c.row === rowBottom)
-      .sort((a, b) => (ltr ? a.col - b.col : b.col - a.col))
+    const rowCabs = [...(byRow.get(rowBottom) ?? [])].sort((a, b) =>
+      ltr ? a.col - b.col : b.col - a.col,
+    )
 
     if (rowCabs.length === 0) {
       rowBottom--
@@ -752,10 +829,8 @@ function partitionBandHorizontalStrips(
     // Один ряд / неполный ряд: от края направления до fillTarget
     const strip = rowCabs.slice(0, Math.min(target, rowCabs.length))
     paths.push(strip)
-    for (const cab of strip) {
-      pool.delete(cab.label)
-    }
-    if (![...pool.values()].some((c) => c.row === rowBottom)) {
+    removeFromIndexes(strip)
+    if ((byRow.get(rowBottom)?.length ?? 0) === 0) {
       rowBottom--
     }
   }
@@ -916,20 +991,22 @@ function partitionRemainderBand(
     partitionBandPShape(bandCabs, config),
     // Узкий остаток: по одному ряду — иначе multi-row перебьёт равные вертикали
     partitionBandHorizontalStrips(bandCabs, config, horizFill, false),
+    // Упаковка целыми столбцами до max — ближе к теоретическому минимуму линий
+    partitionVerticalColumnPack(bandCabs, config),
   ]
 
-  // Высокий/полный по высоте остаток: колонки длины height дают равные линии
+  // Высокий/полный по высоте остаток: по одной колонке (равные короткие линии)
   const isTallRemainder = bandHeight >= bandWidth
   if (isTallRemainder || bandHeight <= maxSize) {
     candidates.push(partitionBandVerticalColumns(bandCabs, config))
   }
 
-  let best = candidates[0]
+  let best = candidates[0]!
   let bestScore = scoreRemainderPlan(best)
   for (let i = 1; i < candidates.length; i++) {
-    const score = scoreRemainderPlan(candidates[i])
+    const score = scoreRemainderPlan(candidates[i]!)
     if (isBetterRemainderScore(score, bestScore)) {
-      best = candidates[i]
+      best = candidates[i]!
       bestScore = score
     }
   }
@@ -937,11 +1014,7 @@ function partitionRemainderBand(
 }
 
 /**
- * 3.9 big/small: если кабинетов ≤ max — одна связная линия;
- * иначе полосы по choosePowerPackWidth (preferred если ≤6 полных линий,
- * иначе max); в полной полосе или когда ширина стены ≤ packWidth —
- * горизонтали снизу вверх с упаковкой нескольких целых рядов до max;
- * узкий остаток — P / горизонтали / вертикальные колонки (равные линии).
+ * 3.9 big/small: минимум линий среди кандидатов packWidth + вертикальная упаковка.
  */
 function partitionHorizontalStripComponent(
   component: Cabinet[],
@@ -956,7 +1029,43 @@ function partitionHorizontalStripComponent(
   const maxRow = Math.max(...component.map((c) => c.row))
   const colsWide = maxCol - minCol + 1
   const rowsHigh = maxRow - minRow + 1
-  const packWidth = choosePowerPackWidth(colsWide, rowsHigh, preferred, maxSize)
+
+  const pref = Math.max(1, Math.min(preferred, maxSize))
+  const bestGuess = choosePowerPackWidth(colsWide, rowsHigh, preferred, maxSize)
+  // Небольшой набор кандидатов — полный перебор делителей тормозит UI
+  const widthCandidates = new Set<number>([bestGuess, pref, maxSize])
+  if (colsWide <= maxSize) widthCandidates.add(colsWide)
+  const half = Math.floor(colsWide / 2)
+  if (half >= 1 && half <= maxSize) widthCandidates.add(half)
+  if (colsWide % maxSize === 0) widthCandidates.add(maxSize)
+
+  const plans: Cabinet[][][] = []
+  for (const packWidth of widthCandidates) {
+    if (packWidth < 1 || packWidth > maxSize) continue
+    plans.push(
+      partitionHorizontalStripWithWidth(component, config, packWidth, direction),
+    )
+  }
+  plans.push(partitionVerticalColumnPack(component, config))
+  // Жадный обход только если эвристики явно хуже теор. минимума
+  const lowerBound = Math.ceil(component.length / maxSize)
+  const bestSoFar = Math.min(...plans.map((p) => p.length), Infinity)
+  if (bestSoFar > lowerBound) {
+    plans.push(partitionComponent(component, config))
+  }
+
+  return pickMinLinePlan(plans)
+}
+
+function partitionHorizontalStripWithWidth(
+  component: Cabinet[],
+  config: ScreenConfig,
+  packWidth: number,
+  direction: LineDirection,
+): Cabinet[][] {
+  const minCol = Math.min(...component.map((c) => c.col))
+  const maxCol = Math.max(...component.map((c) => c.col))
+  const colsWide = maxCol - minCol + 1
   const bands = getColumnBands(minCol, maxCol, packWidth, direction)
   const paths: Cabinet[][] = []
 
@@ -967,7 +1076,6 @@ function partitionHorizontalStripComponent(
     if (bandCabs.length === 0) continue
 
     const bandWidth = band.colEnd - band.colStart + 1
-    // Полная полоса packWidth или вся стена влезает в одну полосу (width ≤ max/pack)
     if (bandWidth >= packWidth || bandWidth === colsWide) {
       paths.push(...partitionBandHorizontalStrips(bandCabs, config, packWidth, true))
     } else {
@@ -976,6 +1084,22 @@ function partitionHorizontalStripComponent(
   }
 
   return paths
+}
+
+/** План с минимумом линий; при равенстве — ровнее заполнение */
+function pickMinLinePlan(plans: Cabinet[][][]): Cabinet[][] {
+  const valid = plans.filter((p) => p.length > 0)
+  if (valid.length === 0) return []
+  let best = valid[0]!
+  let bestScore = scoreRemainderPlan(best)
+  for (let i = 1; i < valid.length; i++) {
+    const score = scoreRemainderPlan(valid[i]!)
+    if (isBetterRemainderScore(score, bestScore)) {
+      best = valid[i]!
+      bestScore = score
+    }
+  }
+  return best
 }
 
 function partitionComponentForPreset(
@@ -998,7 +1122,6 @@ function partitionComponentForPreset(
     if (path.length === component.length) {
       return [path]
     }
-    // Жадный обход застрял на дырявой форме — добираем остаток отдельно
     const used = new Set(path.map((c) => c.label))
     const rest = component.filter((c) => !used.has(c.label))
     const restPaths = useHorizontalStripAlgorithm(config)
@@ -1007,11 +1130,13 @@ function partitionComponentForPreset(
     return path.length > 0 ? [path, ...restPaths] : restPaths
   }
 
+  if (verticalPack) {
+    // 2.9 / Reshet: только столбцы (запрет mid-column split)
+    return partitionVerticalColumnPack(component, config)
+  }
+
   if (useHorizontalStripAlgorithm(config)) {
     return partitionHorizontalStripComponent(component, config)
-  }
-  if (verticalPack) {
-    return partitionVerticalColumnPack(component, config)
   }
   return partitionComponent(component, config)
 }
@@ -1073,13 +1198,14 @@ export function splitPathForCenterFeed(
       const feed = [...left].sort(
         (a, b) => b.col - a.col || b.row - a.row || a.label.localeCompare(b.label),
       )[0]!
-      parts.push(orderCabinetsFromStart(left, feed.label, 'right'))
+      // Змейка от FEED к краю — иначе все горизонтальные стрелки в одну сторону
+      parts.push(orderCabinetsFromStartSnake(left, feed.label, 'right'))
     }
     if (right.length > 0) {
       const rightStart = [...right].sort(
         (a, b) => a.col - b.col || b.row - a.row || a.label.localeCompare(b.label),
       )[0]!
-      parts.push(orderCabinetsFromStart(right, rightStart.label, 'left'))
+      parts.push(orderCabinetsFromStartSnake(right, rightStart.label, 'left'))
     }
     return parts.length > 0 ? parts : [path]
   }

@@ -10,6 +10,7 @@
     "verify:power": "tsx scripts/verify-power-routing.mts",
     "verify:feed": "tsx scripts/verify-power-feed.mts",
     "verify:data": "tsx scripts/verify-data-routing.mts",
+    "verify:strips": "tsx scripts/verify-strip-routing.mts",
     "verify:manual": "tsx scripts/verify-manual-routing.mts",
     "verify:equipment": "tsx scripts/verify-equipment-list.mts"
   },
