@@ -2,8 +2,14 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+/** production → /led-cable-mapper/ · test → /led-cable-mapper/test/ · иначе / */
+function baseForMode(mode: string): string {
+  if (mode === 'test') return '/led-cable-mapper/test/'
+  if (mode === 'production') return '/led-cable-mapper/'
+  return '/'
+}
+
 export default defineConfig(({ mode }) => ({
-  // BASE_PATH задаётся в CI для production (/led-cable-mapper/) и test (/led-cable-mapper/test/)
-  base: process.env.BASE_PATH ?? (mode === 'production' ? '/led-cable-mapper/' : '/'),
+  base: baseForMode(mode),
   plugins: [react(), tailwindcss()],
 }))

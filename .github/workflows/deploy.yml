@@ -37,8 +37,6 @@ jobs:
 
       - name: Build production → /
         working-directory: main
-        env:
-          BASE_PATH: /led-cable-mapper/
         run: npm run build
 
       - name: Assemble site root
@@ -62,9 +60,7 @@ jobs:
       - name: Build test → /test/
         if: steps.test_checkout.outcome == 'success'
         working-directory: test
-        env:
-          BASE_PATH: /led-cable-mapper/test/
-        run: npm run build
+        run: npm run build:test
 
       - name: Assemble site /test
         if: steps.test_checkout.outcome == 'success'
