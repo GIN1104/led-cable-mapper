@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "workspaceOpen": [
+      {
+        "command": "node scripts/start-dev-detached.mjs --hook --quiet",
+        "timeout": 20
+      }
+    ]
+  }
+}

@@ -506,7 +506,7 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
 
   controllerModel: 'NovaStar VX1000',
 
-  signalBackup: true,
+  signalBackup: false,
 
   trunkLengthM: 50,
 

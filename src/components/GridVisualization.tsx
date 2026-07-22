@@ -2389,21 +2389,37 @@ export default memo(function GridVisualization({
               startLineByLabel.get(cab.label) ?? assignmentMap.get(cab.label) ?? 0
             const lineColors = lineColorFor(lineNum)
             const lineId = lineNum > 0 ? formatLineId(lineNum) : prefix
-            // Крупный бейдж: читается на телефоне и при fitScale сетки 14×8
-            const badgeFont =
-              simplifyLabels || isMobile ? (isMobile && simplifyLabels ? 15 : 13) : 11
-            const badgePadX = simplifyLabels || isMobile ? 6 : 5
-            const badgeH = badgeFont + (simplifyLabels || isMobile ? 8 : 6)
-            const badgeW = Math.max(
-              Math.ceil(lineId.length * badgeFont * 0.68) + badgePadX * 2,
-              simplifyLabels || isMobile ? 34 : 28,
+            // На телефоне: крупный бейдж линии слева, компактная звезда справа — без наложения
+            const starLane = isMobile ? 14 : 22
+            const badgeFont = isMobile
+              ? simplifyLabels
+                ? 16
+                : 14
+              : simplifyLabels
+                ? 15
+                : 11
+            const badgePadX = isMobile ? 5 : simplifyLabels ? 6 : 5
+            const badgeH = badgeFont + (isMobile ? 7 : simplifyLabels ? 8 : 6)
+            const badgeW = Math.min(
+              Math.max(
+                Math.ceil(lineId.length * badgeFont * 0.68) + badgePadX * 2,
+                isMobile ? 30 : simplifyLabels ? 34 : 28,
+              ),
+              isMobile ? CELL_W - starLane - 3 : Infinity,
             )
             const badgeX = isRtl ? x + CELL_W - badgeW - 2 : x + 2
             const badgeY = y + 2
-            const starSize = simplifyLabels || isMobile ? 15 : 18
-            const starX = isRtl ? x + 12 : x + CELL_W - 12
-            const starY = y + 13
-            const labelSize = simplifyLabels || isMobile ? 9 : 11
+            const starSize = isMobile ? 9 : simplifyLabels ? 15 : 18
+            const starRadius = isMobile ? 5 : simplifyLabels ? 9 : 10.5
+            const starX = isRtl ? x + starLane / 2 + 1 : x + CELL_W - starLane / 2 - 1
+            const starY = isMobile ? y + 8 : y + 13
+            const labelSize = isMobile
+              ? simplifyLabels
+                ? 10
+                : 9
+              : simplifyLabels
+                ? 9
+                : 11
             const isAlsoFeed = !isData && feedLabels.has(cab.label)
             const isAlsoEnd = endLabels.has(cab.label)
             return (
@@ -2432,20 +2448,20 @@ export default memo(function GridVisualization({
                 <circle
                   cx={starX}
                   cy={starY}
-                  r={simplifyLabels || isMobile ? 9 : 10.5}
+                  r={starRadius}
                   fill="#fef3c7"
                   stroke="#b45309"
-                  strokeWidth={2}
+                  strokeWidth={isMobile ? 1.5 : 2}
                 />
                 <text
                   x={starX}
-                  y={starY + starSize * 0.35}
+                  y={starY + starSize * 0.32}
                   textAnchor="middle"
                   fontSize={starSize}
                   fontWeight={900}
                   fill="#b45309"
                   stroke="#ffffff"
-                  strokeWidth={1}
+                  strokeWidth={isMobile ? 0.75 : 1}
                   paintOrder="stroke"
                 >
                   ★

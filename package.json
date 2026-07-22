@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:bg": "node scripts/start-dev-detached.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "verify:power": "tsx scripts/verify-power-routing.mts",
