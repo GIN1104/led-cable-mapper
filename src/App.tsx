@@ -9,6 +9,7 @@ import {
 import { buildAutoManualOverrides } from './lib/routingEngine'
 import { buildCombinedPackingList } from './lib/packingList'
 import { syncCabinetGridFromMeters, calcPixelsPerCabinet, normalizeStripWidths } from './lib/cabinetGrid'
+import { refreshStripPitchSnapshots, resolveAllStripPitches } from './lib/stripPitch'
 import {
   remapDataPortControllers,
   inferControllerFromLabel,
@@ -172,7 +173,11 @@ export default function App() {
     }))
   }, [activeRouting, activeScreen.id])
 
-  const { result, autoResult, isRouting } = useActiveRouting(activeScreen, activeRouting)
+  const { result, autoResult, isRouting } = useActiveRouting(
+    activeScreen,
+    activeRouting,
+    screens,
+  )
 
   const needsAllScreens =
     screens.length > 1 || showCombinedPacking
@@ -286,7 +291,7 @@ export default function App() {
     const screensPart = screens
       .map(
         (s) =>
-          `${s.id}:${s.name}:${s.cabinetsWide}x${s.cabinetsHigh}:${s.wallWidthM}x${s.wallHeightM}:${s.controllerModel}:${s.dualVx1000 ? 1 : 0}:${s.hangMount ? 1 : 0}:${s.powerFeedMode}:${s.stripWidths?.join(',') ?? ''}`,
+          `${s.id}:${s.name}:${s.cabinetsWide}x${s.cabinetsHigh}:${s.wallWidthM}x${s.wallHeightM}:${s.controllerModel}:${s.dualVx1000 ? 1 : 0}:${s.hangMount ? 1 : 0}:${s.powerFeedMode}:${s.stripWidths?.join(',') ?? ''}:${s.stripHeights?.join(',') ?? ''}`,
       )
       .join('|')
     const resultsPart = equipmentScreenResults
@@ -416,7 +421,12 @@ export default function App() {
   }, [activeScreen])
 
   const updateActiveScreen = useCallback((next: ScreenConfig) => {
-    setScreens((prev) => prev.map((s) => (s.id === next.id ? syncCabinetGridFromMeters(next) : s)))
+    setScreens((prev) => {
+      const synced = syncCabinetGridFromMeters(next)
+      const withNext = prev.map((s) => (s.id === synced.id ? synced : s))
+      // Если у полос питч с другого экрана — обновить снимки
+      return withNext.map((s) => refreshStripPitchSnapshots(s, withNext))
+    })
   }, [])
 
   const cloneScreenRouting = (state: ScreenRoutingState): ScreenRoutingState => ({
@@ -1319,10 +1329,29 @@ export default function App() {
 
   const config = activeScreen
   const cabinetCount = config.cabinetsWide * config.cabinetsHigh
+  const stripPitches = useMemo(
+    () => resolveAllStripPitches(config, screens),
+    [config, screens],
+  )
+  const stripCabinetSizes = useMemo(
+    () =>
+      stripPitches.map((p) => ({
+        w: p.cabinetWidthMm,
+        h: p.cabinetHeightMm,
+      })),
+    [stripPitches],
+  )
   const { pixelsWide: cabPixelsWide, pixelsHigh: cabPixelsHigh } =
     calcPixelsPerCabinet(config)
-  const screenPixelsWide = config.cabinetsWide * cabPixelsWide
-  const screenPixelsHigh = config.cabinetsHigh * cabPixelsHigh
+  const normalizedStrips = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
+  const screenPixelsWide = normalizedStrips.reduce(
+    (sum, w, i) => sum + w * (stripPitches[i]?.pixelsWide ?? cabPixelsWide),
+    0,
+  )
+  const screenPixelsHigh = Math.max(
+    ...stripPitches.map((p) => config.cabinetsHigh * p.pixelsHigh),
+    config.cabinetsHigh * cabPixelsHigh,
+  )
   const maxPixelsPerPort = getMaxPixelsPerDataPort(config.refreshRate)
   const maxCabinetsPerPort =
     result != null
@@ -1578,6 +1607,7 @@ export default function App() {
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
                   stripWidths={config.stripWidths}
+                  stripHeights={config.stripHeights}
                   dualVx1000={config.dualVx1000}
                   stripControllerIds={config.stripControllerIds}
                   dataPortControllers={manualOverrides.dataPortControllers}
@@ -1588,6 +1618,14 @@ export default function App() {
                   screenPixelsHigh={screenPixelsHigh}
                   cabinetWidthMm={config.cabinetWidthMm}
                   cabinetHeightMm={config.cabinetHeightMm}
+                  stripCabinetSizes={stripCabinetSizes}
+                  signalBackup={config.signalBackup}
+                  backupPortMode={config.backupPortMode}
+                  mainPortDisplayNumbers={config.mainPortDisplayNumbers}
+                  backupPortDisplayNumbers={config.backupPortDisplayNumbers}
+                  onBackupNumberingChange={(patch) =>
+                    updateActiveScreen({ ...activeScreen, ...patch })
+                  }
                   manualMode={manualModeData}
                   onManualModeChange={handleManualModeDataChange}
                   emptyCabinets={activeScreen.emptyCabinets}
@@ -1629,11 +1667,13 @@ export default function App() {
                   pitchPreset={config.pitchPreset}
                   powerFeedMode={config.powerFeedMode}
                   stripWidths={config.stripWidths}
+                  stripHeights={config.stripHeights}
                   dualVx1000={config.dualVx1000}
                   screenPixelsWide={screenPixelsWide}
                   screenPixelsHigh={screenPixelsHigh}
                   cabinetWidthMm={config.cabinetWidthMm}
                   cabinetHeightMm={config.cabinetHeightMm}
+                  stripCabinetSizes={stripCabinetSizes}
                   manualMode={manualModePower}
                   onManualModeChange={handleManualModePowerChange}
                   emptyCabinets={activeScreen.emptyCabinets}

@@ -39,7 +39,7 @@ export function buildRoutingSchema(
   for (const chain of dataChains) {
     const path = chain.cabinets.map((c) => c.label).join(' → ')
     lines.push(
-      `DATA PORT ${chain.portNumber}: ${controller} → ${trunk} → ${path}`,
+      `DATA PORT ${chain.displayId ?? chain.portNumber}: ${controller} → ${trunk} → ${path}`,
     )
   }
 
@@ -49,7 +49,7 @@ export function buildRoutingSchema(
     for (const chain of backupChains) {
       const path = chain.cabinets.map((c) => c.label).join(' → ')
       lines.push(
-        `BACKUP PORT ${chain.portNumber}: ${controller} (backup out) → ${trunk} → ${path}`,
+        `BACKUP PORT ${chain.displayId ?? chain.portNumber}: ${controller} (backup out) → ${trunk} → ${path}`,
       )
     }
   }
@@ -140,7 +140,7 @@ export function buildCableSchedule(
       entries.push({
         cableId: `M-DBK-${padId(backupTrunkCount)}`,
         lineType: 'Data Backup',
-        source: `${screenPrefix}${config.controllerModel} (backup)`,
+        source: `${screenPrefix}${config.controllerModel} (backup D${chain.displayId ?? chain.portNumber})`,
         destination: `${screenPrefix}Cabinet ${first.label}`,
         cableType: CABLE_TYPES.dataBackupTrunk,
         lengthM: trunkLen,

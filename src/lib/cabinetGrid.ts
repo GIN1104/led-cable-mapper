@@ -1,5 +1,6 @@
 import type { Cabinet, ChainStartEdge, LineDirection, PitchPresetId, ScreenConfig } from '../types'
 import { getPitchPreset } from './pitchPresets'
+import { normalizeStripPitchConfigs, resolveStripPitch } from './stripPitch'
 
 /** left = LTR (слева направо), right = RTL (справа налево) */
 export function edgeToDirection(edge: ChainStartEdge): LineDirection {
@@ -134,6 +135,136 @@ export function setStripWidthAt(
   return next
 }
 
+/**
+ * Высоты полос ещё не заданы пользователем (или устаревший дефолт [4]).
+ * Тогда все полосы = полная высота стены.
+ */
+export function stripHeightsNeedInit(
+  heights: number[] | undefined,
+  stripCount: number,
+  cabinetsHigh: number,
+): boolean {
+  if (!heights || heights.length === 0) return true
+  if (heights.length !== stripCount) return true
+  // Миграция: DEFAULT был [4] — при другой высоте стены считаем «не задано»
+  if (cabinetsHigh !== 4 && heights.every((h) => h === 4)) return true
+  return false
+}
+
+/**
+ * Высоты полос в рядах: длина = stripCount, каждая ≥1 и ≤cabinetsHigh.
+ * Пустой/короткий массив — все полосы на полную высоту стены.
+ */
+export function normalizeStripHeights(
+  heights: number[] | undefined,
+  stripCount: number,
+  cabinetsHigh: number,
+): number[] {
+  const n = Math.max(1, Math.floor(stripCount) || 1)
+  const maxH = Math.max(1, Math.floor(cabinetsHigh) || 1)
+  if (stripHeightsNeedInit(heights, n, maxH)) {
+    return Array.from({ length: n }, () => maxH)
+  }
+  return Array.from({ length: n }, (_, i) => {
+    const raw = heights![i] ?? heights![heights!.length - 1] ?? maxH
+    return Math.max(1, Math.min(maxH, Math.floor(Number(raw)) || maxH))
+  })
+}
+
+/** Верхний предел высоты полосы в рядах (защита от случайного ввода) */
+export const MAX_STRIP_HEIGHT_ROWS = 200
+
+/**
+ * Меняет высоту одной полосы. Можно больше или меньше текущей стены:
+ * cabinetsHigh / wallHeightM = max(высот полос).
+ */
+export function applyStripHeightAt(
+  config: ScreenConfig,
+  index: number,
+  newHeight: number,
+): ScreenConfig {
+  const stripWidths = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
+  const stripCount = stripWidths.length
+  const heights = normalizeStripHeights(
+    config.stripHeights,
+    stripCount,
+    Math.max(config.cabinetsHigh, 1),
+  )
+  if (index < 0 || index >= heights.length) return config
+
+  const nextH = Math.max(
+    1,
+    Math.min(MAX_STRIP_HEIGHT_ROWS, Math.floor(newHeight) || 1),
+  )
+  if (heights[index] === nextH) return config
+  heights[index] = nextH
+
+  const cabinetsHigh = Math.max(...heights)
+  const wallHeightM = clampWallDimensionM(
+    (cabinetsHigh * config.cabinetHeightMm) / 1000,
+  )
+
+  return syncCabinetGridFromMeters({
+    ...config,
+    wallHeightM,
+    stripHeights: heights,
+  })
+}
+
+/**
+ * Ряд активен в полосе (высота от низа стены: нижние height рядов).
+ */
+export function isRowActiveInStrip(
+  row: number,
+  stripIndex: number,
+  stripHeights: number[],
+  cabinetsHigh: number,
+): boolean {
+  const h = stripHeights[stripIndex] ?? cabinetsHigh
+  const startRow = Math.max(0, cabinetsHigh - h)
+  return row >= startRow && row < cabinetsHigh
+}
+
+/**
+ * Labels кабинетов, выключенных из‑за меньшей высоты полосы (пустые сверху).
+ */
+export function stripHeightInactiveLabels(
+  stripWidths: number[],
+  stripHeights: number[],
+  cabinetsWide: number,
+  cabinetsHigh: number,
+): string[] {
+  const widths = normalizeStripWidths(stripWidths, cabinetsWide)
+  const heights = normalizeStripHeights(stripHeights, widths.length, cabinetsHigh)
+  if (heights.every((h) => h >= cabinetsHigh)) return []
+
+  const labels: string[] = []
+  for (const { index, startCol, endCol } of stripColumnRanges(widths)) {
+    const h = heights[index] ?? cabinetsHigh
+    const emptyRows = cabinetsHigh - h
+    for (let row = 0; row < emptyRows; row++) {
+      for (let col = startCol; col < endCol; col++) {
+        labels.push(cabinetLabel(row, col, cabinetsHigh))
+      }
+    }
+  }
+  return labels
+}
+
+/** emptyCabinets + неактивные из‑за высоты стрипов */
+export function effectiveEmptyCabinetSet(config: ScreenConfig): Set<string> {
+  const set = new Set(config.emptyCabinets ?? [])
+  for (const label of stripHeightInactiveLabels(
+    config.stripWidths ?? [config.cabinetsWide],
+    config.stripHeights ?? [],
+    config.cabinetsWide,
+    config.cabinetsHigh,
+  )) {
+    set.add(label)
+  }
+  return set
+}
+
 /** Сколько визуальных зазоров между полосами стоит слева от колонки col */
 export function stripGapsBeforeCol(col: number, stripWidths: number[]): number {
   if (stripWidths.length <= 1 || col <= 0) return 0
@@ -225,22 +356,51 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
     config.stripControllerIds,
     stripWidths.length,
   )
+  const stripPitchConfigs = normalizeStripPitchConfigs(
+    config.stripPitchConfigs,
+    stripWidths.length,
+  )
+  // Если высоты не заданы / устаревший дефолт / все были full — на полную высоту стены
+  const prevHeights = config.stripHeights
+  const resetHeights =
+    stripHeightsNeedInit(prevHeights, stripWidths.length, config.cabinetsHigh) ||
+    Boolean(prevHeights?.every((h) => h === config.cabinetsHigh))
+  const stripHeights = resetHeights
+    ? Array.from({ length: stripWidths.length }, () => cabinetsHigh)
+    : normalizeStripHeights(prevHeights, stripWidths.length, cabinetsHigh)
   const stripsSame =
     stripWidths.length === (config.stripWidths?.length ?? 0) &&
     stripWidths.every((w, i) => w === config.stripWidths?.[i])
+  const heightsSame =
+    stripHeights.length === (config.stripHeights?.length ?? 0) &&
+    stripHeights.every((h, i) => h === config.stripHeights?.[i])
   const idsSame =
     stripControllerIds.length === (config.stripControllerIds?.length ?? 0) &&
     stripControllerIds.every((id, i) => id === config.stripControllerIds?.[i])
+  const pitchSame =
+    stripPitchConfigs.length === (config.stripPitchConfigs?.length ?? 0) &&
+    stripPitchConfigs.every((p, i) => {
+      const prev = config.stripPitchConfigs?.[i]
+      return (
+        prev?.kind === p.kind &&
+        prev?.pitchPreset === p.pitchPreset &&
+        prev?.screenId === p.screenId
+      )
+    })
   const dualSame = dualVx1000 === (config.dualVx1000 ?? false)
 
   if (
     cabinetsWide === config.cabinetsWide &&
     cabinetsHigh === config.cabinetsHigh &&
     stripsSame &&
+    heightsSame &&
     idsSame &&
+    pitchSame &&
     dualSame &&
     config.dualVx1000 !== undefined &&
-    config.stripControllerIds !== undefined
+    config.stripControllerIds !== undefined &&
+    config.stripPitchConfigs !== undefined &&
+    config.stripHeights !== undefined
   ) {
     return config
   }
@@ -249,8 +409,10 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
     cabinetsWide,
     cabinetsHigh,
     stripWidths,
+    stripHeights,
     dualVx1000,
     stripControllerIds,
+    stripPitchConfigs,
   }
 }
 
@@ -355,22 +517,26 @@ export function calcPixelsPerCabinet(config: ScreenConfig): {
  * Столбцы — числа слева направо. В SVG больший row — ниже по Y.
  */
 export function generateCabinetGrid(config: ScreenConfig): Cabinet[] {
-  const { pixelsWide, pixelsHigh, totalPixels } = calcPixelsPerCabinet(config)
+  const stripWidths = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
+  const ranges = stripColumnRanges(stripWidths)
   const cabinets: Cabinet[] = []
 
   for (let row = 0; row < config.cabinetsHigh; row++) {
     const rowLetter = cabinetRowLetter(row, config.cabinetsHigh)
     for (let col = 0; col < config.cabinetsWide; col++) {
       const label = cabinetLabel(row, col, config.cabinetsHigh)
+      const stripIdx =
+        ranges.find((r) => col >= r.startCol && col < r.endCol)?.index ?? 0
+      const geo = resolveStripPitch(config, stripIdx)
       cabinets.push({
         id: label,
         label,
         row,
         col,
         rowLetter,
-        pixelsWide,
-        pixelsHigh,
-        totalPixels,
+        pixelsWide: geo.pixelsWide,
+        pixelsHigh: geo.pixelsHigh,
+        totalPixels: geo.totalPixels,
         maxPowerW: config.maxPowerPerCabinetW,
       })
     }
@@ -855,6 +1021,97 @@ function sortNeighborsByDirection(
     }
     return current.row - a.row - (current.row - b.row) || (ltr ? a.col - b.col : b.col - a.col)
   })
+}
+
+/** Предпочитает соседа, продолжающего вертикальный обход (Reshet: ↑/↓, затем соседний столбец) */
+function sortNeighborsPreferVertical(
+  neighbors: Cabinet[],
+  current: Cabinet,
+  direction: LineDirection,
+): Cabinet[] {
+  const ltr = direction === 'ltr'
+  return [...neighbors].sort((a, b) => {
+    const vertA = a.col === current.col
+    const vertB = b.col === current.col
+    if (vertA !== vertB) return vertA ? -1 : 1
+    if (vertA) {
+      // Предпочитаем продолжение вверх (меньший row), иначе вниз
+      const upA = a.row < current.row
+      const upB = b.row < current.row
+      if (upA !== upB) return upA ? -1 : 1
+      return Math.abs(a.row - current.row) - Math.abs(b.row - current.row)
+    }
+    // Горизонтальный переход — только на соседний столбец по направлению
+    const stepA = ltr ? a.col - current.col : current.col - a.col
+    const stepB = ltr ? b.col - current.col : current.col - b.col
+    if ((stepA > 0) !== (stepB > 0)) return stepA > 0 ? -1 : 1
+    return ltr ? a.col - b.col : b.col - a.col
+  })
+}
+
+/**
+ * Упорядочивает кабинеты с приоритетом вертикали (Reshet data):
+ * вверх/вниз по столбцу, затем переход на соседний кубик.
+ */
+export function orderCabinetsFromStartVertical(
+  cabinets: Cabinet[],
+  startLabel?: string,
+  startEdge: ChainStartEdge = 'left',
+): Cabinet[] {
+  if (cabinets.length === 0) return []
+  const direction = edgeToDirection(startEdge)
+
+  if (!startLabel) {
+    const minRow = Math.min(...cabinets.map((c) => c.row))
+    const maxRow = Math.max(...cabinets.map((c) => c.row))
+    const minCol = Math.min(...cabinets.map((c) => c.col))
+    const maxCol = Math.max(...cabinets.map((c) => c.col))
+    return orderRegionVerticalSnake(
+      cabinets,
+      minCol,
+      minRow,
+      maxCol - minCol + 1,
+      maxRow - minRow + 1,
+      direction,
+    )
+  }
+
+  const startCab = cabinets.find((c) => c.label === startLabel)
+  if (!startCab) {
+    return orderCabinetsFromStartVertical(cabinets, undefined, startEdge)
+  }
+
+  const byPos = new Map<string, Cabinet>()
+  for (const cab of cabinets) {
+    byPos.set(`${cab.row},${cab.col}`, cab)
+  }
+
+  const visited = new Set<string>()
+  const ordered: Cabinet[] = [startCab]
+  visited.add(startCab.label)
+
+  while (ordered.length < cabinets.length) {
+    const current = ordered[ordered.length - 1]!
+    const neighbors = groupNeighbors(current, byPos).filter(
+      (c) => !visited.has(c.label),
+    )
+
+    if (neighbors.length > 0) {
+      const next = sortNeighborsPreferVertical(neighbors, current, direction)[0]!
+      ordered.push(next)
+      visited.add(next.label)
+      continue
+    }
+
+    const unvisited = cabinets.filter((c) => !visited.has(c.label))
+    const nearest = unvisited.reduce((best, c) =>
+      manhattan(current, c) < manhattan(current, best) ? c : best,
+    )
+    ordered.push(nearest)
+    visited.add(nearest.label)
+  }
+
+  return ordered
 }
 
 /**

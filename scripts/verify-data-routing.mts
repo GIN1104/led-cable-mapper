@@ -221,13 +221,16 @@ if (!assertHorizontalDataFlow(r7x3.chains, '7×3')) {
   ok = false
 }
 
-// 7m × 3m @50Hz → 14×3, maxCabs=23 → 2 порта (вертикальное деление 7|7)
+// 7m × 3m @50Hz → 14×3, maxCabs=23 → 2 порта (минимум ceil(42/23))
 const r7x3_50 = runCase(7, 3, '7m×3m 3.9 Big', 50)
 if (r7x3_50.chains.length !== 2) {
   ok = false
-  console.error(`FAIL 7×3@50Hz: expected 2 ports, got ${r7x3_50.chains.length}`)
+  console.error(`FAIL 7×3@50Hz: expected 2 ports (min packing), got ${r7x3_50.chains.length}`)
 }
 if (!assertChainLimits(r7x3_50.chains, r7x3_50.maxCabs, r7x3_50.maxPixels, '7×3@50')) {
+  ok = false
+}
+if (!assertHorizontalDataFlow(r7x3_50.chains, '7×3@50')) {
   ok = false
 }
 
@@ -241,11 +244,11 @@ if (!assertChainLimits(r8x3.chains, r8x3.maxCabs, r8x3.maxPixels, '8×3')) {
   ok = false
 }
 
-// 14m × 8m @50Hz → 28×8, maxCabs=23 → 10 портов (теор. минимум ceil(224/23))
+// 14m × 8m @50Hz → 28×8, maxCabs=23 → 10 портов (минимум ceil(224/23))
 const r14x8_50 = runCase(14, 8, '14m×8m 3.9 Big', 50)
 if (r14x8_50.chains.length !== 10) {
   ok = false
-  console.error(`FAIL 14×8@50Hz: expected 10 ports, got ${r14x8_50.chains.length}`)
+  console.error(`FAIL 14×8@50Hz: expected 10 ports (min packing), got ${r14x8_50.chains.length}`)
 }
 if (!assertChainLimits(r14x8_50.chains, r14x8_50.maxCabs, r14x8_50.maxPixels, '14×8@50')) {
   ok = false
@@ -254,11 +257,11 @@ if (!assertHorizontalDataFlow(r14x8_50.chains, '14×8@50')) {
   ok = false
 }
 
-// 14m × 8m @60Hz → 28×8, maxCabs=19 → 12 портов (теор. минимум ceil(224/19))
+// 14m × 8m @60Hz → 28×8, maxCabs=19 → 12 портов (минимум ceil(224/19))
 const r14x8_60 = runCase(14, 8, '14m×8m 3.9 Big', 60)
 if (r14x8_60.chains.length !== 12) {
   ok = false
-  console.error(`FAIL 14×8@60Hz: expected 12 ports, got ${r14x8_60.chains.length}`)
+  console.error(`FAIL 14×8@60Hz: expected 12 ports (min packing), got ${r14x8_60.chains.length}`)
 }
 if (!assertChainLimits(r14x8_60.chains, r14x8_60.maxCabs, r14x8_60.maxPixels, '14×8@60')) {
   ok = false
