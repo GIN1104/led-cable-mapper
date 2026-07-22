@@ -2,7 +2,7 @@ name: Deploy GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, test]
   workflow_dispatch:
 
 permissions:
@@ -18,25 +18,64 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout main (production)
         uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: main/package-lock.json
 
-      - name: Install dependencies
+      - name: Install (main)
+        working-directory: main
         run: npm ci
 
-      - name: Build
+      - name: Build production → /
+        working-directory: main
+        env:
+          BASE_PATH: /led-cable-mapper/
         run: npm run build
+
+      - name: Assemble site root
+        run: |
+          mkdir -p site
+          cp -a main/dist/. site/
+
+      - name: Checkout test branch
+        id: test_checkout
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          ref: test
+          path: test
+
+      - name: Install (test)
+        if: steps.test_checkout.outcome == 'success'
+        working-directory: test
+        run: npm ci
+
+      - name: Build test → /test/
+        if: steps.test_checkout.outcome == 'success'
+        working-directory: test
+        env:
+          BASE_PATH: /led-cable-mapper/test/
+        run: npm run build
+
+      - name: Assemble site /test
+        if: steps.test_checkout.outcome == 'success'
+        run: |
+          mkdir -p site/test
+          cp -a test/dist/. site/test/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: site
 
   deploy:
     needs: build
