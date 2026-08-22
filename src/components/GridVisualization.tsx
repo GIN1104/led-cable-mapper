@@ -115,6 +115,13 @@ interface GridVisualizationProps {
     mainPortDisplayNumbers?: Record<number, number>
     backupPortDisplayNumbers?: Record<number, number>
   }) => void
+  /**
+   * Только одна схема (Data или Power) слушает стрелки.
+   * false — listener не вешается, чтобы не трогать другую схему.
+   */
+  keyboardActive?: boolean
+  /** Клик/фокус по этой схеме — сделать её владельцем стрелок */
+  onClaimKeyboard?: () => void
 }
 
 /** gap=0 — кубики вплотную; stripGap — заметный разделитель между полосами */
@@ -708,6 +715,8 @@ export default memo(function GridVisualization({
   mainPortDisplayNumbers = {},
   backupPortDisplayNumbers = {},
   onBackupNumberingChange,
+  keyboardActive = false,
+  onClaimKeyboard,
 }: GridVisualizationProps) {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
@@ -1126,6 +1135,8 @@ export default memo(function GridVisualization({
   /** Контекст VX1/VX2 для выбора и создания линий D1-x / D2-x */
   const [manualVxContext, setManualVxContext] = useState<1 | 2>(1)
   const manualKeyboardRef = useRef<HTMLDivElement>(null)
+  /** Синхронный «кончик» линии для стрелок — без ожидания React state */
+  const paintTipRef = useRef<string | null>(null)
 
   const getChainForPort = useCallback(
     (port: number) => {
@@ -1136,6 +1147,17 @@ export default memo(function GridVisualization({
     },
     [chainOrder],
   )
+
+  const focusManualKeyboard = useCallback(() => {
+    onClaimKeyboard?.()
+    manualKeyboardRef.current?.focus({ preventScroll: true })
+  }, [onClaimKeyboard])
+
+  useEffect(() => {
+    const chain = getChainForPort(activeValue)
+    paintTipRef.current =
+      chain.at(-1) ?? startPoints?.[activeValue] ?? null
+  }, [activeValue, getChainForPort, chainOrder, startPoints])
 
   const canDualVxManual =
     isData && dualVx1000 && stripWidths.length > 1 && manualMode
@@ -1533,9 +1555,9 @@ export default memo(function GridVisualization({
     [cabinets, labelAtCell],
   )
 
-  /** Стрелки продолжают активную линию от последнего кабинета (режим Paint) */
+  /** Стрелки — только у активной схемы (keyboardActive), иначе Data ломает Power */
   useEffect(() => {
-    if (!manualMode || editMode !== 'assign') return
+    if (!manualMode || editMode !== 'assign' || !keyboardActive) return
 
     const onKeyDown = (e: KeyboardEvent) => {
       const isArrow =
@@ -1544,37 +1566,43 @@ export default memo(function GridVisualization({
         e.key === 'ArrowUp' ||
         e.key === 'ArrowDown'
       if (!isArrow) return
-
-      const target = e.target as HTMLElement | null
-      if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
-          target.isContentEditable)
-      ) {
-        return
-      }
+      if (e.altKey || e.ctrlKey || e.metaKey) return
 
       e.preventDefault()
       e.stopPropagation()
 
       const chain = getChainForPort(activeValue)
-      const last = chain.at(-1)
+      let last = paintTipRef.current
+      if (!last || (chain.length > 0 && !chain.includes(last))) {
+        last = chain.at(-1) ?? startPoints?.[activeValue] ?? null
+      }
+      if (!last) {
+        const assigned = Object.entries(manualAssignments)
+          .filter(([, v]) => v === activeValue)
+          .map(([label]) => label)
+        last = assigned.at(-1) ?? null
+      }
       if (!last) return
 
       const next = neighborLabel(last, e.key)
       if (!next || emptySet.has(next)) return
 
-      // Стрелка назад на предыдущий кабинет — снять последний (как undo)
-      const prev = chain.at(-2)
-      if (prev && next === prev && onUndoCabinet) {
+      const tipIndex = chain.lastIndexOf(last)
+      const prev = tipIndex > 0 ? chain[tipIndex - 1] : chain.at(-2)
+      // Стрелка назад — undo только если next реально предыдущий в ЭТОЙ цепочке
+      if (prev && next === prev && onUndoCabinet && chain.includes(last)) {
         onUndoCabinet(last)
+        paintTipRef.current = prev
         return
       }
 
       if (next === last) return
+      if (chain.includes(next) && next !== prev) {
+        paintTipRef.current = next
+        return
+      }
 
+      paintTipRef.current = next
       assignTo([next], activeValue)
     }
 
@@ -1583,19 +1611,23 @@ export default memo(function GridVisualization({
   }, [
     manualMode,
     editMode,
+    keyboardActive,
     getChainForPort,
     activeValue,
     neighborLabel,
     emptySet,
     onUndoCabinet,
     assignTo,
+    startPoints,
+    manualAssignments,
   ])
 
   useEffect(() => {
-    if (manualMode && editMode === 'assign') {
+    // Фокус только когда эта схема — владелец стрелок (не красть у Power/Data)
+    if (manualMode && editMode === 'assign' && keyboardActive) {
       manualKeyboardRef.current?.focus({ preventScroll: true })
     }
-  }, [manualMode, editMode, activeValue])
+  }, [manualMode, editMode, keyboardActive])
 
   const handleCabinetClick = useCallback(
     (label: string, shiftKey: boolean, altKey: boolean) => {
@@ -1647,10 +1679,15 @@ export default memo(function GridVisualization({
       const lastInActive = getChainForPort(activeValue).at(-1)
       if (onUndoCabinet && label === lastInActive) {
         onUndoCabinet(label)
+        const chain = getChainForPort(activeValue)
+        paintTipRef.current = chain.at(-2) ?? null
+        focusManualKeyboard()
         return
       }
 
+      paintTipRef.current = label
       assignTo([label], activeValue)
+      focusManualKeyboard()
     },
     [
       manualMode,
@@ -1666,18 +1703,20 @@ export default memo(function GridVisualization({
       chainOrder,
       getChainForPort,
       onUndoCabinet,
+      focusManualKeyboard,
     ],
   )
 
   const handleLegendClick = useCallback(
     (value: number) => {
       if (!manualMode) return
+      focusManualKeyboard()
       setActiveValue(value)
       if (selectedLabels.size > 0) {
         assignTo([...selectedLabels], value)
       }
     },
-    [manualMode, selectedLabels, assignTo],
+    [manualMode, selectedLabels, assignTo, focusManualKeyboard],
   )
 
   const handleClearManual = useCallback(() => {
@@ -1758,6 +1797,9 @@ export default memo(function GridVisualization({
   return (
     <div
       ref={captureRef}
+      onMouseDown={() => {
+        if (manualMode) onClaimKeyboard?.()
+      }}
       className={`overflow-x-auto rounded-xl border bg-white p-3 shadow-sm sm:p-4 ${
         manualMode || emptyPaintMode
           ? 'border-amber-300 ring-1 ring-amber-200'
@@ -1918,6 +1960,8 @@ export default memo(function GridVisualization({
         <div
           ref={manualKeyboardRef}
           tabIndex={-1}
+          onMouseDown={() => onClaimKeyboard?.()}
+          onFocus={() => onClaimKeyboard?.()}
           className="sticky top-0 z-10 mb-3 space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-xs text-amber-900 shadow-sm outline-none"
         >
           <p className="px-1 text-[11px] font-semibold text-amber-950">
@@ -2887,7 +2931,8 @@ export default memo(function GridVisualization({
             const badgeH = endFont + (simplifyLabels || isMobile ? 6 : 4)
             const badgeW = Math.ceil(3 * endFont * 0.72) + badgePadX * 2
             const badgeX = x + (cellW - badgeW) / 2
-            const badgeY = y + cellH - badgeH - 2
+            // Тикшорет: End сверху последнего кубика; power — снизу
+            const badgeY = isData ? y + 2 : y + cellH - badgeH - 2
             return (
               <g key={`end-${cab.label}`}>
                 <rect

@@ -141,6 +141,8 @@ export default function App() {
   /** История полных состояний — одно действие пользователя = один снимок. */
   const [dataPaintUndo, setDataPaintUndo] = useState<Record<string, DataUndoSnapshot[]>>({})
   const [powerPaintUndo, setPowerPaintUndo] = useState<Record<string, PowerUndoSnapshot[]>>({})
+  /** Стрелки ←↑↓→ принимает только одна схема — иначе Data undo-ит тикшорет при краске хашмаль */
+  const [paintKeyboardFocus, setPaintKeyboardFocus] = useState<'data' | 'power'>('data')
 
   const activeScreen = useMemo(
     () => screens.find((s) => s.id === activeScreenId) ?? screens[0],
@@ -489,8 +491,10 @@ export default function App() {
           }
         })
         setDataPaintUndo((prev) => ({ ...prev, [activeScreen.id]: [] }))
+        setPaintKeyboardFocus('data')
       } else {
         setActiveRouting({ manualModeData: false })
+        setPaintKeyboardFocus((prev) => (prev === 'data' ? 'power' : prev))
       }
     },
     [activeScreen, setActiveRouting],
@@ -517,8 +521,10 @@ export default function App() {
           }
         })
         setPowerPaintUndo((prev) => ({ ...prev, [activeScreen.id]: [] }))
+        setPaintKeyboardFocus('power')
       } else {
         setActiveRouting({ manualModePower: false })
+        setPaintKeyboardFocus((prev) => (prev === 'power' ? 'data' : prev))
       }
     },
     [activeScreen, setActiveRouting],
@@ -1626,6 +1632,8 @@ export default function App() {
                   onBackupNumberingChange={(patch) =>
                     updateActiveScreen({ ...activeScreen, ...patch })
                   }
+                  keyboardActive={paintKeyboardFocus === 'data'}
+                  onClaimKeyboard={() => setPaintKeyboardFocus('data')}
                   manualMode={manualModeData}
                   onManualModeChange={handleManualModeDataChange}
                   emptyCabinets={activeScreen.emptyCabinets}
@@ -1674,6 +1682,8 @@ export default function App() {
                   cabinetWidthMm={config.cabinetWidthMm}
                   cabinetHeightMm={config.cabinetHeightMm}
                   stripCabinetSizes={stripCabinetSizes}
+                  keyboardActive={paintKeyboardFocus === 'power'}
+                  onClaimKeyboard={() => setPaintKeyboardFocus('power')}
                   manualMode={manualModePower}
                   onManualModeChange={handleManualModePowerChange}
                   emptyCabinets={activeScreen.emptyCabinets}
