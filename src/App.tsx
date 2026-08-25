@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GridLayout, ScreenConfig, ScreenRoutingState } from './types'
 import {
   createScreen,
-  DEFAULT_PROJECT,
   EMPTY_MANUAL_OVERRIDES,
   EMPTY_SCREEN_ROUTING,
 } from './types'
@@ -45,6 +44,12 @@ import {
   resolveEquipmentScreenResults,
 } from './lib/equipmentList'
 import type { EquipmentListState } from './lib/equipmentList'
+import {
+  clearPersistedProject,
+  createDefaultPersistedProject,
+  loadPersistedProject,
+  savePersistedProject,
+} from './lib/projectPersistence'
 
 type ManualOverrides = ScreenRoutingState['manualOverrides']
 type DataUndoSnapshot = Pick<
@@ -128,21 +133,84 @@ function pruneEmptyFromGrid(emptyCabinets: string[], wide: number, high: number)
 }
 
 export default function App() {
-  const [screens, setScreens] = useState<ScreenConfig[]>(DEFAULT_PROJECT.screens)
+  const initialProject = useMemo(
+    () => loadPersistedProject() ?? createDefaultPersistedProject(),
+    [],
+  )
+  const [screens, setScreens] = useState<ScreenConfig[]>(initialProject.screens)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeScreenId, setActiveScreenId] = useState(DEFAULT_PROJECT.activeScreenId)
-  const [routingByScreen, setRoutingByScreen] = useState<Record<string, ScreenRoutingState>>({
-    [DEFAULT_PROJECT.activeScreenId]: { ...EMPTY_SCREEN_ROUTING },
-  })
+  const [activeScreenId, setActiveScreenId] = useState(initialProject.activeScreenId)
+  const [routingByScreen, setRoutingByScreen] = useState<Record<string, ScreenRoutingState>>(
+    initialProject.routingByScreen,
+  )
   const [emptyPaintMode, setEmptyPaintMode] = useState(false)
-  const [gridLayout, setGridLayout] = useState<GridLayout>('stacked')
-  const [showCombinedPacking, setShowCombinedPacking] = useState(false)
-  const [equipmentList, setEquipmentList] = useState<EquipmentListState | null>(null)
+  const [gridLayout, setGridLayout] = useState<GridLayout>(initialProject.gridLayout)
+  const [showCombinedPacking, setShowCombinedPacking] = useState(
+    initialProject.showCombinedPacking,
+  )
+  const [equipmentList, setEquipmentList] = useState<EquipmentListState | null>(
+    initialProject.equipmentList,
+  )
   /** История полных состояний — одно действие пользователя = один снимок. */
   const [dataPaintUndo, setDataPaintUndo] = useState<Record<string, DataUndoSnapshot[]>>({})
   const [powerPaintUndo, setPowerPaintUndo] = useState<Record<string, PowerUndoSnapshot[]>>({})
   /** Стрелки ←↑↓→ принимает только одна схема — иначе Data undo-ит тикшорет при краске хашмаль */
   const [paintKeyboardFocus, setPaintKeyboardFocus] = useState<'data' | 'power'>('data')
+
+  const projectSnapshotRef = useRef({
+    screens,
+    activeScreenId,
+    routingByScreen,
+    gridLayout,
+    showCombinedPacking,
+    equipmentList,
+  })
+  projectSnapshotRef.current = {
+    screens,
+    activeScreenId,
+    routingByScreen,
+    gridLayout,
+    showCombinedPacking,
+    equipmentList,
+  }
+
+  const flushProjectSave = useCallback(() => {
+    const snap = projectSnapshotRef.current
+    savePersistedProject({
+      version: 1,
+      screens: snap.screens,
+      activeScreenId: snap.activeScreenId,
+      routingByScreen: snap.routingByScreen,
+      gridLayout: snap.gridLayout,
+      showCombinedPacking: snap.showCombinedPacking,
+      equipmentList: snap.equipmentList,
+    })
+  }, [])
+
+  // Автосохранение (ПК и телефон). На мобильных — ещё flush при сворачивании/уходе.
+  useEffect(() => {
+    const timer = window.setTimeout(flushProjectSave, 150)
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flushProjectSave()
+    }
+    window.addEventListener('pagehide', flushProjectSave)
+    window.addEventListener('beforeunload', flushProjectSave)
+    document.addEventListener('visibilitychange', onHide)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('pagehide', flushProjectSave)
+      window.removeEventListener('beforeunload', flushProjectSave)
+      document.removeEventListener('visibilitychange', onHide)
+    }
+  }, [
+    screens,
+    activeScreenId,
+    routingByScreen,
+    gridLayout,
+    showCombinedPacking,
+    equipmentList,
+    flushProjectSave,
+  ])
 
   const activeScreen = useMemo(
     () => screens.find((s) => s.id === activeScreenId) ?? screens[0],
@@ -1333,6 +1401,25 @@ export default function App() {
     setScreens((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)))
   }, [])
 
+  const handleResetProject = useCallback(() => {
+    const ok = window.confirm(
+      'Сбросить весь проект?\n\nБудут удалены экраны, ручные схемы data/power и сохранённые данные. Это нельзя отменить.',
+    )
+    if (!ok) return
+    clearPersistedProject()
+    const next = createDefaultPersistedProject()
+    setScreens(next.screens)
+    setActiveScreenId(next.activeScreenId)
+    setRoutingByScreen(next.routingByScreen)
+    setGridLayout(next.gridLayout)
+    setShowCombinedPacking(next.showCombinedPacking)
+    setEquipmentList(null)
+    setDataPaintUndo({})
+    setPowerPaintUndo({})
+    setEmptyPaintMode(false)
+    setPaintKeyboardFocus('data')
+  }, [])
+
   const config = activeScreen
   const cabinetCount = config.cabinetsWide * config.cabinetsHigh
   const stripPitches = useMemo(
@@ -1395,6 +1482,7 @@ export default function App() {
           onAddScreen={handleAddScreen}
           onRemoveScreen={handleRemoveScreen}
           onRenameScreen={handleRenameScreen}
+          onResetProject={handleResetProject}
           emptyPaintMode={emptyPaintMode}
           onEmptyPaintModeChange={setEmptyPaintMode}
           gridLayout={gridLayout}

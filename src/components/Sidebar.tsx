@@ -85,6 +85,9 @@ interface SidebarProps {
 
   onRenameScreen: (id: string, name: string) => void
 
+  /** Полный сброс проекта (localStorage + defaults) */
+  onResetProject: () => void
+
   emptyPaintMode: boolean
 
   onEmptyPaintModeChange: (enabled: boolean) => void
@@ -204,6 +207,8 @@ export default function Sidebar({
   onRemoveScreen,
 
   onRenameScreen,
+
+  onResetProject,
 
   emptyPaintMode,
 
@@ -1555,35 +1560,35 @@ export default function Sidebar({
 
 
 
-        <button
-
-          type="button"
-
-          className="mt-auto text-xs text-slate-400 underline hover:text-slate-600"
-
-          onClick={() =>
-
-            onChange(
-
-              createScreen({
-
-                id: config.id,
-
-                name: config.name,
-
-                emptyCabinets: config.emptyCabinets,
-
-              }),
-
-            )
-
-          }
-
-        >
-
-          Reset screen to defaults
-
-        </button>
+        <div className="mt-auto space-y-2 border-t border-slate-200 pt-3">
+          <button
+            type="button"
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+            onClick={() =>
+              onChange(
+                createScreen({
+                  id: config.id,
+                  name: config.name,
+                  emptyCabinets: config.emptyCabinets,
+                }),
+              )
+            }
+          >
+            Сбросить экран к defaults
+          </button>
+          <button
+            type="button"
+            className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+            onClick={onResetProject}
+          >
+            Обнулить проект
+          </button>
+          <p className="text-[10px] leading-snug text-slate-400">
+            Сохраняется в браузере на этом устройстве (телефон и ПК) — после
+            обновления страницы данные остаются. «Обнулить проект» удаляет всё
+            сохранённое здесь.
+          </p>
+        </div>
 
       </div>
 
