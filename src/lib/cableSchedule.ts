@@ -204,6 +204,7 @@ export function buildCableSchedule(
         to,
         config.cabinetWidthMm,
         config.cabinetHeightMm,
+        config.pixelPitchMm,
       )
       const cappedLen = Math.min(len, MAX_POWER_LINK_LENGTH_M)
       entries.push({

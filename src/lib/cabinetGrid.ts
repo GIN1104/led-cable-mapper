@@ -1,6 +1,12 @@
 import type { Cabinet, ChainStartEdge, LineDirection, PitchPresetId, ScreenConfig } from '../types'
 import { getPitchPreset } from './pitchPresets'
 import { normalizeStripPitchConfigs, resolveStripPitch } from './stripPitch'
+import {
+  isRowMixActive,
+  normalizeRowMixBands,
+  resolveRowMixPitch,
+  summarizeRowMix,
+} from './rowMix'
 
 /** left = LTR (слева направо), right = RTL (справа налево) */
 export function edgeToDirection(edge: ChainStartEdge): LineDirection {
@@ -343,12 +349,37 @@ export function normalizeStripControllerIds(
 
 /** Пересчитывает cabinetsWide/High из wallWidthM/wallHeightM и размеров кабинета */
 export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
-  const { cabinetsWide, cabinetsHigh } = calcCabinetsFromMeters(
-    config.wallWidthM,
-    config.wallHeightM,
-    config.cabinetWidthMm,
-    config.cabinetHeightMm,
-  )
+  const stripCountHint = config.stripWidths?.length ?? 1
+  const rowMixBands =
+    stripCountHint > 1 ? [] : normalizeRowMixBands(config.rowMixBands)
+  const mixActive = rowMixBands.length > 0
+
+  let cabinetsWide: number
+  let cabinetsHigh: number
+  let wallHeightM = config.wallHeightM
+
+  if (mixActive) {
+    const mix = summarizeRowMix(rowMixBands)
+    cabinetsWide = calcCabinetsFromMeters(
+      config.wallWidthM,
+      mix.wallHeightM,
+      config.cabinetWidthMm,
+      // высота из метров не используется при миксе — только ширина
+      mix.rowHeightsMm[0] ?? config.cabinetHeightMm,
+    ).cabinetsWide
+    cabinetsHigh = mix.cabinetsHigh
+    wallHeightM = mix.wallHeightM
+  } else {
+    const grid = calcCabinetsFromMeters(
+      config.wallWidthM,
+      config.wallHeightM,
+      config.cabinetWidthMm,
+      config.cabinetHeightMm,
+    )
+    cabinetsWide = grid.cabinetsWide
+    cabinetsHigh = grid.cabinetsHigh
+  }
+
   const stripWidths = normalizeStripWidths(config.stripWidths, cabinetsWide)
   // dualVx1000 сохраняем при смене числа стрипов; ids нормализуем под stripWidths
   const dualVx1000 = config.dualVx1000 ?? false
@@ -388,19 +419,28 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
       )
     })
   const dualSame = dualVx1000 === (config.dualVx1000 ?? false)
+  const mixSame =
+    rowMixBands.length === (config.rowMixBands?.length ?? 0) &&
+    rowMixBands.every((b, i) => {
+      const prev = config.rowMixBands?.[i]
+      return prev?.size === b.size && prev?.rows === b.rows
+    })
 
   if (
     cabinetsWide === config.cabinetsWide &&
     cabinetsHigh === config.cabinetsHigh &&
+    wallHeightM === config.wallHeightM &&
     stripsSame &&
     heightsSame &&
     idsSame &&
     pitchSame &&
     dualSame &&
+    mixSame &&
     config.dualVx1000 !== undefined &&
     config.stripControllerIds !== undefined &&
     config.stripPitchConfigs !== undefined &&
-    config.stripHeights !== undefined
+    config.stripHeights !== undefined &&
+    config.rowMixBands !== undefined
   ) {
     return config
   }
@@ -408,11 +448,13 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
     ...config,
     cabinetsWide,
     cabinetsHigh,
+    wallHeightM,
     stripWidths,
     stripHeights,
     dualVx1000,
     stripControllerIds,
     stripPitchConfigs,
+    rowMixBands,
   }
 }
 
@@ -520,14 +562,16 @@ export function generateCabinetGrid(config: ScreenConfig): Cabinet[] {
   const stripWidths = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
   const ranges = stripColumnRanges(stripWidths)
   const cabinets: Cabinet[] = []
+  const mixOn = isRowMixActive(config)
 
   for (let row = 0; row < config.cabinetsHigh; row++) {
     const rowLetter = cabinetRowLetter(row, config.cabinetsHigh)
+    const rowGeo = mixOn ? resolveRowMixPitch(config, row) : null
     for (let col = 0; col < config.cabinetsWide; col++) {
       const label = cabinetLabel(row, col, config.cabinetsHigh)
       const stripIdx =
         ranges.find((r) => col >= r.startCol && col < r.endCol)?.index ?? 0
-      const geo = resolveStripPitch(config, stripIdx)
+      const geo = rowGeo ?? resolveStripPitch(config, stripIdx)
       cabinets.push({
         id: label,
         label,
@@ -1228,17 +1272,36 @@ export function linkLengthBetween(a: Cabinet, b: Cabinet): number {
 /**
  * Длина power-линка по геометрии кабинета:
  * горизонталь = ширина мм, вертикаль = высота мм.
+ * Если у кабинетов разные pixelsHigh — высота из pixels × pitch.
  */
 export function powerLinkLengthBetween(
   a: Cabinet,
   b: Cabinet,
   cabinetWidthMm: number,
   cabinetHeightMm: number,
+  pixelPitchMm = 0,
 ): number {
+  const heightOf = (c: Cabinet) =>
+    pixelPitchMm > 0 && c.pixelsHigh > 0
+      ? c.pixelsHigh * pixelPitchMm
+      : cabinetHeightMm
+
   if (a.row === b.row) return cabinetWidthMm / 1000
-  if (a.col === b.col) return cabinetHeightMm / 1000
+  if (a.col === b.col) {
+    const lo = Math.min(a.row, b.row)
+    const hi = Math.max(a.row, b.row)
+    if (hi === lo + 1) {
+      return (heightOf(a) + heightOf(b)) / 2 / 1000
+    }
+    // Несколько рядов: сумма соседних center-to-center
+    let mm = 0
+    // Без полного списка высот рядов — оценка по концам
+    mm = ((heightOf(a) + heightOf(b)) / 2) * (hi - lo)
+    return mm / 1000
+  }
   const dx = Math.abs(a.col - b.col) * cabinetWidthMm
-  const dy = Math.abs(a.row - b.row) * cabinetHeightMm
+  const dy =
+    Math.abs(a.row - b.row) * ((heightOf(a) + heightOf(b)) / 2)
   return Math.sqrt(dx * dx + dy * dy) / 1000
 }
 

@@ -167,6 +167,49 @@ export function stripPitchFromScreen(
   }
 }
 
+/** Быстрый микс пресетов: по одному на полосу (циклически) */
+export function stripPitchConfigsFromPresets(
+  presetIds: PitchPresetId[],
+  stripCount: number,
+): StripPitchConfig[] {
+  const n = Math.max(1, stripCount)
+  if (presetIds.length === 0) {
+    return Array.from({ length: n }, () => inheritStripPitch())
+  }
+  return Array.from({ length: n }, (_, i) =>
+    stripPitchFromPreset(presetIds[i % presetIds.length]!),
+  )
+}
+
+/**
+ * Собрать полосы из других экранов проекта (питч/размер кубика).
+ * Число полос = число источников (ограничено cabinetsWide).
+ */
+export function buildStripMixFromScreens(
+  screen: ScreenConfig,
+  sourceScreens: ScreenConfig[],
+): Pick<
+  ScreenConfig,
+  'stripWidths' | 'stripHeights' | 'stripPitchConfigs' | 'stripControllerIds'
+> | null {
+  const sources = sourceScreens.filter((s) => s.id !== screen.id)
+  if (sources.length === 0) return null
+  const n = Math.max(1, Math.min(sources.length, Math.max(1, screen.cabinetsWide)))
+  const take = sources.slice(0, n)
+  // equal widths without importing cabinetGrid
+  const base = Math.floor(screen.cabinetsWide / n)
+  const rem = screen.cabinetsWide % n
+  const stripWidths = Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0))
+  return {
+    stripWidths,
+    stripHeights: Array.from({ length: n }, () => screen.cabinetsHigh),
+    stripPitchConfigs: take.map((s) => stripPitchFromScreen(s.id, s)),
+    stripControllerIds: Array.from({ length: n }, (_, i) =>
+      n === 1 ? 1 : i === 0 || i === n - 1 ? 1 : 2,
+    ),
+  }
+}
+
 /** Обновляет снимки kind=screen из актуальных экранов проекта */
 export function refreshStripPitchSnapshots(
   screen: ScreenConfig,

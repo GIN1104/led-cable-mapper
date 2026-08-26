@@ -40,6 +40,7 @@ export function screenRoutingKey(screen: ScreenConfig): string {
           `${c.kind}:${c.pitchPreset ?? ''}:${c.screenId ?? ''}:${c.cabinetWidthMm ?? ''}x${c.cabinetHeightMm ?? ''}`,
       )
       .join(';'),
+    (screen.rowMixBands ?? []).map((b) => `${b.size}:${b.rows}`).join(';'),
   ].join('|')
 }
 

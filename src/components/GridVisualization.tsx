@@ -105,6 +105,11 @@ interface GridVisualizationProps {
   cabinetHeightMm?: number
   /** Размер кабинета (мм) на полосу — если задан, ячейки стрипа масштабируются отдельно */
   stripCabinetSizes?: Array<{ w: number; h: number }>
+  /**
+   * Высота каждого ряда сверху вниз (мм) — микс Big/Small.
+   * Если задан (length === high), ячейки масштабируются по рядам.
+   */
+  rowCabinetHeightsMm?: number[]
   /** V-Backup включён — вторая строка легенды Data Backup */
   signalBackup?: boolean
   backupPortMode?: 'auto' | 'manual'
@@ -128,36 +133,56 @@ interface GridVisualizationProps {
 const DESKTOP_CELL_BASE = { w: 88, h: 64, gap: 0, pad: 40, stripGap: 24 }
 const MOBILE_CELL_BASE = { w: 56, h: 44, gap: 0, pad: 24, stripGap: 14 }
 
-/** Размер ячейки сетки с сохранением пропорций кабинета (мм) */
+/**
+ * Модуль 500 мм → сторона квадрата Small на схеме.
+ * Small 500×500 → 1×1, Big 500×1000 → 1×2, Reshet 1000×500 → 2×1.
+ */
+const CABINET_MODULE_MM = 500
+const MODULE_PX_DESKTOP = 56
+const MODULE_PX_MOBILE = 40
+
+/**
+ * Размер ячейки с сохранением пропорций кабинета (мм).
+ */
 function cellMetricsForCabinet(
   cabinetWidthMm: number,
   cabinetHeightMm: number,
   isMobile: boolean,
 ): { w: number; h: number; gap: number; pad: number; stripGap: number } {
   const base = isMobile ? MOBILE_CELL_BASE : DESKTOP_CELL_BASE
-  const minW = isMobile ? 28 : 40
-  const minH = isMobile ? 22 : 32
-
-  const cw = Math.max(100, cabinetWidthMm)
-  const ch = Math.max(100, cabinetHeightMm)
-  const aspect = cw / ch
-  const baseAspect = base.w / base.h
-
-  let w: number
-  let h: number
-  if (aspect >= baseAspect) {
-    w = base.w
-    h = base.w / aspect
-  } else {
-    h = base.h
-    w = base.h * aspect
+  const sized = sizeCabinetsWithSharedScale(
+    [{ w: cabinetWidthMm, h: cabinetHeightMm }],
+    isMobile,
+  )[0]!
+  return {
+    w: sized.w,
+    h: sized.h,
+    gap: base.gap,
+    pad: base.pad,
+    stripGap: base.stripGap,
   }
+}
 
-  const scaleUp = Math.max(minW / w, minH / h, 1)
-  w = Math.round(w * scaleUp)
-  h = Math.round(h * scaleUp)
-
-  return { w, h, gap: base.gap, pad: base.pad, stripGap: base.stripGap }
+/**
+ * Общий масштаб мм→px от модуля 500 мм.
+ * Пропорции жёсткие: не вписываем в «чужой» base-aspect (иначе ломается 1:1 / 1:2 / 2:1).
+ */
+function sizeCabinetsWithSharedScale(
+  sizesMm: Array<{ w: number; h: number }>,
+  isMobile: boolean,
+): Array<{ w: number; h: number }> {
+  const modulePx = isMobile ? MODULE_PX_MOBILE : MODULE_PX_DESKTOP
+  if (sizesMm.length === 0) {
+    return [{ w: modulePx, h: modulePx }]
+  }
+  return sizesMm.map((s) => {
+    const wMm = Math.max(100, s.w)
+    const hMm = Math.max(100, s.h)
+    return {
+      w: Math.max(1, Math.round((wMm / CABINET_MODULE_MM) * modulePx)),
+      h: Math.max(1, Math.round((hMm / CABINET_MODULE_MM) * modulePx)),
+    }
+  })
 }
 
 const ZOOM_MIN = 0.5
@@ -346,7 +371,7 @@ function buildSmoothLanePoints(
   kind: 'data' | 'backup',
   wide: number,
   getCellW: (col: number) => number,
-  getCellH: (col: number) => number,
+  getCellH: (col: number, row?: number) => number,
   isRtl: boolean,
   isMobile: boolean,
 ): { x: number; y: number }[] {
@@ -363,7 +388,7 @@ function buildSmoothLanePoints(
   return centers.map((c, i) => {
     const cab = cabinets[i]!
     const cellW = getCellW(cab.col)
-    const cellH = getCellH(cab.col)
+    const cellH = getCellH(cab.col, cab.row)
     const maxDx = Math.max(2, cellW / 2 - margin)
     const maxDy = Math.max(2, cellH / 2 - margin)
 
@@ -710,6 +735,7 @@ export default memo(function GridVisualization({
   cabinetWidthMm = 500,
   cabinetHeightMm = 500,
   stripCabinetSizes,
+  rowCabinetHeightsMm,
   signalBackup: _signalBackup = false,
   backupPortMode = 'auto',
   mainPortDisplayNumbers = {},
@@ -743,12 +769,38 @@ export default memo(function GridVisualization({
   const { gap: GAP, pad: PAD, stripGap: STRIP_GAP } = baseMetrics
 
   const stripCellMetrics = useMemo(() => {
-    return stripWidths.map((_, i) => {
+    const sizesMm = stripWidths.map((_, i) => {
       const size = stripCabinetSizes?.[i]
-      if (!size) return baseMetrics
-      return cellMetricsForCabinet(size.w, size.h, isMobile)
+      return size
+        ? { w: size.w, h: size.h }
+        : { w: cabinetWidthMm, h: cabinetHeightMm }
     })
-  }, [stripWidths, stripCabinetSizes, baseMetrics, isMobile])
+    const sized = sizeCabinetsWithSharedScale(sizesMm, isMobile)
+    return sized.map((s) => ({
+      w: s.w,
+      h: s.h,
+      gap: baseMetrics.gap,
+      pad: baseMetrics.pad,
+      stripGap: baseMetrics.stripGap,
+    }))
+  }, [
+    stripWidths,
+    stripCabinetSizes,
+    cabinetWidthMm,
+    cabinetHeightMm,
+    baseMetrics,
+    isMobile,
+  ])
+
+  /** Высоты ячеек по рядам при миксе Big/Small (общий масштаб с шириной экрана) */
+  const rowCellHs = useMemo(() => {
+    if (!rowCabinetHeightsMm || rowCabinetHeightsMm.length !== high) return null
+    const sizesMm = rowCabinetHeightsMm.map((h) => ({
+      w: cabinetWidthMm,
+      h,
+    }))
+    return sizeCabinetsWithSharedScale(sizesMm, isMobile).map((s) => s.h)
+  }, [rowCabinetHeightsMm, high, cabinetWidthMm, isMobile])
 
   const stripCellWs = useMemo(
     () => stripCellMetrics.map((m) => m.w),
@@ -759,7 +811,11 @@ export default memo(function GridVisualization({
     [stripCellMetrics],
   )
   const CELL_W = Math.max(...stripCellWs, baseMetrics.w)
-  const CELL_H = Math.max(...stripCellHs, baseMetrics.h)
+  const CELL_H = Math.max(
+    ...stripCellHs,
+    ...(rowCellHs ?? []),
+    baseMetrics.h,
+  )
 
   const colLayout = useMemo(
     () => buildVariableColLayout(stripWidths, stripCellWs, GAP, PAD, STRIP_GAP),
@@ -780,21 +836,31 @@ export default memo(function GridVisualization({
     [colLayout.widths, CELL_W],
   )
   const cellHAt = useCallback(
-    (col: number) => stripCellHs[stripIndexByCol[col] ?? 0] ?? CELL_H,
-    [stripCellHs, stripIndexByCol, CELL_H],
+    (col: number, row = 0) => {
+      if (rowCellHs) return rowCellHs[row] ?? CELL_H
+      return stripCellHs[stripIndexByCol[col] ?? 0] ?? CELL_H
+    },
+    [rowCellHs, stripCellHs, stripIndexByCol, CELL_H],
   )
   const cabLeft = useCallback(
     (col: number) => colLayout.lefts[col] ?? PAD,
     [colLayout.lefts, PAD],
   )
   const cabTop = useCallback(
-    (col: number, row: number) => PAD + row * (cellHAt(col) + GAP),
-    [PAD, cellHAt, GAP],
+    (col: number, row: number) => {
+      if (rowCellHs) {
+        let y = PAD
+        for (let r = 0; r < row; r++) y += (rowCellHs[r] ?? CELL_H) + GAP
+        return y
+      }
+      return PAD + row * (cellHAt(col, 0) + GAP)
+    },
+    [rowCellHs, PAD, CELL_H, GAP, cellHAt],
   )
   const cabCenter = useCallback(
     (col: number, row: number) => ({
       x: cabLeft(col) + cellWAt(col) / 2,
-      y: cabTop(col, row) + cellHAt(col) / 2,
+      y: cabTop(col, row) + cellHAt(col, row) / 2,
     }),
     [cabLeft, cabTop, cellWAt, cellHAt],
   )
@@ -1217,13 +1283,15 @@ export default memo(function GridVisualization({
   const svgW = PAD * 2 + colLayout.totalInnerW
   const svgH =
     PAD * 2 +
-    Math.max(
-      ...stripWidths.map((_, si) => {
-        const h = stripCellHs[si] ?? CELL_H
-        return high * h + (high - 1) * GAP
-      }),
-      high * CELL_H + (high - 1) * GAP,
-    ) +
+    (rowCellHs
+      ? rowCellHs.reduce((sum, h, i) => sum + h + (i > 0 ? GAP : 0), 0)
+      : Math.max(
+          ...stripWidths.map((_, si) => {
+            const h = stripCellHs[si] ?? CELL_H
+            return high * h + (high - 1) * GAP
+          }),
+          high * CELL_H + (high - 1) * GAP,
+        )) +
     30
 
   const gridScrollRef = useRef<HTMLDivElement>(null)
@@ -2468,7 +2536,7 @@ export default memo(function GridVisualization({
             const x = cabLeft(cab.col)
             const y = cabTop(cab.col, cab.row)
             const cellW = cellWAt(cab.col)
-            const cellH = cellHAt(cab.col)
+            const cellH = cellHAt(cab.col, cab.row)
             const isEmpty = emptySet.has(cab.label)
             const lineNum = isEmpty ? 0 : (assignmentMap.get(cab.label) ?? 0)
             const isSelected = selectedLabels.has(cab.label)
@@ -2757,7 +2825,7 @@ export default memo(function GridVisualization({
             const x = cabLeft(cab.col)
             const y = cabTop(cab.col, cab.row)
             const cellW = cellWAt(cab.col)
-            const cellH = cellHAt(cab.col)
+            const cellH = cellHAt(cab.col, cab.row)
             const lineNum =
               startLineByLabel.get(cab.label) ?? assignmentMap.get(cab.label) ?? 0
             const lineColors = lineColorFor(lineNum)
@@ -2868,7 +2936,7 @@ export default memo(function GridVisualization({
               const x = cabLeft(cab.col)
               const y = cabTop(cab.col, cab.row)
               const cellW = cellWAt(cab.col)
-              const cellH = cellHAt(cab.col)
+              const cellH = cellHAt(cab.col, cab.row)
               const isAlsoStart = startLabels.has(cab.label)
               const isAlsoEnd = endLabels.has(cab.label)
               const labelSize = isAlsoStart
@@ -2924,7 +2992,7 @@ export default memo(function GridVisualization({
             const x = cabLeft(cab.col)
             const y = cabTop(cab.col, cab.row)
             const cellW = cellWAt(cab.col)
-            const cellH = cellHAt(cab.col)
+            const cellH = cellHAt(cab.col, cab.row)
             const endFont =
               simplifyLabels || isMobile ? (isMobile && simplifyLabels ? 12 : 10) : 8
             const badgePadX = simplifyLabels || isMobile ? 5 : 4

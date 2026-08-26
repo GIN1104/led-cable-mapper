@@ -223,9 +223,23 @@ export interface ScreenConfig {
    */
   stripPitchConfigs: StripPitchConfig[]
 
+  /**
+   * Микс рядов Big/Small при одном блоке («1 — один экран»).
+   * Порядок — сверху вниз. Пусто = выкл. При ≥2 полосах игнорируется.
+   */
+  rowMixBands: RowMixBand[]
+
 }
 
 
+
+/** Полоса микса рядов (линии Big или Small) */
+export interface RowMixBand {
+  /** Только 3.9 Big / 3.9 Small */
+  size: '3.9-big' | '3.9-small'
+  /** Число горизонтальных линий (рядов) */
+  rows: number
+}
 
 /** Источник питча для одной полосы */
 export interface StripPitchConfig {
@@ -584,6 +598,8 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
 
   stripPitchConfigs: [{ kind: 'inherit' }],
 
+  rowMixBands: [],
+
 }
 
 
@@ -628,6 +644,8 @@ export function createScreen(
 
     stripPitchConfigs:
       partial?.stripPitchConfigs ?? DEFAULT_SCREEN_FIELDS.stripPitchConfigs,
+
+    rowMixBands: partial?.rowMixBands ?? DEFAULT_SCREEN_FIELDS.rowMixBands,
 
     stripHeights: partial?.stripHeights ?? [],
 

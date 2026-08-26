@@ -9,6 +9,7 @@ import { buildAutoManualOverrides } from './lib/routingEngine'
 import { buildCombinedPackingList } from './lib/packingList'
 import { syncCabinetGridFromMeters, calcPixelsPerCabinet, normalizeStripWidths } from './lib/cabinetGrid'
 import { refreshStripPitchSnapshots, resolveAllStripPitches } from './lib/stripPitch'
+import { isRowMixActive, rowMixHeightsMm, summarizeRowMix } from './lib/rowMix'
 import {
   remapDataPortControllers,
   inferControllerFromLabel,
@@ -1434,6 +1435,10 @@ export default function App() {
       })),
     [stripPitches],
   )
+  const rowCabinetHeightsMm = useMemo(
+    () => rowMixHeightsMm(config) ?? undefined,
+    [config],
+  )
   const { pixelsWide: cabPixelsWide, pixelsHigh: cabPixelsHigh } =
     calcPixelsPerCabinet(config)
   const normalizedStrips = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
@@ -1441,10 +1446,12 @@ export default function App() {
     (sum, w, i) => sum + w * (stripPitches[i]?.pixelsWide ?? cabPixelsWide),
     0,
   )
-  const screenPixelsHigh = Math.max(
-    ...stripPitches.map((p) => config.cabinetsHigh * p.pixelsHigh),
-    config.cabinetsHigh * cabPixelsHigh,
-  )
+  const screenPixelsHigh = isRowMixActive(config)
+    ? summarizeRowMix(config.rowMixBands).pixelsHigh
+    : Math.max(
+        ...stripPitches.map((p) => config.cabinetsHigh * p.pixelsHigh),
+        config.cabinetsHigh * cabPixelsHigh,
+      )
   const maxPixelsPerPort = getMaxPixelsPerDataPort(config.refreshRate)
   const maxCabinetsPerPort =
     result != null
@@ -1713,6 +1720,7 @@ export default function App() {
                   cabinetWidthMm={config.cabinetWidthMm}
                   cabinetHeightMm={config.cabinetHeightMm}
                   stripCabinetSizes={stripCabinetSizes}
+                  rowCabinetHeightsMm={rowCabinetHeightsMm}
                   signalBackup={config.signalBackup}
                   backupPortMode={config.backupPortMode}
                   mainPortDisplayNumbers={config.mainPortDisplayNumbers}
@@ -1770,6 +1778,7 @@ export default function App() {
                   cabinetWidthMm={config.cabinetWidthMm}
                   cabinetHeightMm={config.cabinetHeightMm}
                   stripCabinetSizes={stripCabinetSizes}
+                  rowCabinetHeightsMm={rowCabinetHeightsMm}
                   keyboardActive={paintKeyboardFocus === 'power'}
                   onClaimKeyboard={() => setPaintKeyboardFocus('power')}
                   manualMode={manualModePower}
