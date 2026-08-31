@@ -3,7 +3,6 @@ import type {
   ChainStartEdge,
   DataChain,
   GridLink,
-  PitchPresetId,
   RefreshRate,
   RoutingValidationWarning,
   ScreenConfig,
@@ -13,14 +12,10 @@ import {
   getMaxPixelsPerDataPort,
 } from './constants'
 import {
-  edgeToDirection,
   inferChainStart,
   linkDirection,
   orderCabinetsFromStartSnake,
-  orderCabinetsFromStartVertical,
-  orderRegionByDirection,
   orderRegionBySnake,
-  orderRegionVerticalSnake,
   stripIndexForCol,
 } from './cabinetGrid'
 import type { CellActiveFn, PartitionStrategy, RectRegion } from './rectangularPartition'
@@ -60,57 +55,22 @@ function buildLinksForChain(
 }
 
 /**
- * Обход data-блока:
- * - Reshet: ↑/↓ по столбцу, переход на соседний кубик (как было)
- * - остальные: ← справа налево на одном ряду; multi-row — змейка для смежности
+ * Обход data-блока: снизу вверх по рядам, в каждом ряду — LTR/RTL от chainStartEdge (змейка).
+ * Не column-first: линия идёт горизонтально вдоль ряда, между рядами — короткий вертикальный переход.
  */
-export function orderDataBlock(
+export function orderDataBlockHorizontalFirst(
   cabinets: Cabinet[],
   region: RectRegion,
   startEdge: ChainStartEdge,
-  preset: PitchPresetId = '3.9-small',
 ): Cabinet[] {
-  if (preset === '3.9-reshet') {
-    return orderRegionVerticalSnake(
-      cabinets,
-      region.colStart,
-      region.rowStart,
-      region.width,
-      region.height,
-      edgeToDirection(startEdge),
-    )
-  }
-
-  // Один ряд — строго справа налево
-  if (region.height <= 1) {
-    return orderRegionByDirection(
-      cabinets,
-      region.colStart,
-      region.rowStart,
-      region.width,
-      region.height,
-      'rtl',
-    )
-  }
-
-  // Multi-row при минимуме портов — змейка (смежные переходы)
   return orderRegionBySnake(
     cabinets,
     region.colStart,
     region.rowStart,
     region.width,
     region.height,
-    'right',
+    startEdge,
   )
-}
-
-/** @deprecated — используйте orderDataBlock */
-export function orderDataBlockHorizontalFirst(
-  cabinets: Cabinet[],
-  region: RectRegion,
-  startEdge: ChainStartEdge,
-): Cabinet[] {
-  return orderDataBlock(cabinets, region, startEdge, '3.9-small')
 }
 
 function cabinetsInRegion(
@@ -118,7 +78,6 @@ function cabinetsInRegion(
   region: RectRegion,
   startEdge: ChainStartEdge,
   emptySet?: Set<string>,
-  preset: PitchPresetId = '3.9-small',
 ): Cabinet[] {
   const inRegion = cabinets.filter(
     (c) =>
@@ -128,7 +87,7 @@ function cabinetsInRegion(
       c.row < region.rowStart + region.height &&
       !(emptySet?.has(c.label)),
   )
-  return orderDataBlock(inRegion, region, startEdge, preset)
+  return orderDataBlockHorizontalFirst(inRegion, region, startEdge)
 }
 
 function buildChainsFromPortGroups(
@@ -137,14 +96,12 @@ function buildChainsFromPortGroups(
   startEdge: ChainStartEdge = 'left',
   orderedChains?: Record<number, string[]>,
   stripWidths: number[] = [1],
-  pitchPreset: PitchPresetId = '3.9-small',
 ): { chains: DataChain[]; links: GridLink[]; stripWarnings: RoutingValidationWarning[] } {
   const chains: DataChain[] = []
   const links: GridLink[] = []
   const stripWarnings: RoutingValidationWarning[] = []
   const strips = stripWidths.length > 0 ? stripWidths : [1]
   const portNumbers = [...portGroups.keys()].sort((a, b) => a - b)
-  const isReshet = pitchPreset === '3.9-reshet'
 
   for (const portNumber of portNumbers) {
     let group = portGroups.get(portNumber) ?? []
@@ -190,36 +147,8 @@ function buildChainsFromPortGroups(
       for (const cab of group) {
         if (!seen.has(cab.label)) ordered.push(cab)
       }
-    } else if (isReshet) {
-      ordered = orderCabinetsFromStartVertical(
-        group,
-        startPoints[portNumber],
-        startEdge,
-      )
     } else {
-      // Ровные ← : обход справа налево (не змейка)
-      const minRow = Math.min(...group.map((c) => c.row))
-      const maxRow = Math.max(...group.map((c) => c.row))
-      const minCol = Math.min(...group.map((c) => c.col))
-      const maxCol = Math.max(...group.map((c) => c.col))
-      if (maxRow === minRow) {
-        ordered = orderRegionByDirection(
-          group,
-          minCol,
-          minRow,
-          maxCol - minCol + 1,
-          1,
-          'rtl',
-        )
-        if (startPoints[portNumber]) {
-          const idx = ordered.findIndex((c) => c.label === startPoints[portNumber])
-          if (idx > 0) {
-            ordered = [...ordered.slice(idx), ...ordered.slice(0, idx)]
-          }
-        }
-      } else {
-        ordered = orderCabinetsFromStartSnake(group, startPoints[portNumber], 'right')
-      }
+      ordered = orderCabinetsFromStartSnake(group, startPoints[portNumber], startEdge)
     }
 
     if (ordered.length === 0) continue
@@ -328,32 +257,19 @@ function remainingActiveInRowSpan(
 }
 
 /**
- * Оценка формы data-блока: максимум ровных линий —
- * один ряд (←) или один столбец (↑), без зигзага.
+ * Оценка формы data-блока: при равном числе кабинетов предпочитаем
+ * горизонтальные полосы (width ≥ height), полные ряды и большую ширину.
  */
-function scoreDataRegionShape(
-  width: number,
-  height: number,
-  count: number,
-  preferVertical = false,
-): number {
+function scoreDataRegionShape(width: number, height: number, count: number): number {
   let score = count * 1_000_000
-  if (preferVertical) {
-    if (width === 1) score += 200_000
-    if (height >= width) score += 40_000 + Math.min(height / Math.max(width, 1), 6) * 5_000
-    else score -= 30_000 * Math.min(width / height, 4)
-    score += height * 200
-    score -= width * 100
+  if (height === 1) score += 80_000
+  if (width >= height) {
+    score += 40_000 + Math.min(width / height, 6) * 5_000
   } else {
-    if (height === 1) score += 200_000
-    if (width >= height) {
-      score += 40_000 + Math.min(width / height, 6) * 5_000
-    } else {
-      score -= 30_000 * Math.min(height / width, 4)
-    }
-    score += width * 200
-    score -= height * 100
+    score -= 30_000 * Math.min(height / width, 4)
   }
+  score += width * 200
+  score -= height * 100
   return score
 }
 
@@ -364,11 +280,10 @@ function isBetterDataRegion(
   bestWidth: number,
   bestHeight: number,
   bestCount: number,
-  preferVertical = false,
 ): boolean {
   if (count !== bestCount) return count > bestCount
-  const score = scoreDataRegionShape(width, height, count, preferVertical)
-  const bestScore = scoreDataRegionShape(bestWidth, bestHeight, bestCount, preferVertical)
+  const score = scoreDataRegionShape(width, height, count)
+  const bestScore = scoreDataRegionShape(bestWidth, bestHeight, bestCount)
   return score > bestScore
 }
 
@@ -490,16 +405,16 @@ function regionsCoverGrid(
   return true
 }
 
-/** Суммарный бонус за ровные полосы/столбцы во всех регионах плана */
-function planStraightScore(regions: RectRegion[], preferVertical = false): number {
+/** Суммарный бонус за горизонтальные полосы во всех регионах плана */
+function planHorizontalScore(regions: RectRegion[]): number {
   return regions.reduce(
-    (sum, r) => sum + scoreDataRegionShape(r.width, r.height, r.width * r.height, preferVertical),
+    (sum, r) => sum + scoreDataRegionShape(r.width, r.height, r.width * r.height),
     0,
   )
 }
 
-/** Насколько блоки одинаковые (больше = лучше) + ровные линии */
-function planUniformityScore(regions: RectRegion[], preferVertical = false): number {
+/** Насколько блоки одинаковые (больше = лучше) + горизонтальность */
+function planUniformityScore(regions: RectRegion[]): number {
   if (regions.length === 0) return 0
   const counts = new Map<string, number>()
   for (const r of regions) {
@@ -507,16 +422,12 @@ function planUniformityScore(regions: RectRegion[], preferVertical = false): num
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
   const maxSame = Math.max(...counts.values())
-  const straightBonus = preferVertical
-    ? regions.filter((r) => r.width === 1).length * 5_000_000
-    : regions.filter((r) => r.height === 1).length * 5_000_000
-  return maxSame * 10_000_000 + straightBonus + planStraightScore(regions, preferVertical)
+  return maxSame * 10_000_000 + planHorizontalScore(regions)
 }
 
 /**
- * Одинаковые блоки «линиями на всю ширину экрана».
- * Multi-row допускается, если это уменьшает число портов.
- * (Reshet: та же упаковка; направление обхода — отдельно в orderDataBlock.)
+ * Одинаковые блоки «линиями на всю ширину экрана» (тикшорет RTL).
+ * Приоритет: width === cabinetsWide, высота — максимум влезающий в лимит порта.
  */
 function equalBlocksPartition(
   cabinetsWide: number,
@@ -567,7 +478,7 @@ function equalBlocksPartition(
       const score =
         -ports * 1_000_000 +
         area * 1_000 +
-        w * 100 +
+        w * 100 + // длиннее по горизонтали лучше
         (w >= h ? 50_000 : 0)
       if (!best || score > best.score) best = { w, h, area, score }
     }
@@ -746,8 +657,7 @@ function greedyPartition(
 }
 
 /**
- * Упаковка data-портов: минимум портов — главный приоритет.
- * При равенстве — более ровные блоки (ряды / для Reshet — столбцы).
+ * Упаковка data-портов: минимум портов, при равенстве — одинаковые блоки «линиями».
  */
 export function partitionDataGreedyMinPorts(
   cabinetsWide: number,
@@ -756,10 +666,8 @@ export function partitionDataGreedyMinPorts(
   refreshRate: RefreshRate,
   isActive: CellActiveFn = () => true,
   startEdge: ChainStartEdge = 'left',
-  pitchPreset: PitchPresetId = '3.9-small',
 ): RectRegion[] {
   const maxCabs = maxCabinetsPerBlock(pixelsPerCabinet, refreshRate)
-  const isReshet = pitchPreset === '3.9-reshet'
 
   const candidates: RectRegion[][] = []
 
@@ -771,10 +679,8 @@ export function partitionDataGreedyMinPorts(
 
   candidates.push(greedyPartition(cabinetsWide, cabinetsHigh, maxCabs, isActive))
 
-  // Reshet: сначала вертикальные стратегии; иначе горизонтальные
-  const strategies: PartitionStrategy[] = isReshet
-    ? ['vertical', 'balanced', 'compact', 'horizontal']
-    : ['horizontal', 'balanced', 'compact']
+  // Grid-стратегии — запасной вариант, если жадная даёт больше портов
+  const strategies: PartitionStrategy[] = ['horizontal', 'balanced', 'compact']
   for (const strategy of strategies) {
     candidates.push(
       partitionGridByMaxCabinets(
@@ -795,24 +701,12 @@ export function partitionDataGreedyMinPorts(
   const pool = valid.length > 0 ? valid : candidates
   const minPorts = Math.min(...pool.map((r) => r.length))
   const tied = pool.filter((r) => r.length === minPorts)
-
-  // Среди минимума портов — предпочитаем ровные блоки
+  // При равном числе портов — максимум линий на всю ширину экрана
   const best = tied.reduce((a, b) => {
-    if (isReshet) {
-      const fullA = a.filter((r) => r.height === cabinetsHigh).length
-      const fullB = b.filter((r) => r.height === cabinetsHigh).length
-      if (fullA !== fullB) return fullA > fullB ? a : b
-    } else {
-      const fullA = a.filter((r) => r.width === cabinetsWide).length
-      const fullB = b.filter((r) => r.width === cabinetsWide).length
-      if (fullA !== fullB) return fullA > fullB ? a : b
-      const flatA = a.filter((r) => r.height === 1).length
-      const flatB = b.filter((r) => r.height === 1).length
-      if (flatA !== flatB) return flatA > flatB ? a : b
-    }
-    return planUniformityScore(a, isReshet) >= planUniformityScore(b, isReshet)
-      ? a
-      : b
+    const fullA = a.filter((r) => r.width === cabinetsWide).length
+    const fullB = b.filter((r) => r.width === cabinetsWide).length
+    if (fullA !== fullB) return fullA > fullB ? a : b
+    return planUniformityScore(a) >= planUniformityScore(b) ? a : b
   })
 
   return sortRegionsBottomFirst(best, startEdge)
@@ -878,9 +772,7 @@ export function buildDataChains(
   emptySet?: Set<string>,
 ): { chains: DataChain[]; links: GridLink[] } {
   // Тикшорет: горизонтальные линии справа налево (RTL), независимо от power direction
-  // Reshet: вертикаль — старт с правого/левого столбца по edge
-  const dataStartEdge: ChainStartEdge =
-    config.pitchPreset === '3.9-reshet' ? config.chainStartEdge : 'right'
+  const dataStartEdge: ChainStartEdge = 'right'
 
   const dataRegions = partitionDataGreedyMinPorts(
     config.cabinetsWide,
@@ -889,7 +781,6 @@ export function buildDataChains(
     config.refreshRate,
     isActive,
     dataStartEdge,
-    config.pitchPreset,
   )
 
   const chains: DataChain[] = []
@@ -897,13 +788,7 @@ export function buildDataChains(
 
   dataRegions.forEach((region, index) => {
     const portNumber = index + 1
-    const ordered = cabinetsInRegion(
-      cabinets,
-      region,
-      dataStartEdge,
-      emptySet,
-      config.pitchPreset,
-    )
+    const ordered = cabinetsInRegion(cabinets, region, dataStartEdge, emptySet)
     if (ordered.length === 0) return
 
     const totalPixels = ordered.reduce((sum, c) => sum + c.totalPixels, 0)
@@ -930,7 +815,6 @@ export function buildDataChainsFromManual(
   emptySet?: Set<string>,
   orderedChains?: Record<number, string[]>,
   stripWidths: number[] = [1],
-  pitchPreset: PitchPresetId = '3.9-small',
 ): { chains: DataChain[]; links: GridLink[]; warnings: RoutingValidationWarning[] } {
   const portGroups = new Map<number, Cabinet[]>()
 
@@ -949,7 +833,6 @@ export function buildDataChainsFromManual(
     startEdge,
     orderedChains,
     stripWidths,
-    pitchPreset,
   )
   return {
     chains,

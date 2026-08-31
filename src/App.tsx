@@ -2,14 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GridLayout, ScreenConfig, ScreenRoutingState } from './types'
 import {
   createScreen,
+  DEFAULT_PROJECT,
   EMPTY_MANUAL_OVERRIDES,
   EMPTY_SCREEN_ROUTING,
 } from './types'
 import { buildAutoManualOverrides } from './lib/routingEngine'
 import { buildCombinedPackingList } from './lib/packingList'
 import { syncCabinetGridFromMeters, calcPixelsPerCabinet, normalizeStripWidths } from './lib/cabinetGrid'
-import { refreshStripPitchSnapshots, resolveAllStripPitches } from './lib/stripPitch'
-import { isRowMixActive, rowMixHeightsMm, summarizeRowMix } from './lib/rowMix'
 import {
   remapDataPortControllers,
   inferControllerFromLabel,
@@ -45,12 +44,6 @@ import {
   resolveEquipmentScreenResults,
 } from './lib/equipmentList'
 import type { EquipmentListState } from './lib/equipmentList'
-import {
-  clearPersistedProject,
-  createDefaultPersistedProject,
-  loadPersistedProject,
-  savePersistedProject,
-} from './lib/projectPersistence'
 
 type ManualOverrides = ScreenRoutingState['manualOverrides']
 type DataUndoSnapshot = Pick<
@@ -134,84 +127,19 @@ function pruneEmptyFromGrid(emptyCabinets: string[], wide: number, high: number)
 }
 
 export default function App() {
-  const initialProject = useMemo(
-    () => loadPersistedProject() ?? createDefaultPersistedProject(),
-    [],
-  )
-  const [screens, setScreens] = useState<ScreenConfig[]>(initialProject.screens)
+  const [screens, setScreens] = useState<ScreenConfig[]>(DEFAULT_PROJECT.screens)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeScreenId, setActiveScreenId] = useState(initialProject.activeScreenId)
-  const [routingByScreen, setRoutingByScreen] = useState<Record<string, ScreenRoutingState>>(
-    initialProject.routingByScreen,
-  )
+  const [activeScreenId, setActiveScreenId] = useState(DEFAULT_PROJECT.activeScreenId)
+  const [routingByScreen, setRoutingByScreen] = useState<Record<string, ScreenRoutingState>>({
+    [DEFAULT_PROJECT.activeScreenId]: { ...EMPTY_SCREEN_ROUTING },
+  })
   const [emptyPaintMode, setEmptyPaintMode] = useState(false)
-  const [gridLayout, setGridLayout] = useState<GridLayout>(initialProject.gridLayout)
-  const [showCombinedPacking, setShowCombinedPacking] = useState(
-    initialProject.showCombinedPacking,
-  )
-  const [equipmentList, setEquipmentList] = useState<EquipmentListState | null>(
-    initialProject.equipmentList,
-  )
+  const [gridLayout, setGridLayout] = useState<GridLayout>('stacked')
+  const [showCombinedPacking, setShowCombinedPacking] = useState(false)
+  const [equipmentList, setEquipmentList] = useState<EquipmentListState | null>(null)
   /** История полных состояний — одно действие пользователя = один снимок. */
   const [dataPaintUndo, setDataPaintUndo] = useState<Record<string, DataUndoSnapshot[]>>({})
   const [powerPaintUndo, setPowerPaintUndo] = useState<Record<string, PowerUndoSnapshot[]>>({})
-  /** Стрелки ←↑↓→ принимает только одна схема — иначе Data undo-ит тикшорет при краске хашмаль */
-  const [paintKeyboardFocus, setPaintKeyboardFocus] = useState<'data' | 'power'>('data')
-
-  const projectSnapshotRef = useRef({
-    screens,
-    activeScreenId,
-    routingByScreen,
-    gridLayout,
-    showCombinedPacking,
-    equipmentList,
-  })
-  projectSnapshotRef.current = {
-    screens,
-    activeScreenId,
-    routingByScreen,
-    gridLayout,
-    showCombinedPacking,
-    equipmentList,
-  }
-
-  const flushProjectSave = useCallback(() => {
-    const snap = projectSnapshotRef.current
-    savePersistedProject({
-      version: 1,
-      screens: snap.screens,
-      activeScreenId: snap.activeScreenId,
-      routingByScreen: snap.routingByScreen,
-      gridLayout: snap.gridLayout,
-      showCombinedPacking: snap.showCombinedPacking,
-      equipmentList: snap.equipmentList,
-    })
-  }, [])
-
-  // Автосохранение (ПК и телефон). На мобильных — ещё flush при сворачивании/уходе.
-  useEffect(() => {
-    const timer = window.setTimeout(flushProjectSave, 150)
-    const onHide = () => {
-      if (document.visibilityState === 'hidden') flushProjectSave()
-    }
-    window.addEventListener('pagehide', flushProjectSave)
-    window.addEventListener('beforeunload', flushProjectSave)
-    document.addEventListener('visibilitychange', onHide)
-    return () => {
-      window.clearTimeout(timer)
-      window.removeEventListener('pagehide', flushProjectSave)
-      window.removeEventListener('beforeunload', flushProjectSave)
-      document.removeEventListener('visibilitychange', onHide)
-    }
-  }, [
-    screens,
-    activeScreenId,
-    routingByScreen,
-    gridLayout,
-    showCombinedPacking,
-    equipmentList,
-    flushProjectSave,
-  ])
 
   const activeScreen = useMemo(
     () => screens.find((s) => s.id === activeScreenId) ?? screens[0],
@@ -244,11 +172,7 @@ export default function App() {
     }))
   }, [activeRouting, activeScreen.id])
 
-  const { result, autoResult, isRouting } = useActiveRouting(
-    activeScreen,
-    activeRouting,
-    screens,
-  )
+  const { result, autoResult, isRouting } = useActiveRouting(activeScreen, activeRouting)
 
   const needsAllScreens =
     screens.length > 1 || showCombinedPacking
@@ -362,7 +286,7 @@ export default function App() {
     const screensPart = screens
       .map(
         (s) =>
-          `${s.id}:${s.name}:${s.cabinetsWide}x${s.cabinetsHigh}:${s.wallWidthM}x${s.wallHeightM}:${s.controllerModel}:${s.dualVx1000 ? 1 : 0}:${s.hangMount ? 1 : 0}:${s.powerFeedMode}:${s.stripWidths?.join(',') ?? ''}:${s.stripHeights?.join(',') ?? ''}`,
+          `${s.id}:${s.name}:${s.cabinetsWide}x${s.cabinetsHigh}:${s.wallWidthM}x${s.wallHeightM}:${s.controllerModel}:${s.dualVx1000 ? 1 : 0}:${s.hangMount ? 1 : 0}:${s.powerFeedMode}:${s.stripWidths?.join(',') ?? ''}`,
       )
       .join('|')
     const resultsPart = equipmentScreenResults
@@ -492,12 +416,7 @@ export default function App() {
   }, [activeScreen])
 
   const updateActiveScreen = useCallback((next: ScreenConfig) => {
-    setScreens((prev) => {
-      const synced = syncCabinetGridFromMeters(next)
-      const withNext = prev.map((s) => (s.id === synced.id ? synced : s))
-      // Если у полос питч с другого экрана — обновить снимки
-      return withNext.map((s) => refreshStripPitchSnapshots(s, withNext))
-    })
+    setScreens((prev) => prev.map((s) => (s.id === next.id ? syncCabinetGridFromMeters(next) : s)))
   }, [])
 
   const cloneScreenRouting = (state: ScreenRoutingState): ScreenRoutingState => ({
@@ -560,10 +479,8 @@ export default function App() {
           }
         })
         setDataPaintUndo((prev) => ({ ...prev, [activeScreen.id]: [] }))
-        setPaintKeyboardFocus('data')
       } else {
         setActiveRouting({ manualModeData: false })
-        setPaintKeyboardFocus((prev) => (prev === 'data' ? 'power' : prev))
       }
     },
     [activeScreen, setActiveRouting],
@@ -590,10 +507,8 @@ export default function App() {
           }
         })
         setPowerPaintUndo((prev) => ({ ...prev, [activeScreen.id]: [] }))
-        setPaintKeyboardFocus('power')
       } else {
         setActiveRouting({ manualModePower: false })
-        setPaintKeyboardFocus((prev) => (prev === 'power' ? 'data' : prev))
       }
     },
     [activeScreen, setActiveRouting],
@@ -1402,56 +1317,12 @@ export default function App() {
     setScreens((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)))
   }, [])
 
-  const handleResetProject = useCallback(() => {
-    const ok = window.confirm(
-      'Сбросить весь проект?\n\nБудут удалены экраны, ручные схемы data/power и сохранённые данные. Это нельзя отменить.',
-    )
-    if (!ok) return
-    clearPersistedProject()
-    const next = createDefaultPersistedProject()
-    setScreens(next.screens)
-    setActiveScreenId(next.activeScreenId)
-    setRoutingByScreen(next.routingByScreen)
-    setGridLayout(next.gridLayout)
-    setShowCombinedPacking(next.showCombinedPacking)
-    setEquipmentList(null)
-    setDataPaintUndo({})
-    setPowerPaintUndo({})
-    setEmptyPaintMode(false)
-    setPaintKeyboardFocus('data')
-  }, [])
-
   const config = activeScreen
   const cabinetCount = config.cabinetsWide * config.cabinetsHigh
-  const stripPitches = useMemo(
-    () => resolveAllStripPitches(config, screens),
-    [config, screens],
-  )
-  const stripCabinetSizes = useMemo(
-    () =>
-      stripPitches.map((p) => ({
-        w: p.cabinetWidthMm,
-        h: p.cabinetHeightMm,
-      })),
-    [stripPitches],
-  )
-  const rowCabinetHeightsMm = useMemo(
-    () => rowMixHeightsMm(config) ?? undefined,
-    [config],
-  )
   const { pixelsWide: cabPixelsWide, pixelsHigh: cabPixelsHigh } =
     calcPixelsPerCabinet(config)
-  const normalizedStrips = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
-  const screenPixelsWide = normalizedStrips.reduce(
-    (sum, w, i) => sum + w * (stripPitches[i]?.pixelsWide ?? cabPixelsWide),
-    0,
-  )
-  const screenPixelsHigh = isRowMixActive(config)
-    ? summarizeRowMix(config.rowMixBands).pixelsHigh
-    : Math.max(
-        ...stripPitches.map((p) => config.cabinetsHigh * p.pixelsHigh),
-        config.cabinetsHigh * cabPixelsHigh,
-      )
+  const screenPixelsWide = config.cabinetsWide * cabPixelsWide
+  const screenPixelsHigh = config.cabinetsHigh * cabPixelsHigh
   const maxPixelsPerPort = getMaxPixelsPerDataPort(config.refreshRate)
   const maxCabinetsPerPort =
     result != null
@@ -1489,7 +1360,6 @@ export default function App() {
           onAddScreen={handleAddScreen}
           onRemoveScreen={handleRemoveScreen}
           onRenameScreen={handleRenameScreen}
-          onResetProject={handleResetProject}
           emptyPaintMode={emptyPaintMode}
           onEmptyPaintModeChange={setEmptyPaintMode}
           gridLayout={gridLayout}
@@ -1708,7 +1578,6 @@ export default function App() {
                   chainStartEdge={config.chainStartEdge}
                   pitchPreset={config.pitchPreset}
                   stripWidths={config.stripWidths}
-                  stripHeights={config.stripHeights}
                   dualVx1000={config.dualVx1000}
                   stripControllerIds={config.stripControllerIds}
                   dataPortControllers={manualOverrides.dataPortControllers}
@@ -1719,17 +1588,6 @@ export default function App() {
                   screenPixelsHigh={screenPixelsHigh}
                   cabinetWidthMm={config.cabinetWidthMm}
                   cabinetHeightMm={config.cabinetHeightMm}
-                  stripCabinetSizes={stripCabinetSizes}
-                  rowCabinetHeightsMm={rowCabinetHeightsMm}
-                  signalBackup={config.signalBackup}
-                  backupPortMode={config.backupPortMode}
-                  mainPortDisplayNumbers={config.mainPortDisplayNumbers}
-                  backupPortDisplayNumbers={config.backupPortDisplayNumbers}
-                  onBackupNumberingChange={(patch) =>
-                    updateActiveScreen({ ...activeScreen, ...patch })
-                  }
-                  keyboardActive={paintKeyboardFocus === 'data'}
-                  onClaimKeyboard={() => setPaintKeyboardFocus('data')}
                   manualMode={manualModeData}
                   onManualModeChange={handleManualModeDataChange}
                   emptyCabinets={activeScreen.emptyCabinets}
@@ -1771,16 +1629,11 @@ export default function App() {
                   pitchPreset={config.pitchPreset}
                   powerFeedMode={config.powerFeedMode}
                   stripWidths={config.stripWidths}
-                  stripHeights={config.stripHeights}
                   dualVx1000={config.dualVx1000}
                   screenPixelsWide={screenPixelsWide}
                   screenPixelsHigh={screenPixelsHigh}
                   cabinetWidthMm={config.cabinetWidthMm}
                   cabinetHeightMm={config.cabinetHeightMm}
-                  stripCabinetSizes={stripCabinetSizes}
-                  rowCabinetHeightsMm={rowCabinetHeightsMm}
-                  keyboardActive={paintKeyboardFocus === 'power'}
-                  onClaimKeyboard={() => setPaintKeyboardFocus('power')}
                   manualMode={manualModePower}
                   onManualModeChange={handleManualModePowerChange}
                   emptyCabinets={activeScreen.emptyCabinets}

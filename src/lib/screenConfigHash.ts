@@ -19,9 +19,6 @@ export function screenRoutingKey(screen: ScreenConfig): string {
     screen.customPixelsHigh,
     screen.refreshRate,
     screen.signalBackup,
-    screen.backupPortMode ?? 'auto',
-    JSON.stringify(screen.mainPortDisplayNumbers ?? {}),
-    JSON.stringify(screen.backupPortDisplayNumbers ?? {}),
     screen.chainStartEdge,
     screen.powerFeedMode,
     screen.hangMount,
@@ -31,16 +28,8 @@ export function screenRoutingKey(screen: ScreenConfig): string {
     screen.trunkLengthM,
     screen.emptyCabinets.slice().sort().join(','),
     (screen.stripWidths ?? []).join(','),
-    (screen.stripHeights ?? []).join(','),
     screen.dualVx1000 ? 1 : 0,
     (screen.stripControllerIds ?? []).join(','),
-    (screen.stripPitchConfigs ?? [])
-      .map(
-        (c) =>
-          `${c.kind}:${c.pitchPreset ?? ''}:${c.screenId ?? ''}:${c.cabinetWidthMm ?? ''}x${c.cabinetHeightMm ?? ''}`,
-      )
-      .join(';'),
-    (screen.rowMixBands ?? []).map((b) => `${b.size}:${b.rows}`).join(';'),
   ].join('|')
 }
 

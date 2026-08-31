@@ -33,11 +33,10 @@ export function isValidPowerLink(
   b: Cabinet,
   cabinetWidthMm: number,
   cabinetHeightMm: number,
-  pixelPitchMm = 0,
 ): boolean {
   if (!areAdjacentCabinets(a, b)) return false
   return (
-    powerLinkLengthBetween(a, b, cabinetWidthMm, cabinetHeightMm, pixelPitchMm) <=
+    powerLinkLengthBetween(a, b, cabinetWidthMm, cabinetHeightMm) <=
     MAX_POWER_LINK_LENGTH_M
   )
 }
@@ -48,11 +47,11 @@ export function getPowerNeighbors(
   pool: Cabinet[],
   config: ScreenConfig,
 ): Cabinet[] {
-  const { cabinetWidthMm, cabinetHeightMm, pixelPitchMm } = config
+  const { cabinetWidthMm, cabinetHeightMm } = config
   return pool.filter(
     (other) =>
       other.label !== cab.label &&
-      isValidPowerLink(cab, other, cabinetWidthMm, cabinetHeightMm, pixelPitchMm),
+      isValidPowerLink(cab, other, cabinetWidthMm, cabinetHeightMm),
   )
 }
 
@@ -525,7 +524,6 @@ export function validatePowerLines(
         to,
         config.cabinetWidthMm,
         config.cabinetHeightMm,
-        config.pixelPitchMm,
       )
       if (!areAdjacentCabinets(from, to)) {
         warnings.push({

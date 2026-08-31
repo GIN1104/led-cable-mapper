@@ -46,28 +46,11 @@ import {
   equalStripWidths,
   isMeterDraftEditable,
   normalizeStripControllerIds,
-  normalizeStripHeights,
   parseMeterDraftForCommit,
   previewMeterFromDraft,
-  applyStripHeightAt,
   setStripWidthAt,
   syncCabinetGridFromMeters,
 } from '../lib/cabinetGrid'
-import {
-  inheritStripPitch,
-  normalizeStripPitchConfigs,
-  resolveStripPitch,
-  stripPitchFromPreset,
-  stripPitchFromScreen,
-  buildStripMixFromScreens,
-} from '../lib/stripPitch'
-import {
-  applyRowMixBands,
-  bandsFromBigSmallCounts,
-  countsFromRowMixBands,
-  isRowMixActive,
-  summarizeRowMix,
-} from '../lib/rowMix'
 
 const METER_INPUT_DEBOUNCE_MS = 400
 
@@ -92,9 +75,6 @@ interface SidebarProps {
   onRemoveScreen: (id: string) => void
 
   onRenameScreen: (id: string, name: string) => void
-
-  /** Полный сброс проекта (localStorage + defaults) */
-  onResetProject: () => void
 
   emptyPaintMode: boolean
 
@@ -216,8 +196,6 @@ export default function Sidebar({
 
   onRenameScreen,
 
-  onResetProject,
-
   emptyPaintMode,
 
   onEmptyPaintModeChange,
@@ -249,57 +227,14 @@ export default function Sidebar({
   /** Цель кнопки «Сделать N полосы»: 3, либо 2 если cabinetsWide < 3 */
   const quickStripTarget = Math.min(3, Math.max(2, config.cabinetsWide))
 
-  const otherScreens = screens.filter((s) => s.id !== config.id)
-
   const applyStripCount = (count: number) => {
     const n = Math.max(1, Math.min(count, config.cabinetsWide))
     onChange(
       syncCabinetGridFromMeters({
         ...config,
         stripWidths: equalStripWidths(n, config.cabinetsWide),
-        stripHeights: normalizeStripHeights(config.stripHeights, n, config.cabinetsHigh),
         stripControllerIds: normalizeStripControllerIds(config.stripControllerIds, n),
-        stripPitchConfigs: normalizeStripPitchConfigs(config.stripPitchConfigs, n),
-        // Микс рядов только при одном блоке
-        rowMixBands: n > 1 ? [] : config.rowMixBands,
       }),
-    )
-  }
-
-  /** Полосы с кубиками с других экранов проекта (≥2 блока) */
-  const applyMixFromScreens = () => {
-    const mix = buildStripMixFromScreens(config, screens)
-    if (!mix) return
-    onChange(
-      syncCabinetGridFromMeters({
-        ...config,
-        ...mix,
-        rowMixBands: [],
-      }),
-    )
-  }
-
-  const rowMixCounts = countsFromRowMixBands(config.rowMixBands)
-  const rowMixOn = isRowMixActive(config)
-
-  const commitRowMix = (bigRows: number, smallRows: number, bigOnTop: boolean) => {
-    const bands = bandsFromBigSmallCounts(bigRows, smallRows, bigOnTop)
-    if (bands.length === 0) {
-      onChange(syncCabinetGridFromMeters({ ...config, rowMixBands: [] }))
-      return
-    }
-    onChange(
-      syncCabinetGridFromMeters(
-        applyRowMixBands(
-          {
-            ...config,
-            // один блок
-            stripWidths: [config.cabinetsWide],
-            dualVx1000: false,
-          },
-          bands,
-        ),
-      ),
     )
   }
 
@@ -361,10 +296,6 @@ export default function Sidebar({
   }
 
   const commitHeightDraft = (raw: string) => {
-    if (isRowMixActive(configRef.current)) {
-      setHeightDraft(String(configRef.current.wallHeightM))
-      return
-    }
     const parsed = parseMeterDraftForCommit(raw)
     if (parsed === null) {
       setHeightDraft(String(configRef.current.wallHeightM))
@@ -391,7 +322,6 @@ export default function Sidebar({
   }, [widthDraft, onChange])
 
   useEffect(() => {
-    if (isRowMixActive(configRef.current)) return
     const heightVal = parseMeterDraftForCommit(heightDraft)
     if (heightVal === null) return
     const clamped = clampWallDimensionM(heightVal)
@@ -406,18 +336,6 @@ export default function Sidebar({
 
   const previewGrid = useMemo(() => {
     const widthM = previewMeterFromDraft(widthDraft, config.wallWidthM)
-    if (isRowMixActive(config)) {
-      const mix = summarizeRowMix(config.rowMixBands)
-      return {
-        cabinetsWide: calcCabinetsFromMeters(
-          widthM,
-          mix.wallHeightM,
-          config.cabinetWidthMm,
-          config.cabinetHeightMm,
-        ).cabinetsWide,
-        cabinetsHigh: mix.cabinetsHigh,
-      }
-    }
     const heightM = previewMeterFromDraft(heightDraft, config.wallHeightM)
     return calcCabinetsFromMeters(
       widthM,
@@ -425,16 +343,7 @@ export default function Sidebar({
       config.cabinetWidthMm,
       config.cabinetHeightMm,
     )
-  }, [
-    widthDraft,
-    heightDraft,
-    config.wallWidthM,
-    config.wallHeightM,
-    config.cabinetWidthMm,
-    config.cabinetHeightMm,
-    config.rowMixBands,
-    config.stripWidths,
-  ])
+  }, [widthDraft, heightDraft, config.wallWidthM, config.wallHeightM, config.cabinetWidthMm, config.cabinetHeightMm])
 
   const isDimensionPending =
     previewGrid.cabinetsWide !== config.cabinetsWide ||
@@ -451,12 +360,9 @@ export default function Sidebar({
 
 
   const handlePresetChange = (presetId: PitchPresetId) => {
-    // Смена пресета сбрасывает микс рядов
-    onChange(
-      syncCabinetGridFromMeters(
-        applyPitchPreset({ ...config, rowMixBands: [] }, presetId),
-      ),
-    )
+
+    onChange(syncCabinetGridFromMeters(applyPitchPreset(config, presetId)))
+
   }
 
 
@@ -598,14 +504,6 @@ export default function Sidebar({
 
                 value={heightDraft}
 
-                disabled={rowMixOn}
-
-                title={
-                  rowMixOn
-                    ? 'При миксе рядов высота считается из Big/Small'
-                    : undefined
-                }
-
                 onChange={(e) => {
                   const next = e.target.value
                   if (isMeterDraftEditable(next)) setHeightDraft(next)
@@ -670,285 +568,43 @@ export default function Sidebar({
             </select>
           </Field>
 
-          {/* Микс: при 1 блоке — ряды Big/Small; при ≥2 — модели на полосах / из экранов */}
-          {stripCount === 1 ? (
-            <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/70 p-2.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold text-slate-800">
-                    Микс рядов Big / Small
-                  </p>
-                  <p className="mt-0.5 text-[10px] leading-snug text-slate-600">
-                    Один экран: нижние линии — 3.9 Big (1 м), верхние — 3.9 Small
-                    (0.5 м). Пример: 4 Big + 3 Small → высота 5.5 м.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={rowMixOn}
-                  aria-label="Микс рядов Big / Small"
-                  onClick={() => {
-                    if (rowMixOn) {
-                      onChange(
-                        syncCabinetGridFromMeters({
-                          ...config,
-                          rowMixBands: [],
-                        }),
-                      )
-                    } else {
-                      // Старт: 4 м Big снизу + 1.5 м Small сверху
-                      commitRowMix(4, 3, false)
-                    }
-                  }}
-                  className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition ${
-                    rowMixOn ? 'bg-amber-600' : 'bg-slate-300'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-5 w-5 rounded-full bg-white shadow transition ${
-                      rowMixOn ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-              {rowMixOn && (
-                <div className="space-y-2 rounded border border-amber-200 bg-white p-2">
-                  <label className="block text-[10px] font-medium text-slate-600">
-                    Нижние линии 3.9 Big (по 1 м)
-                    <input
-                      type="number"
-                      min={0}
-                      max={40}
-                      className={`${inputClass} mt-0.5`}
-                      value={rowMixCounts.bigRows}
-                      onChange={(e) => {
-                        const big = Math.max(0, parseInt(e.target.value, 10) || 0)
-                        commitRowMix(big, rowMixCounts.smallRows, false)
-                      }}
-                    />
-                    <span className="mt-0.5 block text-[10px] text-slate-400">
-                      = {rowMixCounts.bigRows * 1} м снизу
-                    </span>
-                  </label>
-                  <label className="block text-[10px] font-medium text-slate-600">
-                    Верхние линии 3.9 Small (по 0.5 м)
-                    <input
-                      type="number"
-                      min={0}
-                      max={40}
-                      className={`${inputClass} mt-0.5`}
-                      value={rowMixCounts.smallRows}
-                      onChange={(e) => {
-                        const small = Math.max(0, parseInt(e.target.value, 10) || 0)
-                        commitRowMix(rowMixCounts.bigRows, small, false)
-                      }}
-                    />
-                    <span className="mt-0.5 block text-[10px] text-slate-400">
-                      = {(rowMixCounts.smallRows * 0.5).toFixed(1)} м сверху
-                    </span>
-                  </label>
-                  {(() => {
-                    const sum = summarizeRowMix(
-                      bandsFromBigSmallCounts(
-                        rowMixCounts.bigRows,
-                        rowMixCounts.smallRows,
-                        false,
-                      ),
-                    )
-                    return (
-                      <p className="text-[10px] text-slate-600">
-                        Итого {sum.cabinetsHigh} ряд. · высота стены{' '}
-                        {sum.wallHeightM.toFixed(1)} м · {sum.pixelsHigh} px по
-                        вертикали. Ширину стены задайте отдельно (напр. 8 м).
-                      </p>
-                    )
-                  })()}
-                  <button
-                    type="button"
-                    className="w-full rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[10px] font-medium text-slate-800 hover:bg-amber-100"
-                    onClick={() => {
-                      // 8×5.5: ширина 8 м, 4 м Big + 1.5 м Small
-                      onChange(
-                        syncCabinetGridFromMeters(
-                          applyRowMixBands(
-                            {
-                              ...config,
-                              wallWidthM: 8,
-                              stripWidths: [config.cabinetsWide],
-                              dualVx1000: false,
-                            },
-                            bandsFromBigSmallCounts(4, 3, false),
-                          ),
-                        ),
-                      )
-                    }}
-                  >
-                    Пример: 8 × 5.5 м (4 м Big + 1.5 м Small)
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/70 p-2.5">
-              <p className="text-[11px] font-semibold text-slate-800">
-                Кубики по блокам
-              </p>
-              <p className="text-[10px] leading-snug text-slate-600">
-                При нескольких блоках на каждом — любая модель (Big / Small /
-                Reshet / 2.9) или кубик с другого экрана.
-              </p>
-              {otherScreens.length > 0 && (
-                <button
-                  type="button"
-                  className="w-full rounded-md border border-amber-400 bg-amber-100 px-2.5 py-1.5 text-[11px] font-semibold text-slate-900 hover:bg-amber-200"
-                  onClick={applyMixFromScreens}
-                >
-                  Собрать из экранов (
-                  {otherScreens
-                    .slice(0, Math.min(otherScreens.length, config.cabinetsWide))
-                    .map((s) => s.name)
-                    .join(', ')}
-                  )
-                </button>
-              )}
-            </div>
-          )}
-
           {(config.stripWidths?.length ?? 1) > 1 && (
             <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-2.5">
               <p className="text-[10px] text-slate-500">
-                Каждый стрип — отдельный блок. Кубик: любой пресет или с другого
-                экрана. Ширина в колонках (сумма = {config.cabinetsWide}), высота
-                в рядах от низа.
+                Каждый стрип — отдельный блок: data и электричество считаются внутри полосы,
+                линии не переходят через зазор. Ширина в кабинетах (сумма ={' '}
+                {config.cabinetsWide}).
               </p>
-              <div className="space-y-2">
-                {(config.stripWidths ?? [config.cabinetsWide]).map((w, i) => {
-                  const pitchConfigs = normalizeStripPitchConfigs(
-                    config.stripPitchConfigs,
-                    config.stripWidths?.length ?? 1,
-                  )
-                  const stripHeights = normalizeStripHeights(
-                    config.stripHeights,
-                    config.stripWidths?.length ?? 1,
-                    config.cabinetsHigh,
-                  )
-                  const pitch = pitchConfigs[i] ?? inheritStripPitch()
-                  const resolved = resolveStripPitch(config, i, screens)
-                  const stripHigh = stripHeights[i] ?? config.cabinetsHigh
-                  const cabinetSelectValue =
-                    pitch.kind === 'inherit'
-                      ? 'inherit'
-                      : pitch.kind === 'preset' &&
-                          pitch.pitchPreset &&
-                          pitch.pitchPreset !== 'custom'
-                        ? `preset:${pitch.pitchPreset}`
-                        : pitch.kind === 'screen' && pitch.screenId
-                          ? `screen:${pitch.screenId}`
-                          : 'inherit'
-                  return (
-                    <div
-                      key={i}
-                      className="rounded border border-slate-200 bg-white p-2 space-y-1.5"
-                    >
-                      <p className="text-[11px] font-semibold text-slate-700">
-                        Strip {i + 1}
-                      </p>
-                      <div className="flex flex-col gap-2">
-                        <label className="block text-[10px] font-medium text-slate-600">
-                          Кубик (из списка)
-                          <select
-                            className={`${inputClass} mt-0.5`}
-                            value={cabinetSelectValue}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              const next = [...pitchConfigs]
-                              if (v === 'inherit') {
-                                next[i] = inheritStripPitch()
-                              } else if (v.startsWith('preset:')) {
-                                next[i] = stripPitchFromPreset(
-                                  v.slice('preset:'.length) as PitchPresetId,
-                                )
-                              } else if (v.startsWith('screen:')) {
-                                const sid = v.slice('screen:'.length)
-                                const src = screens.find((s) => s.id === sid)
-                                if (!src) return
-                                next[i] = stripPitchFromScreen(sid, src)
-                              }
-                              update('stripPitchConfigs', next)
-                            }}
-                          >
-                            <option value="inherit">
-                              Как у экрана (
-                              {config.cabinetWidthMm}×{config.cabinetHeightMm} mm)
-                            </option>
-                            {PITCH_PRESETS.map((p) => (
-                              <option key={p.id} value={`preset:${p.id}`}>
-                                {p.label} — {p.cabinetWidthMm}×{p.cabinetHeightMm} mm
-                              </option>
-                            ))}
-                            {otherScreens.map((s) => (
-                              <option key={s.id} value={`screen:${s.id}`}>
-                                С экрана «{s.name}» — {s.cabinetWidthMm}×
-                                {s.cabinetHeightMm} mm
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="block text-[10px] font-medium text-slate-600">
-                          Размер стрипа (колонки)
-                          <input
-                            type="number"
-                            min={1}
-                            max={
-                              config.cabinetsWide -
-                              ((config.stripWidths?.length ?? 1) - 1)
-                            }
-                            className={`${inputClass} mt-0.5`}
-                            value={w}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value, 10)
-                              if (Number.isNaN(val)) return
-                              update(
-                                'stripWidths',
-                                setStripWidthAt(
-                                  config.stripWidths ?? [config.cabinetsWide],
-                                  i,
-                                  val,
-                                  config.cabinetsWide,
-                                ),
-                              )
-                            }}
-                          />
-                        </label>
-                        <label className="block text-[10px] font-medium text-slate-600">
-                          Размер стрипа (высота)
-                          <input
-                            type="number"
-                            min={1}
-                            className={`${inputClass} mt-0.5`}
-                            value={stripHigh}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value, 10)
-                              if (Number.isNaN(val)) return
-                              onChange(applyStripHeightAt(config, i, val))
-                            }}
-                          />
-                        </label>
-                      </div>
-                      <p className="text-[10px] text-slate-400">
-                        Кубик {resolved.cabinetWidthMm}×{resolved.cabinetHeightMm} mm ·{' '}
-                        {resolved.pixelsWide}×{resolved.pixelsHigh} px · {w}×{stripHigh}{' '}
-                        cab
-                        {resolved.isOverride ? '' : ' · как экран'}
-                      </p>
-                    </div>
-                  )
-                })}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {(config.stripWidths ?? [config.cabinetsWide]).map((w, i) => (
+                  <label key={i} className="block text-[10px] font-medium text-slate-600">
+                    Strip {i + 1}
+                    <input
+                      type="number"
+                      min={1}
+                      max={config.cabinetsWide - ((config.stripWidths?.length ?? 1) - 1)}
+                      className={`${inputClass} mt-0.5`}
+                      value={w}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10)
+                        if (Number.isNaN(val)) return
+                        update(
+                          'stripWidths',
+                          setStripWidthAt(
+                            config.stripWidths ?? [config.cabinetsWide],
+                            i,
+                            val,
+                            config.cabinetsWide,
+                          ),
+                        )
+                      }}
+                    />
+                  </label>
+                ))}
               </div>
               <p className="text-[10px] text-slate-400">
                 Σ {(config.stripWidths ?? []).reduce((a, b) => a + b, 0)} /{' '}
-                {config.cabinetsWide} cab · высота стены {config.cabinetsHigh} ряд.
+                {config.cabinetsWide} cab
               </p>
             </div>
           )}
@@ -1412,36 +1068,6 @@ export default function Sidebar({
 
           </Field>
 
-          {config.signalBackup && (
-            <Field label="Нумерация Data / Backup">
-              <select
-                className={inputClass}
-                value={config.backupPortMode ?? 'auto'}
-                onChange={(e) => {
-                  const mode = e.target.value as 'auto' | 'manual'
-                  if (mode === 'auto') {
-                    onChange({
-                      ...config,
-                      backupPortMode: 'auto',
-                      mainPortDisplayNumbers: {},
-                      backupPortDisplayNumbers: {},
-                    })
-                  } else {
-                    onChange({ ...config, backupPortMode: 'manual' })
-                  }
-                }}
-              >
-                <option value="auto">
-                  Авто (≤5 — следующие порты; 6–10 — CVT10 Main/Backup)
-                </option>
-                <option value="manual">Вручную (номера на схеме)</option>
-              </select>
-              <p className="mt-1 text-[10px] text-slate-400">
-                Ручные номера правятся под легендой Data на схеме.
-              </p>
-            </Field>
-          )}
-
           <Field label="Trunk Length to Control Room">
 
             <select
@@ -1789,35 +1415,35 @@ export default function Sidebar({
 
 
 
-        <div className="mt-auto space-y-2 border-t border-slate-200 pt-3">
-          <button
-            type="button"
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
-            onClick={() =>
-              onChange(
-                createScreen({
-                  id: config.id,
-                  name: config.name,
-                  emptyCabinets: config.emptyCabinets,
-                }),
-              )
-            }
-          >
-            Сбросить экран к defaults
-          </button>
-          <button
-            type="button"
-            className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100"
-            onClick={onResetProject}
-          >
-            Обнулить проект
-          </button>
-          <p className="text-[10px] leading-snug text-slate-400">
-            Сохраняется в браузере на этом устройстве (телефон и ПК) — после
-            обновления страницы данные остаются. «Обнулить проект» удаляет всё
-            сохранённое здесь.
-          </p>
-        </div>
+        <button
+
+          type="button"
+
+          className="mt-auto text-xs text-slate-400 underline hover:text-slate-600"
+
+          onClick={() =>
+
+            onChange(
+
+              createScreen({
+
+                id: config.id,
+
+                name: config.name,
+
+                emptyCabinets: config.emptyCabinets,
+
+              }),
+
+            )
+
+          }
+
+        >
+
+          Reset screen to defaults
+
+        </button>
 
       </div>
 

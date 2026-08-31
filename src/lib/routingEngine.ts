@@ -32,22 +32,13 @@ import {
 
   cabinetLabel,
 
-  effectiveEmptyCabinetSet,
-
   normalizeStripWidths,
 
   stripColumnRanges,
 
 } from './cabinetGrid'
 
-import { stripScreenConfig } from './stripPitch'
-
 import { enrichDataChainsWithDualVx } from './dualVxRouting'
-import {
-  applyBackupPortDisplayIds,
-  applyMainPortDisplayIds,
-  resolvePortDisplayAssignment,
-} from './backupPortNumbering'
 
 import {
 
@@ -89,7 +80,9 @@ import type { CellActiveFn } from './rectangularPartition'
 
 
 function emptySetFromConfig(config: ScreenConfig): Set<string> {
-  return effectiveEmptyCabinetSet(config)
+
+  return new Set(config.emptyCabinets)
+
 }
 
 
@@ -143,7 +136,6 @@ function buildDataChainsByStrips(
   config: ScreenConfig,
   pixelsPerCabinet: number,
   isActive: CellActiveFn,
-  projectScreens: ScreenConfig[] = [],
 ): { chains: DataChain[]; links: GridLink[] } {
   const stripWidths = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
   const ranges = stripColumnRanges(stripWidths)
@@ -163,15 +155,18 @@ function buildDataChainsByStrips(
     if (stripCabinets.length === 0) continue
 
     const { local, byLabel } = remapStripCabinetsLocal(stripCabinets, startCol)
-    const stripConfig = stripScreenConfig(config, stripIdx, width, projectScreens)
-    const stripPixels = calcPixelsPerCabinet(stripConfig).totalPixels
+    const stripConfig: ScreenConfig = {
+      ...config,
+      cabinetsWide: width,
+      stripWidths: [width],
+    }
     const stripIsActive: CellActiveFn = (col, row) =>
       col >= 0 && col < width && isActive(col + startCol, row)
 
     const auto = buildDataChains(
       local,
       stripConfig,
-      stripPixels,
+      pixelsPerCabinet,
       stripIsActive,
     )
     for (const chain of auto.chains) {
@@ -201,7 +196,6 @@ function buildPowerLinesByStrips(
   isActive: CellActiveFn,
   emptySet: Set<string>,
   pixelsPerCabinet: number,
-  projectScreens: ScreenConfig[] = [],
 ): { lines: PowerLine[]; links: GridLink[]; cabinetsPerLine: number } {
   const stripWidths = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
   const ranges = stripColumnRanges(stripWidths)
@@ -229,8 +223,11 @@ function buildPowerLinesByStrips(
     if (stripCabinets.length === 0) continue
 
     const { local, byLabel } = remapStripCabinetsLocal(stripCabinets, startCol)
-    const stripConfig = stripScreenConfig(config, stripIdx, width, projectScreens)
-    const stripPixels = calcPixelsPerCabinet(stripConfig).totalPixels
+    const stripConfig: ScreenConfig = {
+      ...config,
+      cabinetsWide: width,
+      stripWidths: [width],
+    }
     const stripIsActive: CellActiveFn = (col, row) =>
       col >= 0 && col < width && isActive(col + startCol, row)
 
@@ -240,7 +237,7 @@ function buildPowerLinesByStrips(
       stripConfig,
       stripIsActive,
       emptySet,
-      stripPixels,
+      pixelsPerCabinet,
     )
     cabinetsPerLine = Math.max(cabinetsPerLine, auto.cabinetsPerLine)
     for (const line of auto.lines) {
@@ -292,7 +289,6 @@ export function computeRouting(
     manualModeData = false,
     manualModePower = false,
     manualOverrides,
-    projectScreens = [],
   } = options
 
 
@@ -328,8 +324,6 @@ export function computeRouting(
       // В ручном режиме пользователь может намеренно провести линию между блоками.
       [config.cabinetsWide],
 
-      config.pitchPreset,
-
     )
 
     dataChains = manual.chains
@@ -345,7 +339,6 @@ export function computeRouting(
       config,
       pixelsPerCabinet,
       isActive,
-      projectScreens,
     )
 
     dataChains = auto.chains
@@ -362,26 +355,15 @@ export function computeRouting(
       : undefined,
   )
 
-  const portAssignment = resolvePortDisplayAssignment(dataChains, config)
-  dataChains = applyMainPortDisplayIds(
-    dataChains,
-    portAssignment,
-    Boolean(config.dualVx1000),
-  )
+
 
   const backupResult = config.signalBackup
-    ? (() => {
-        const raw = buildBackupChains(dataChains)
-        return {
-          chains: applyBackupPortDisplayIds(
-            raw.chains,
-            portAssignment,
-            Boolean(config.dualVx1000),
-          ),
-          links: raw.links,
-        }
-      })()
+
+    ? buildBackupChains(dataChains)
+
     : { chains: [], links: [] }
+
+
 
   let powerLines
 
@@ -431,7 +413,6 @@ export function computeRouting(
       isActive,
       emptySet,
       pixelsPerCabinet,
-      projectScreens,
     )
 
     powerLines = auto.lines

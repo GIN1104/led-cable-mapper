@@ -9,7 +9,6 @@ permissions:
   contents: read
   pages: write
   id-token: write
-  actions: read
 
 concurrency:
   group: pages
@@ -19,90 +18,57 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout triggering branch
+      - name: Checkout main (production)
         uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: main/package-lock.json
 
-      - name: Install dependencies
+      - name: Install (main)
+        working-directory: main
         run: npm ci
 
-      # Снимок прошлого деплоя — чтобы push в test не затирал prod и наоборот
-      - name: Restore previous site snapshot
-        id: restore
-        continue-on-error: true
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: deploy.yml
-          name: site-snapshot
-          workflow_conclusion: success
-          path: site
-          search_artifacts: true
-          if_no_artifact_found: warn
-
-      - name: Ensure site dir
-        id: unpack
-        run: |
-          mkdir -p site
-          if [ -f site/index.html ] || [ -d site/assets ]; then
-            echo "restored=true" >> "$GITHUB_OUTPUT"
-            echo "Restored previous site snapshot"
-          else
-            echo "restored=false" >> "$GITHUB_OUTPUT"
-            echo "No previous snapshot"
-          fi
-
-      # —— test: пересобираем только /test/ ——
-      - name: Build test → /test/
-        if: github.ref == 'refs/heads/test'
-        run: npm run build:test
-
-      - name: Assemble /test only
-        if: github.ref == 'refs/heads/test'
-        run: |
-          rm -rf site/test
-          mkdir -p site/test
-          cp -a dist/. site/test/
-
-      - name: Fallback build production (нет снимка)
-        if: github.ref == 'refs/heads/test' && steps.unpack.outputs.restored != 'true'
-        run: |
-          git fetch origin main
-          git worktree add ../main-src origin/main
-          cd ../main-src
-          npm ci
-          npm run build
-          cp -a dist/. "$GITHUB_WORKSPACE/site/"
-
-      # —— main (merge): пересобираем только прод, /test не трогаем ——
       - name: Build production → /
-        if: github.ref == 'refs/heads/main'
+        working-directory: main
         run: npm run build
 
-      - name: Assemble production root (сохраняя /test)
-        if: github.ref == 'refs/heads/main'
+      - name: Assemble site root
+        run: |
+          mkdir -p site
+          cp -a main/dist/. site/
+
+      - name: Checkout test branch
+        id: test_checkout
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          ref: test
+          path: test
+
+      - name: Install (test)
+        if: steps.test_checkout.outcome == 'success'
+        working-directory: test
+        run: npm ci
+
+      - name: Build test → /test/
+        if: steps.test_checkout.outcome == 'success'
+        working-directory: test
+        run: npm run build:test
+
+      - name: Assemble site /test
+        if: steps.test_checkout.outcome == 'success'
         run: |
           mkdir -p site/test
-          shopt -s dotglob nullglob
-          for item in dist/*; do
-            name=$(basename "$item")
-            [ "$name" = "test" ] && continue
-            rm -rf "site/$name"
-            cp -a "$item" "site/$name"
-          done
+          cp -a test/dist/. site/test/
 
-      - name: Save site snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: site-snapshot
-          path: site
-          include-hidden-files: true
-
-      - name: Upload Pages artifact
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
