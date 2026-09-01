@@ -1,8 +1,8 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RoutingResult, ScreenConfig, ScreenRoutingState } from '../types'
 import { EMPTY_SCREEN_ROUTING } from '../types'
 import { computeRouting } from '../lib/routingEngine'
-import { allScreensRoutingKey, fullRoutingKey, screenRoutingKey } from '../lib/screenConfigHash'
+import { allScreensRoutingKey, fullRoutingKey, isLargeGrid, screenRoutingKey } from '../lib/screenConfigHash'
 import { useAfterFirstPaint } from './useAfterFirstPaint'
 
 /** Кэш маршрутизации — один экран не считается дважды (active + allScreens) */
@@ -36,6 +36,54 @@ function computeForScreenCached(
   return result
 }
 
+/** Отложенный расчёт — не блокирует главный поток на больших сетках */
+function useDeferredRouting(
+  enabled: boolean,
+  routingKey: string,
+  defer: boolean,
+  compute: () => RoutingResult,
+): RoutingResult | null {
+  const [result, setResult] = useState<RoutingResult | null>(null)
+  const computeRef = useRef(compute)
+  computeRef.current = compute
+
+  useEffect(() => {
+    if (!enabled) {
+      setResult(null)
+      return
+    }
+    let cancelled = false
+    const run = () => {
+      if (cancelled) return
+      setResult(computeRef.current())
+    }
+    if (defer) {
+      const win = window as Window & {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+        cancelIdleCallback?: (id: number) => void
+      }
+      if (win.requestIdleCallback) {
+        const id = win.requestIdleCallback(run, { timeout: 400 })
+        return () => {
+          cancelled = true
+          win.cancelIdleCallback?.(id)
+        }
+      }
+      const id = window.setTimeout(run, 16)
+      return () => {
+        cancelled = true
+        window.clearTimeout(id)
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [enabled, defer, routingKey])
+
+  return result
+}
+
 export interface ActiveRoutingState {
   result: RoutingResult | null
   autoResult: RoutingResult | null
@@ -60,15 +108,17 @@ export function useActiveRouting(
   const projectKey = projectScreens
     .map((s) => `${s.id}:${s.pitchPreset}:${s.cabinetWidthMm}x${s.cabinetHeightMm}`)
     .join('|')
+  const deferHeavy = isLargeGrid(screen)
 
-  const result = useMemo(() => {
-    if (!afterPaint) return null
-    return computeForScreenCached(screen, routing, projectScreens)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- только routingKey/projectKey
-  }, [afterPaint, routingKey, projectKey])
+  const result = useDeferredRouting(
+    afterPaint,
+    routingKey,
+    deferHeavy,
+    () => computeForScreenCached(screen, routing, projectScreens),
+  )
 
   const autoResult = useMemo(() => {
-    if (!afterPaint) return null
+    if (!afterPaint || !result) return null
     if (!anyManual) return result
     return computeForScreenCached(screen, EMPTY_SCREEN_ROUTING, projectScreens)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- screenKey / anyManual / result / projectKey
@@ -77,7 +127,7 @@ export function useActiveRouting(
   return {
     result,
     autoResult,
-    isRouting: !afterPaint,
+    isRouting: !afterPaint || (deferHeavy && result == null),
     isDeferred: !afterPaint,
     routingKey,
   }

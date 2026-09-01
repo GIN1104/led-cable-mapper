@@ -7,9 +7,9 @@ import {
 } from './types'
 import { buildAutoManualOverrides } from './lib/routingEngine'
 import { buildCombinedPackingList } from './lib/packingList'
-import { syncCabinetGridFromMeters, calcPixelsPerCabinet, normalizeStripWidths } from './lib/cabinetGrid'
+import { syncCabinetGridFromMeters, calcPixelsPerCabinet, normalizeStripWidths, generateCabinetGrid, canAppendToChainInStrip } from './lib/cabinetGrid'
 import { refreshStripPitchSnapshots, resolveAllStripPitches } from './lib/stripPitch'
-import { isRowMixActive, rowMixHeightsMm, summarizeRowMix } from './lib/rowMix'
+import { isRowMixActive, rowMixPixelsPerStrip, screenPixelsHighFromRowMix } from './lib/rowMix'
 import {
   remapDataPortControllers,
   inferControllerFromLabel,
@@ -48,6 +48,7 @@ import type { EquipmentListState } from './lib/equipmentList'
 import {
   clearPersistedProject,
   createDefaultPersistedProject,
+  consumeEmergencyResetFromUrl,
   loadPersistedProject,
   savePersistedProject,
 } from './lib/projectPersistence'
@@ -134,10 +135,12 @@ function pruneEmptyFromGrid(emptyCabinets: string[], wide: number, high: number)
 }
 
 export default function App() {
-  const initialProject = useMemo(
-    () => loadPersistedProject() ?? createDefaultPersistedProject(),
-    [],
-  )
+  const initialProject = useMemo(() => {
+    if (consumeEmergencyResetFromUrl()) {
+      return createDefaultPersistedProject()
+    }
+    return loadPersistedProject() ?? createDefaultPersistedProject()
+  }, [])
   const [screens, setScreens] = useState<ScreenConfig[]>(initialProject.screens)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activeScreenId, setActiveScreenId] = useState(initialProject.activeScreenId)
@@ -604,6 +607,7 @@ export default function App() {
       const screen = screens.find((s) => s.id === activeScreen.id) ?? activeScreen
       const emptySet = new Set(screen.emptyCabinets ?? [])
       const stripWidths = normalizeStripWidths(screen.stripWidths, screen.cabinetsWide)
+      const cabinets = generateCabinetGrid(screen)
       const painted = labels.filter((label) => !emptySet.has(label))
       if (painted.length === 0) return
 
@@ -621,6 +625,8 @@ export default function App() {
 
         // START не двигаем при Paint — только через Set Start
         for (const label of paintedLabels) {
+          const chain = dataPortChains[portNumber] ?? []
+          if (!canAppendToChainInStrip(chain, label, stripWidths, cabinets)) continue
           for (const [port, start] of Object.entries(dataStartPoints)) {
             if (start === label && Number(port) !== portNumber) {
               delete dataStartPoints[Number(port)]
@@ -747,9 +753,10 @@ export default function App() {
 
   const handlePowerAssignment = useCallback(
     (labels: string[], lineNumber: number) => {
-      const emptySet = new Set(
-        screens.find((s) => s.id === activeScreen.id)?.emptyCabinets ?? [],
-      )
+      const screen = screens.find((s) => s.id === activeScreen.id) ?? activeScreen
+      const emptySet = new Set(screen.emptyCabinets ?? [])
+      const stripWidths = normalizeStripWidths(screen.stripWidths, screen.cabinetsWide)
+      const cabinets = generateCabinetGrid(screen)
       const painted = labels.filter((label) => !emptySet.has(label))
       if (painted.length === 0) return
 
@@ -761,6 +768,8 @@ export default function App() {
         let powerStartPoints = { ...(current.manualOverrides.powerStartPoints ?? {}) }
         // START не двигаем при Paint — только через Set Start
         for (const label of painted) {
+          const chain = powerLineChains[lineNumber] ?? []
+          if (!canAppendToChainInStrip(chain, label, stripWidths, cabinets)) continue
           for (const [line, start] of Object.entries(powerStartPoints)) {
             if (start === label && Number(line) !== lineNumber) {
               delete powerStartPoints[Number(line)]
@@ -1432,11 +1441,13 @@ export default function App() {
       stripPitches.map((p) => ({
         w: p.cabinetWidthMm,
         h: p.cabinetHeightMm,
+        pixelsWide: p.pixelsWide,
+        pixelsHigh: p.pixelsHigh,
       })),
     [stripPitches],
   )
-  const rowCabinetHeightsMm = useMemo(
-    () => rowMixHeightsMm(config) ?? undefined,
+  const rowCabinetPixelsPerStrip = useMemo(
+    () => rowMixPixelsPerStrip(config),
     [config],
   )
   const { pixelsWide: cabPixelsWide, pixelsHigh: cabPixelsHigh } =
@@ -1446,12 +1457,22 @@ export default function App() {
     (sum, w, i) => sum + w * (stripPitches[i]?.pixelsWide ?? cabPixelsWide),
     0,
   )
-  const screenPixelsHigh = isRowMixActive(config)
-    ? summarizeRowMix(config.rowMixBands).pixelsHigh
-    : Math.max(
-        ...stripPitches.map((p) => config.cabinetsHigh * p.pixelsHigh),
-        config.cabinetsHigh * cabPixelsHigh,
+  const screenPixelsHigh = (() => {
+    const fromMix = screenPixelsHighFromRowMix(config)
+    if (fromMix != null) {
+      return Math.max(
+        fromMix,
+        ...stripPitches.map((p, i) => {
+          const sh = config.stripHeights?.[i] ?? config.cabinetsHigh
+          return sh * p.pixelsHigh
+        }),
       )
+    }
+    return Math.max(
+      ...stripPitches.map((p) => config.cabinetsHigh * p.pixelsHigh),
+      config.cabinetsHigh * cabPixelsHigh,
+    )
+  })()
   const maxPixelsPerPort = getMaxPixelsPerDataPort(config.refreshRate)
   const maxCabinetsPerPort =
     result != null
@@ -1548,6 +1569,11 @@ export default function App() {
                 {manualModePower && (
                   <span className="mr-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
                     Manual Power
+                  </span>
+                )}
+                {isRowMixActive(config) && (
+                  <span className="mr-2 rounded bg-orange-100 px-1.5 py-0.5 font-medium text-orange-900">
+                    Big + Small mix
                   </span>
                 )}
                 {screens.length > 1 && (
@@ -1720,7 +1746,7 @@ export default function App() {
                   cabinetWidthMm={config.cabinetWidthMm}
                   cabinetHeightMm={config.cabinetHeightMm}
                   stripCabinetSizes={stripCabinetSizes}
-                  rowCabinetHeightsMm={rowCabinetHeightsMm}
+                  rowCabinetPixelsPerStrip={rowCabinetPixelsPerStrip}
                   signalBackup={config.signalBackup}
                   backupPortMode={config.backupPortMode}
                   mainPortDisplayNumbers={config.mainPortDisplayNumbers}
@@ -1778,7 +1804,7 @@ export default function App() {
                   cabinetWidthMm={config.cabinetWidthMm}
                   cabinetHeightMm={config.cabinetHeightMm}
                   stripCabinetSizes={stripCabinetSizes}
-                  rowCabinetHeightsMm={rowCabinetHeightsMm}
+                  rowCabinetPixelsPerStrip={rowCabinetPixelsPerStrip}
                   keyboardActive={paintKeyboardFocus === 'power'}
                   onClaimKeyboard={() => setPaintKeyboardFocus('power')}
                   manualMode={manualModePower}

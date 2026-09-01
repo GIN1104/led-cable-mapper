@@ -8,7 +8,13 @@ import type {
   RoutingResult,
 } from '../types'
 import {
+  cellPxBatch,
+  cellPxFromPixels,
+  warnIfAspectBroken,
+} from '../lib/cabinetCellSize'
+import {
   edgeToDirection,
+  normalizeStripHeights,
   normalizeStripWidths,
   sameStripCol,
   stripColumnRanges,
@@ -104,12 +110,19 @@ interface GridVisualizationProps {
   cabinetWidthMm?: number
   cabinetHeightMm?: number
   /** Размер кабинета (мм) на полосу — если задан, ячейки стрипа масштабируются отдельно */
-  stripCabinetSizes?: Array<{ w: number; h: number }>
+  stripCabinetSizes?: Array<{
+    w: number
+    h: number
+    pixelsWide: number
+    pixelsHigh: number
+  }>
   /**
-   * Высота каждого ряда сверху вниз (мм) — микс Big/Small.
-   * Если задан (length === high), ячейки масштабируются по рядам.
+   * Пиксели каждого ряда по полосам — микс Big/Small на стрип.
+   * null на полосе = микс выкл.; length = высота полосы при активном миксе.
    */
-  rowCabinetHeightsMm?: number[]
+  rowCabinetPixelsPerStrip?: Array<
+    Array<{ pixelsWide: number; pixelsHigh: number }> | null
+  >
   /** V-Backup включён — вторая строка легенды Data Backup */
   signalBackup?: boolean
   backupPortMode?: 'auto' | 'manual'
@@ -130,60 +143,8 @@ interface GridVisualizationProps {
 }
 
 /** gap=0 — кубики вплотную; stripGap — заметный разделитель между полосами */
-const DESKTOP_CELL_BASE = { w: 88, h: 64, gap: 0, pad: 40, stripGap: 24 }
-const MOBILE_CELL_BASE = { w: 56, h: 44, gap: 0, pad: 24, stripGap: 14 }
-
-/**
- * Модуль 500 мм → сторона квадрата Small на схеме.
- * Small 500×500 → 1×1, Big 500×1000 → 1×2, Reshet 1000×500 → 2×1.
- */
-const CABINET_MODULE_MM = 500
-const MODULE_PX_DESKTOP = 56
-const MODULE_PX_MOBILE = 40
-
-/**
- * Размер ячейки с сохранением пропорций кабинета (мм).
- */
-function cellMetricsForCabinet(
-  cabinetWidthMm: number,
-  cabinetHeightMm: number,
-  isMobile: boolean,
-): { w: number; h: number; gap: number; pad: number; stripGap: number } {
-  const base = isMobile ? MOBILE_CELL_BASE : DESKTOP_CELL_BASE
-  const sized = sizeCabinetsWithSharedScale(
-    [{ w: cabinetWidthMm, h: cabinetHeightMm }],
-    isMobile,
-  )[0]!
-  return {
-    w: sized.w,
-    h: sized.h,
-    gap: base.gap,
-    pad: base.pad,
-    stripGap: base.stripGap,
-  }
-}
-
-/**
- * Общий масштаб мм→px от модуля 500 мм.
- * Пропорции жёсткие: не вписываем в «чужой» base-aspect (иначе ломается 1:1 / 1:2 / 2:1).
- */
-function sizeCabinetsWithSharedScale(
-  sizesMm: Array<{ w: number; h: number }>,
-  isMobile: boolean,
-): Array<{ w: number; h: number }> {
-  const modulePx = isMobile ? MODULE_PX_MOBILE : MODULE_PX_DESKTOP
-  if (sizesMm.length === 0) {
-    return [{ w: modulePx, h: modulePx }]
-  }
-  return sizesMm.map((s) => {
-    const wMm = Math.max(100, s.w)
-    const hMm = Math.max(100, s.h)
-    return {
-      w: Math.max(1, Math.round((wMm / CABINET_MODULE_MM) * modulePx)),
-      h: Math.max(1, Math.round((hMm / CABINET_MODULE_MM) * modulePx)),
-    }
-  })
-}
+const DESKTOP_CELL_BASE = { gap: 0, pad: 40, stripGap: 24 }
+const MOBILE_CELL_BASE = { gap: 0, pad: 24, stripGap: 14 }
 
 const ZOOM_MIN = 0.5
 const ZOOM_MAX = 3
@@ -336,13 +297,12 @@ function MidContinuousChain({
   )
 }
 
-/** В auto каждая видимая data-линия остаётся внутри своего блока/стрипа. */
+/** Data/power-линия остаётся внутри своего стрипа — режем цепочку на границах полос. */
 function splitAutoChainByStrips<T extends { col: number }>(
   cabinets: T[],
   stripWidths: number[],
-  manualMode: boolean,
 ): T[][] {
-  if (manualMode || stripWidths.length <= 1 || cabinets.length < 2) {
+  if (stripWidths.length <= 1 || cabinets.length < 2) {
     return cabinets.length > 0 ? [cabinets] : []
   }
 
@@ -735,7 +695,7 @@ export default memo(function GridVisualization({
   cabinetWidthMm = 500,
   cabinetHeightMm = 500,
   stripCabinetSizes,
-  rowCabinetHeightsMm,
+  rowCabinetPixelsPerStrip,
   signalBackup: _signalBackup = false,
   backupPortMode = 'auto',
   mainPortDisplayNumbers = {},
@@ -762,45 +722,62 @@ export default memo(function GridVisualization({
     [stripWidthsProp, wide],
   )
 
-  const baseMetrics = useMemo(
-    () => cellMetricsForCabinet(cabinetWidthMm, cabinetHeightMm, isMobile),
-    [cabinetWidthMm, cabinetHeightMm, isMobile],
-  )
-  const { gap: GAP, pad: PAD, stripGap: STRIP_GAP } = baseMetrics
+  const layoutBase = isMobile ? MOBILE_CELL_BASE : DESKTOP_CELL_BASE
+  const { gap: GAP, pad: PAD, stripGap: STRIP_GAP } = layoutBase
+
+  const defaultPixels = useMemo(() => {
+    const preset = pitchPreset !== 'custom' ? getPitchPreset(pitchPreset) : undefined
+    if (preset) {
+      return { pixelsWide: preset.pixelsWide, pixelsHigh: preset.pixelsHigh }
+    }
+    return {
+      pixelsWide: Math.max(1, Math.round(cabinetWidthMm / 3.9)),
+      pixelsHigh: Math.max(1, Math.round(cabinetHeightMm / 3.9)),
+    }
+  }, [pitchPreset, cabinetWidthMm, cabinetHeightMm])
 
   const stripCellMetrics = useMemo(() => {
-    const sizesMm = stripWidths.map((_, i) => {
+    const pixelItems = stripWidths.map((_, i) => {
       const size = stripCabinetSizes?.[i]
-      return size
-        ? { w: size.w, h: size.h }
-        : { w: cabinetWidthMm, h: cabinetHeightMm }
+      return {
+        pixelsWide: size?.pixelsWide ?? defaultPixels.pixelsWide,
+        pixelsHigh: size?.pixelsHigh ?? defaultPixels.pixelsHigh,
+      }
     })
-    const sized = sizeCabinetsWithSharedScale(sizesMm, isMobile)
-    return sized.map((s) => ({
-      w: s.w,
-      h: s.h,
-      gap: baseMetrics.gap,
-      pad: baseMetrics.pad,
-      stripGap: baseMetrics.stripGap,
+    const cells = cellPxBatch(pixelItems, isMobile)
+    warnIfAspectBroken(cells, 'strip cells')
+    return cells.map((c) => ({
+      w: c.w,
+      h: c.h,
+      gap: layoutBase.gap,
+      pad: layoutBase.pad,
+      stripGap: layoutBase.stripGap,
     }))
-  }, [
-    stripWidths,
-    stripCabinetSizes,
-    cabinetWidthMm,
-    cabinetHeightMm,
-    baseMetrics,
-    isMobile,
-  ])
+  }, [stripWidths, stripCabinetSizes, defaultPixels, isMobile, layoutBase])
 
-  /** Высоты ячеек по рядам при миксе Big/Small (общий масштаб с шириной экрана) */
-  const rowCellHs = useMemo(() => {
-    if (!rowCabinetHeightsMm || rowCabinetHeightsMm.length !== high) return null
-    const sizesMm = rowCabinetHeightsMm.map((h) => ({
-      w: cabinetWidthMm,
-      h,
-    }))
-    return sizeCabinetsWithSharedScale(sizesMm, isMobile).map((s) => s.h)
-  }, [rowCabinetHeightsMm, high, cabinetWidthMm, isMobile])
+  /** Высоты ячеек по рядам внутри каждой полосы при миксе Big/Small */
+  const stripMixCellHs = useMemo(() => {
+    if (!rowCabinetPixelsPerStrip) return null
+    return rowCabinetPixelsPerStrip.map((rows) => {
+      if (!rows) return null
+      const cells = cellPxBatch(rows, isMobile)
+      warnIfAspectBroken(cells, 'row mix')
+      return cells.map((c) => c.h)
+    })
+  }, [rowCabinetPixelsPerStrip, isMobile])
+
+  const stripMixBlockHeights = useMemo(() => {
+    if (!stripMixCellHs) return null
+    return stripMixCellHs.map((rowHs) => {
+      if (!rowHs) return null
+      return rowHs.reduce((sum, h, i) => sum + h + (i > 0 ? GAP : 0), 0)
+    })
+  }, [stripMixCellHs, GAP])
+
+  const hasStripRowMix = useMemo(
+    () => stripMixCellHs?.some((r) => r != null) ?? false,
+    [stripMixCellHs],
+  )
 
   const stripCellWs = useMemo(
     () => stripCellMetrics.map((m) => m.w),
@@ -810,12 +787,47 @@ export default memo(function GridVisualization({
     () => stripCellMetrics.map((m) => m.h),
     [stripCellMetrics],
   )
-  const CELL_W = Math.max(...stripCellWs, baseMetrics.w)
+  const baseCell = useMemo(
+    () => cellPxFromPixels(defaultPixels.pixelsWide, defaultPixels.pixelsHigh, isMobile),
+    [defaultPixels, isMobile],
+  )
+  const CELL_W = Math.max(...stripCellWs, baseCell.w)
   const CELL_H = Math.max(
     ...stripCellHs,
-    ...(rowCellHs ?? []),
-    baseMetrics.h,
+    ...(stripMixCellHs?.flatMap((r) => r ?? []) ?? []),
+    baseCell.h,
   )
+  const stripHeightsNorm = useMemo(
+    () => normalizeStripHeights(stripHeightsProp ?? [], stripWidths.length, high),
+    [stripHeightsProp, stripWidths.length, high],
+  )
+  const allStripsFullHeight = useMemo(
+    () => stripHeightsNorm.every((sh) => sh >= high),
+    [stripHeightsNorm, high],
+  )
+  const wallContentHeight = useMemo(() => {
+    return Math.max(
+      ...stripWidths.map((_, si) => {
+        const mixBlockH = stripMixBlockHeights?.[si]
+        if (mixBlockH != null) return mixBlockH
+        const sh = stripHeightsNorm[si] ?? high
+        const ch = stripCellHs[si] ?? CELL_H
+        return sh * ch + (sh - 1) * GAP
+      }),
+      1,
+    )
+  }, [
+    stripWidths,
+    stripMixBlockHeights,
+    stripHeightsNorm,
+    stripCellHs,
+    high,
+    CELL_H,
+    GAP,
+  ])
+
+  const topLabelSpace = stripWidths.length > 1 ? 14 : 0
+  const gridOriginY = PAD + topLabelSpace
 
   const colLayout = useMemo(
     () => buildVariableColLayout(stripWidths, stripCellWs, GAP, PAD, STRIP_GAP),
@@ -831,16 +843,35 @@ export default memo(function GridVisualization({
     return map
   }, [stripWidths, wide])
 
+  const rowMixTagAt = useCallback(
+    (col: number, row: number) => {
+      const si = stripIndexByCol[col] ?? 0
+      const rows = rowCabinetPixelsPerStrip?.[si]
+      if (!rows) return null
+      const sh = stripHeightsNorm[si] ?? high
+      const rowInStrip = row - (high - sh)
+      if (rowInStrip < 0 || rowInStrip >= rows.length) return null
+      return rows[rowInStrip].pixelsHigh >= 200 ? 'Big' : 'Small'
+    },
+    [stripIndexByCol, rowCabinetPixelsPerStrip, stripHeightsNorm, high],
+  )
+
   const cellWAt = useCallback(
     (col: number) => colLayout.widths[col] ?? CELL_W,
     [colLayout.widths, CELL_W],
   )
   const cellHAt = useCallback(
     (col: number, row = 0) => {
-      if (rowCellHs) return rowCellHs[row] ?? CELL_H
-      return stripCellHs[stripIndexByCol[col] ?? 0] ?? CELL_H
+      const si = stripIndexByCol[col] ?? 0
+      const sh = stripHeightsNorm[si] ?? high
+      const rowInStrip = row - (high - sh)
+      const mixRowHs = stripMixCellHs?.[si]
+      if (mixRowHs && rowInStrip >= 0 && rowInStrip < mixRowHs.length) {
+        return mixRowHs[rowInStrip] ?? CELL_H
+      }
+      return stripCellHs[si] ?? CELL_H
     },
-    [rowCellHs, stripCellHs, stripIndexByCol, CELL_H],
+    [stripMixCellHs, stripHeightsNorm, stripCellHs, stripIndexByCol, high, CELL_H],
   )
   const cabLeft = useCallback(
     (col: number) => colLayout.lefts[col] ?? PAD,
@@ -848,14 +879,44 @@ export default memo(function GridVisualization({
   )
   const cabTop = useCallback(
     (col: number, row: number) => {
-      if (rowCellHs) {
-        let y = PAD
-        for (let r = 0; r < row; r++) y += (rowCellHs[r] ?? CELL_H) + GAP
+      const si = stripIndexByCol[col] ?? 0
+      const sh = stripHeightsNorm[si] ?? high
+      const startRow = high - sh
+      if (row < startRow) return gridOriginY - 9999
+      const rowInStrip = row - startRow
+      const mixRowHs = stripMixCellHs?.[si]
+      const ch = stripCellHs[si] ?? CELL_H
+
+      if (mixRowHs) {
+        const stripBlockH = stripMixBlockHeights?.[si] ?? 0
+        const stripTop = gridOriginY + (wallContentHeight - stripBlockH)
+        let y = stripTop
+        for (let r = 0; r < rowInStrip; r++) {
+          y += (mixRowHs[r] ?? CELL_H) + GAP
+        }
         return y
       }
-      return PAD + row * (cellHAt(col, 0) + GAP)
+
+      if (allStripsFullHeight) {
+        return gridOriginY + row * (ch + GAP)
+      }
+      const stripBlockH = sh * ch + (sh - 1) * GAP
+      const stripTop = gridOriginY + (wallContentHeight - stripBlockH)
+      return stripTop + rowInStrip * (ch + GAP)
     },
-    [rowCellHs, PAD, CELL_H, GAP, cellHAt],
+    [
+      stripMixCellHs,
+      stripMixBlockHeights,
+      stripIndexByCol,
+      stripHeightsNorm,
+      high,
+      stripCellHs,
+      allStripsFullHeight,
+      gridOriginY,
+      wallContentHeight,
+      CELL_H,
+      GAP,
+    ],
   )
   const cabCenter = useCallback(
     (col: number, row: number) => ({
@@ -1281,18 +1342,7 @@ export default memo(function GridVisualization({
   }, [emptyCabinets, stripWidths, stripHeightsProp, wide, high])
 
   const svgW = PAD * 2 + colLayout.totalInnerW
-  const svgH =
-    PAD * 2 +
-    (rowCellHs
-      ? rowCellHs.reduce((sum, h, i) => sum + h + (i > 0 ? GAP : 0), 0)
-      : Math.max(
-          ...stripWidths.map((_, si) => {
-            const h = stripCellHs[si] ?? CELL_H
-            return high * h + (high - 1) * GAP
-          }),
-          high * CELL_H + (high - 1) * GAP,
-        )) +
-    30
+  const svgH = gridOriginY + wallContentHeight + PAD + 8
 
   const gridScrollRef = useRef<HTMLDivElement>(null)
   const [fitScale, setFitScale] = useState(1)
@@ -1618,9 +1668,17 @@ export default memo(function GridVisualization({
       else if (key === 'ArrowUp') nextRow = cab.row - 1
       else if (key === 'ArrowDown') nextRow = cab.row + 1
       else return null
+      // Тикшорет не переходит между полосами
+      if (
+        stripWidths.length > 1 &&
+        (key === 'ArrowLeft' || key === 'ArrowRight') &&
+        !sameStripCol(cab.col, nextCol, stripWidths)
+      ) {
+        return null
+      }
       return labelAtCell(nextCol, nextRow)
     },
-    [cabinets, labelAtCell],
+    [cabinets, labelAtCell, stripWidths],
   )
 
   /** Стрелки — только у активной схемы (keyboardActive), иначе Data ломает Power */
@@ -1884,6 +1942,11 @@ export default memo(function GridVisualization({
               {emptyPaintMode && (!manualMode || editMode === 'empty')
                 ? 'EMPTY MODE'
                 : 'EDIT MODE'}
+            </span>
+          )}
+          {hasStripRowMix && (
+            <span className="rounded bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-900">
+              Big + Small mix
             </span>
           )}
         </div>
@@ -2519,7 +2582,7 @@ export default memo(function GridVisualization({
                 <text
                   key={`strip-lbl-${index}`}
                   x={mid}
-                  y={Math.max(12, PAD - 10)}
+                  y={Math.max(12, gridOriginY - 10)}
                   textAnchor="middle"
                   fontSize={isMobile ? 9 : 11}
                   fontWeight={600}
@@ -2569,6 +2632,7 @@ export default memo(function GridVisualization({
 
             const lineColors = lineColorFor(lineNum)
             const isInteractive = manualMode || emptyPaintMode
+            const rowMixTag = rowMixTagAt(cab.col, cab.row)
 
             return (
               <g
@@ -2576,6 +2640,18 @@ export default memo(function GridVisualization({
                 onClick={(e) => handleCabinetClick(cab.label, e.shiftKey, e.altKey)}
                 style={{ cursor: isInteractive ? 'pointer' : 'default' }}
               >
+                {rowMixTag && !isEmpty && (
+                  <text
+                    x={x + 5}
+                    y={y + 11}
+                    fontSize={8}
+                    fontWeight={700}
+                    fill="#c2410c"
+                    pointerEvents="none"
+                  >
+                    {rowMixTag}
+                  </text>
+                )}
                 <rect
                   x={x}
                   y={y}
@@ -2760,11 +2836,7 @@ export default memo(function GridVisualization({
               .filter((c) => !c.isBackup && c.cabinets.length >= 2)
               .flatMap((chain) => {
                 const colors = lineColorFor(chain.portNumber)
-                return splitAutoChainByStrips(
-                  chain.cabinets,
-                  stripWidths,
-                  manualMode,
-                ).map((segment, segmentIndex) => (
+                return splitAutoChainByStrips(chain.cabinets, stripWidths).map((segment, segmentIndex) => (
                   <MidContinuousChain
                     key={`dat-mid-${chain.portNumber}-${segmentIndex}`}
                     points={orthogonalizeLanePoints(
@@ -2790,11 +2862,7 @@ export default memo(function GridVisualization({
             backupChains
               .filter((c) => c.cabinets.length >= 2)
               .flatMap((chain) =>
-                splitAutoChainByStrips(
-                  chain.cabinets,
-                  stripWidths,
-                  manualMode,
-                ).map((segment, segmentIndex) => (
+                splitAutoChainByStrips(chain.cabinets, stripWidths).map((segment, segmentIndex) => (
                   <MidContinuousChain
                     key={`bkp-mid-${chain.portNumber}-${segmentIndex}`}
                     points={orthogonalizeLanePoints(
@@ -3042,7 +3110,7 @@ export default memo(function GridVisualization({
               ? 'Power ↑ только вверх (Reshet)'
               : is29Power
                 ? 'Power ↑↓ вертикально (2.9)'
-                : `Змейка power (${isRtl ? 'RTL' : 'LTR'} старт)`}
+                : `Power ${isRtl ? '← RTL' : '→ LTR'} / ↑↓ (мин. змейка)`}
           {!isData && (
             <>
               {' · '}

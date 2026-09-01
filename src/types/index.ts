@@ -224,10 +224,13 @@ export interface ScreenConfig {
   stripPitchConfigs: StripPitchConfig[]
 
   /**
-   * Микс рядов Big/Small при одном блоке («1 — один экран»).
-   * Порядок — сверху вниз. Пусто = выкл. При ≥2 полосах игнорируется.
+   * Микс рядов Big/Small на каждой полосе (сверху вниз).
+   * stripRowMixBands[i] — bands для полосы i; пустой массив = микс выкл.
    */
-  rowMixBands: RowMixBand[]
+  stripRowMixBands: RowMixBand[][]
+
+  /** @deprecated мигрируется в stripRowMixBands при sync */
+  rowMixBands?: RowMixBand[]
 
 }
 
@@ -534,13 +537,13 @@ export interface RoutingOptions {
 
 const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'> = {
 
-  wallWidthM: 3.0,
+  wallWidthM: 6.0,
 
-  wallHeightM: 2.0,
+  wallHeightM: 2.5,
 
-  cabinetsWide: 6,
+  cabinetsWide: 12,
 
-  cabinetsHigh: 4,
+  cabinetsHigh: 5,
 
   cabinetWidthMm: 500,
 
@@ -587,7 +590,7 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
 
   hangMount: false,
 
-  stripWidths: [6],
+  stripWidths: [12],
 
   /** Пусто = все полосы на полную высоту стены (заполняет sync) */
   stripHeights: [],
@@ -598,7 +601,7 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
 
   stripPitchConfigs: [{ kind: 'inherit' }],
 
-  rowMixBands: [],
+  stripRowMixBands: [],
 
 }
 
@@ -645,7 +648,8 @@ export function createScreen(
     stripPitchConfigs:
       partial?.stripPitchConfigs ?? DEFAULT_SCREEN_FIELDS.stripPitchConfigs,
 
-    rowMixBands: partial?.rowMixBands ?? DEFAULT_SCREEN_FIELDS.rowMixBands,
+    stripRowMixBands:
+      partial?.stripRowMixBands ?? DEFAULT_SCREEN_FIELDS.stripRowMixBands,
 
     stripHeights: partial?.stripHeights ?? [],
 

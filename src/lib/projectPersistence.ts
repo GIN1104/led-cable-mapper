@@ -4,6 +4,7 @@ import {
   DEFAULT_PROJECT,
   EMPTY_SCREEN_ROUTING,
 } from '../types'
+import { sanitizeLoadedScreen, syncCabinetGridFromMeters } from './cabinetGrid'
 import type { EquipmentListState } from './equipmentList'
 
 const STORAGE_KEY = 'led-cable-mapper:project:v1'
@@ -19,7 +20,9 @@ export interface PersistedProject {
 }
 
 export function createDefaultPersistedProject(): PersistedProject {
-  const screens = DEFAULT_PROJECT.screens.map((s) => createScreen(s))
+  const screens = DEFAULT_PROJECT.screens.map((s) =>
+    sanitizeLoadedScreen(syncCabinetGridFromMeters(createScreen(s))),
+  )
   const activeScreenId = screens[0]?.id ?? DEFAULT_PROJECT.activeScreenId
   return {
     version: 1,
@@ -82,12 +85,16 @@ export function loadPersistedProject(): PersistedProject | null {
       return null
     }
     const screens = parsed.screens.map((s) =>
-      createScreen({
-        ...s,
-        id: s.id,
-        name: s.name,
-        emptyCabinets: s.emptyCabinets ?? [],
-      }),
+      sanitizeLoadedScreen(
+        syncCabinetGridFromMeters(
+          createScreen({
+            ...s,
+            id: s.id,
+            name: s.name,
+            emptyCabinets: s.emptyCabinets ?? [],
+          }),
+        ),
+      ),
     )
     if (screens.length === 0) return null
     const ids = new Set(screens.map((s) => s.id))
@@ -145,4 +152,15 @@ export function clearPersistedProject(): void {
   } catch {
     // ignore
   }
+}
+
+/** Аварийный сброс через URL ?reset=1 */
+export function consumeEmergencyResetFromUrl(): boolean {
+  if (typeof window === 'undefined') return false
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('reset') !== '1') return false
+  clearPersistedProject()
+  const clean = window.location.pathname + (window.location.hash || '')
+  window.history.replaceState({}, '', clean)
+  return true
 }
