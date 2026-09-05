@@ -14,6 +14,7 @@ export type EquipmentAutoKey =
   | 'dataCables'
   | 'commCableLong'
   | 'speakons'
+  | 'speakonJumpers'
   | 'powerTrunks'
   | 'sprayers'
   | 'hangers'
@@ -89,7 +90,7 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
     russian: 'Тросы для подвеса',
     autoKey: 'hangStraps',
   },
-  { id: 'computer', hebrew: 'מחשב', russian: 'Компьютер' },
+  { id: 'computer', hebrew: 'מחשב', russian: 'Компьютер', defaultQuantity: 'Laptop' },
   /** Процессор по умолчанию не нужен — без autoKey, количество пустое */
   { id: 'processor', hebrew: 'פרוצסור', russian: 'Процессор' },
   { id: 'led-card', hebrew: 'כרטיס לד', russian: 'Картис Лед', autoKey: 'ledCard' },
@@ -112,6 +113,12 @@ export const LED_EQUIPMENT_TEMPLATE: EquipmentListRowTemplate[] = [
     autoKey: 'commCableLong',
   },
   { id: 'speakon', hebrew: 'ספיקונים', russian: 'Спикон', autoKey: 'speakons' },
+  {
+    id: 'speakon-jumpers',
+    hebrew: 'ספיקונים מגשרים',
+    russian: 'Спикон соединяющий кубики',
+    autoKey: 'speakonJumpers',
+  },
   { id: 'power-ext', hebrew: 'כבל חשמל', russian: 'Удлинитель электрический', autoKey: 'powerTrunks' },
   { id: 'robot-32a', hebrew: 'רובוט', russian: 'Робот 32А', autoKey: 'robot32a' },
   {
@@ -190,6 +197,46 @@ function countTrunks(
 export function roundUpToNext20(rawQty: number): number {
   if (rawQty <= 0) return 0
   return Math.ceil(rawQty / 20) * 20
+}
+
+/** Округление вверх до кратного 10 (1→10, 11→20, 20→20, 0→0) */
+export function roundUpToNext10(rawQty: number): number {
+  if (rawQty <= 0) return 0
+  return Math.ceil(rawQty / 10) * 10
+}
+
+/**
+ * ספיקונים מגשרים / Спикон соединяющий кубики (только pitch ~3.9):
+ * кол-во кубиков → вверх до 10, затем +10.
+ * Пример: 24 → 30 + 10 = 40; 60 → 60 + 10 = 70.
+ */
+export function speakonJumpersQuantity(cabinetCount: number): number {
+  if (cabinetCount <= 0) return 0
+  return roundUpToNext10(cabinetCount) + 10
+}
+
+/** Экран / полосы на питче 3.9 (Big / Small / Reshet / custom ≈3.9) */
+export function screenUsesPitch39(screen: ScreenConfig): boolean {
+  if (
+    screen.pitchPreset === '3.9-big' ||
+    screen.pitchPreset === '3.9-small' ||
+    screen.pitchPreset === '3.9-reshet'
+  ) {
+    return true
+  }
+  if (
+    screen.pitchPreset === 'custom' &&
+    Math.abs(screen.pixelPitchMm - 3.9) < 0.15
+  ) {
+    return true
+  }
+  return (screen.stripPitchConfigs ?? []).some(
+    (c) =>
+      c.kind === 'preset' &&
+      (c.pitchPreset === '3.9-big' ||
+        c.pitchPreset === '3.9-small' ||
+        c.pitchPreset === '3.9-reshet'),
+  )
 }
 
 /**
@@ -528,6 +575,20 @@ export function resolveEquipmentAutoQuantity(
       // Кол-во спиконов: сумма электрических линий + 2
       if (results.length === 0) return undefined
       return sumPowerLines(results) + 2
+    }
+    case 'speakonJumpers': {
+      // Только pitch 3.9: кубики → вверх до 10, +10
+      if (results.length === 0) return undefined
+      let cabinets = 0
+      let any39 = false
+      for (const { screen, result } of results) {
+        if (!screenUsesPitch39(screen)) continue
+        any39 = true
+        cabinets += result.summary.totalCabinets
+      }
+      if (!any39) return undefined
+      const qty = speakonJumpersQuantity(cabinets)
+      return qty > 0 ? qty : undefined
     }
     case 'powerTrunks':
       return countTrunks(cableSchedule, 'Power')

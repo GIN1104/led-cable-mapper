@@ -154,6 +154,19 @@ export function clearPersistedProject(): void {
   }
 }
 
+/**
+ * Хард-ресет: чистит storage и немедленно перезагружает страницу.
+ * Обрывает расчёты маршрутизации, debounce и любой зависший UI.
+ */
+export function hardResetProjectAndReload(): void {
+  clearPersistedProject()
+  if (typeof window === 'undefined') return
+  const url = new URL(window.location.href)
+  url.searchParams.set('reset', '1')
+  // replace — без возврата к «полузависшему» состоянию через Back
+  window.location.replace(`${url.pathname}?${url.searchParams.toString()}${url.hash}`)
+}
+
 /** Аварийный сброс через URL ?reset=1 */
 export function consumeEmergencyResetFromUrl(): boolean {
   if (typeof window === 'undefined') return false

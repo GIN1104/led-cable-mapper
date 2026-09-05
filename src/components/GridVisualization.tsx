@@ -57,6 +57,8 @@ interface GridVisualizationProps {
   mode: GridVisualizationMode
   /** Имя экрана — для имени файла data-ports-/power-lines-*.png */
   screenName?: string
+  /** שם האירוע — добавляется в имя файла при сохранении фото */
+  eventName?: string
   /** Физический размер стены — для Print screen info */
   wallWidthM?: number
   wallHeightM?: number
@@ -658,6 +660,7 @@ export default memo(function GridVisualization({
   high,
   mode,
   screenName = 'Screen',
+  eventName = '',
   wallWidthM = 0,
   wallHeightM = 0,
   controllerModel = 'Generic 1G Controller',
@@ -1865,7 +1868,7 @@ export default memo(function GridVisualization({
     setExportBusy(true)
     try {
       const dataUrl = await captureDiagram()
-      const filename = panelExportFilename(mode, screenName)
+      const filename = panelExportFilename(mode, screenName, eventName)
       await printPanelPng(dataUrl, title, filename, {
         ...printInfo,
         date: new Date().toLocaleDateString(),
@@ -1880,14 +1883,14 @@ export default memo(function GridVisualization({
     } finally {
       setExportBusy(false)
     }
-  }, [captureDiagram, exportBusy, isData, mode, printInfo, screenName, title])
+  }, [captureDiagram, eventName, exportBusy, isData, mode, printInfo, screenName, title])
 
   const handleWhatsAppShare = useCallback(async () => {
     if (exportBusy) return
     setExportBusy(true)
     try {
       const dataUrl = await captureDiagram()
-      const filename = panelExportFilename(mode, screenName)
+      const filename = panelExportFilename(mode, screenName, eventName)
       await sharePanelViaWhatsApp({ dataUrl, filename, mode })
     } catch (error) {
       console.error('WhatsApp share failed', error)
@@ -1899,14 +1902,14 @@ export default memo(function GridVisualization({
     } finally {
       setExportBusy(false)
     }
-  }, [captureDiagram, exportBusy, isData, mode, screenName])
+  }, [captureDiagram, eventName, exportBusy, isData, mode, screenName])
 
   const handleSaveImage = useCallback(async () => {
     if (exportBusy) return
     setExportBusy(true)
     try {
       const dataUrl = await captureDiagram()
-      const filename = panelExportFilename(mode, screenName)
+      const filename = panelExportFilename(mode, screenName, eventName)
       downloadDataUrl(dataUrl, filename)
     } catch (error) {
       console.error('Save image failed', error)
@@ -1918,7 +1921,7 @@ export default memo(function GridVisualization({
     } finally {
       setExportBusy(false)
     }
-  }, [captureDiagram, exportBusy, isData, mode, screenName])
+  }, [captureDiagram, eventName, exportBusy, isData, mode, screenName])
 
   return (
     <div

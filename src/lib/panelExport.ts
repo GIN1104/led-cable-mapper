@@ -38,11 +38,16 @@ export function sanitizeScreenSlug(name: string): string {
 export function panelExportFilename(
   mode: 'data' | 'power',
   screenName: string,
+  eventName?: string,
 ): string {
   const slug = sanitizeScreenSlug(screenName)
-  return mode === 'data'
-    ? `data-ports-${slug}.png`
-    : `power-lines-${slug}.png`
+  const eventSlug = eventName?.trim()
+    ? sanitizeScreenSlug(eventName)
+    : ''
+  const base = mode === 'data' ? 'data-ports' : 'power-lines'
+  return eventSlug
+    ? `${base}-${eventSlug}-${slug}.png`
+    : `${base}-${slug}.png`
 }
 
 export function panelWhatsAppCaption(mode: 'data' | 'power'): string {

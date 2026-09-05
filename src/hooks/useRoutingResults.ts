@@ -9,6 +9,11 @@ import { useAfterFirstPaint } from './useAfterFirstPaint'
 const ROUTING_CACHE_MAX = 24
 const routingCache = new Map<string, RoutingResult>()
 
+/** Сброс кэша (хард-ресет проекта) */
+export function clearRoutingCache(): void {
+  routingCache.clear()
+}
+
 function computeForScreenCached(
   screen: ScreenConfig,
   routing: ScreenRoutingState,

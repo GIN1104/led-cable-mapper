@@ -453,55 +453,89 @@ export function normalizeStripControllerIds(
   })
 }
 
+/**
+ * Если выбран именованный пресет — размеры кабинета всегда из пресета.
+ * Иначе pitchPreset=3.9-big при cabinetHeightMm=500 даёт 8 рядов на 4 м
+ * при отрисовке «больших» кубиков (пиксели берутся из пресета).
+ */
+export function alignCabinetDimsWithPreset(
+  config: ScreenConfig,
+): Pick<ScreenConfig, 'cabinetWidthMm' | 'cabinetHeightMm' | 'pixelPitchMm'> {
+  if (config.pitchPreset === 'custom') {
+    return {
+      cabinetWidthMm: config.cabinetWidthMm,
+      cabinetHeightMm: config.cabinetHeightMm,
+      pixelPitchMm: config.pixelPitchMm,
+    }
+  }
+  const preset = getPitchPreset(config.pitchPreset)
+  if (!preset) {
+    return {
+      cabinetWidthMm: config.cabinetWidthMm,
+      cabinetHeightMm: config.cabinetHeightMm,
+      pixelPitchMm: config.pixelPitchMm,
+    }
+  }
+  return {
+    cabinetWidthMm: preset.cabinetWidthMm,
+    cabinetHeightMm: preset.cabinetHeightMm,
+    pixelPitchMm: preset.pixelPitchMm,
+  }
+}
+
 /** Пересчитывает cabinetsWide/High из wallWidthM/wallHeightM и размеров кабинета */
 export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
+  const aligned = alignCabinetDimsWithPreset(config)
+  const working: ScreenConfig = { ...config, ...aligned }
+
   const grid = calcCabinetsFromMeters(
-    config.wallWidthM,
-    config.wallHeightM,
-    config.cabinetWidthMm,
-    config.cabinetHeightMm,
+    working.wallWidthM,
+    working.wallHeightM,
+    working.cabinetWidthMm,
+    working.cabinetHeightMm,
   )
   let cabinetsWide = grid.cabinetsWide
+  /** Высота сетки дальше берётся из полос (микс/питч стрипа), не из «сырого» grid */
   let cabinetsHigh = grid.cabinetsHigh
-  let wallHeightM = config.wallHeightM
+  let wallHeightM = working.wallHeightM
 
-  const stripWidths = normalizeStripWidths(config.stripWidths, cabinetsWide)
+  const stripWidths = normalizeStripWidths(working.stripWidths, cabinetsWide)
   let stripRowMixBands = normalizeStripRowMixBands(
-    config.stripRowMixBands,
+    working.stripRowMixBands,
     stripWidths.length,
-    config.rowMixBands,
+    working.rowMixBands,
   )
   let anyStripMix = stripRowMixBands.some((b) => isStripRowMixActive(b))
 
-  const dualVx1000 = config.dualVx1000 ?? false
+  const dualVx1000 = working.dualVx1000 ?? false
   const stripControllerIds = normalizeStripControllerIds(
-    config.stripControllerIds,
+    working.stripControllerIds,
     stripWidths.length,
   )
   const stripPitchConfigs = normalizeStripPitchConfigs(
-    config.stripPitchConfigs,
+    working.stripPitchConfigs,
     stripWidths.length,
   )
 
-  const prevHeights = config.stripHeights
+  const prevHeights = working.stripHeights
   const resetHeights =
-    stripHeightsNeedInit(prevHeights, stripWidths.length, config.cabinetsHigh) ||
-    Boolean(prevHeights?.every((h) => h === config.cabinetsHigh))
+    stripHeightsNeedInit(prevHeights, stripWidths.length, working.cabinetsHigh) ||
+    Boolean(prevHeights?.every((h) => h === working.cabinetsHigh))
 
   const prevNorm =
     prevHeights && prevHeights.length === stripWidths.length
-      ? normalizeStripHeights(prevHeights, stripWidths.length, config.cabinetsHigh)
+      ? normalizeStripHeights(prevHeights, stripWidths.length, working.cabinetsHigh)
       : null
   const impliedWallFromPrev =
     prevNorm && prevNorm.length > 0
       ? wallHeightMFromStripHeights(
-          { ...config, stripWidths, stripPitchConfigs },
+          { ...working, stripWidths, stripPitchConfigs },
           prevNorm,
         )
       : null
   const wallEditedByUser =
     impliedWallFromPrev != null &&
-    Math.abs(config.wallHeightM - impliedWallFromPrev) > 0.05
+    Math.abs(working.wallHeightM - impliedWallFromPrev) > 0.05
 
   /** Пользователь меняет высоту стены — сбросить микс, пересчитать ряды из метров */
   if (anyStripMix && wallEditedByUser) {
@@ -515,27 +549,16 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
       return summarizeRowMix(bands!).cabinetsHigh
     }
     const geo = resolveStripPitch(
-      { ...config, stripWidths, stripPitchConfigs, cabinetsWide, cabinetsHigh },
+      { ...working, stripWidths, stripPitchConfigs, cabinetsWide, cabinetsHigh },
       i,
       [],
     )
     return stripRowsForWallHeight(wallHeightM, geo.cabinetHeightMm)
   })
 
-  if (anyStripMix) {
-    cabinetsHigh = Math.max(...perStripRows, cabinetsHigh)
-  } else if (stripWidths.length > 1) {
-    cabinetsHigh = Math.max(...perStripRows, cabinetsHigh)
-  } else {
-    const geo = resolveStripPitch(
-      { ...config, stripWidths, stripPitchConfigs, cabinetsWide, cabinetsHigh },
-      0,
-      [],
-    )
-    if (geo.isOverride || geo.cabinetHeightMm !== config.cabinetHeightMm) {
-      cabinetsHigh = perStripRows[0] ?? cabinetsHigh
-    }
-  }
+  // Не смешивать с grid.cabinetsHigh: при рассинхроне пресета/мм или override стрипа
+  // grid может быть 8 при реальных Big-рядах = 4 на 4 м.
+  cabinetsHigh = Math.max(...perStripRows, 1)
 
   const manualStripHeights =
     !anyStripMix &&
@@ -557,7 +580,7 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
     })
     cabinetsHigh = Math.max(...stripHeights, 1)
     wallHeightM = wallHeightMFromStripHeights(
-      { ...config, stripWidths, stripPitchConfigs },
+      { ...working, stripWidths, stripPitchConfigs, stripRowMixBands },
       stripHeights,
     )
   } else if (manualStripHeights) {
@@ -568,17 +591,20 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
     )
     cabinetsHigh = Math.max(...stripHeights)
     wallHeightM = wallHeightMFromStripHeights(
-      { ...config, stripWidths, stripPitchConfigs },
+      { ...working, stripWidths, stripPitchConfigs },
       stripHeights,
     )
   } else if (resetHeights || wallEditedByUser || stripWidths.length > 1) {
     stripHeights = perStripRows
-    if (stripWidths.length > 1 || wallEditedByUser) {
-      cabinetsHigh = Math.max(...perStripRows, cabinetsHigh)
-    }
+    cabinetsHigh = Math.max(...perStripRows, 1)
   } else {
     stripHeights = normalizeStripHeights(prevHeights, stripWidths.length, cabinetsHigh)
   }
+
+  const dimsSame =
+    working.cabinetWidthMm === config.cabinetWidthMm &&
+    working.cabinetHeightMm === config.cabinetHeightMm &&
+    working.pixelPitchMm === config.pixelPitchMm
 
   const stripsSame =
     stripWidths.length === (config.stripWidths?.length ?? 0) &&
@@ -618,6 +644,7 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
     )
 
   if (
+    dimsSame &&
     cabinetsWide === config.cabinetsWide &&
     cabinetsHigh === config.cabinetsHigh &&
     wallHeightM === config.wallHeightM &&
@@ -636,7 +663,7 @@ export function syncCabinetGridFromMeters(config: ScreenConfig): ScreenConfig {
     return config
   }
   return {
-    ...config,
+    ...working,
     cabinetsWide,
     cabinetsHigh,
     wallHeightM,

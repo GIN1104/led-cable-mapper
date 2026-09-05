@@ -46,12 +46,13 @@ import {
 } from './lib/equipmentList'
 import type { EquipmentListState } from './lib/equipmentList'
 import {
-  clearPersistedProject,
   createDefaultPersistedProject,
   consumeEmergencyResetFromUrl,
+  hardResetProjectAndReload,
   loadPersistedProject,
   savePersistedProject,
 } from './lib/projectPersistence'
+import { clearRoutingCache } from './hooks/useRoutingResults'
 
 type ManualOverrides = ScreenRoutingState['manualOverrides']
 type DataUndoSnapshot = Pick<
@@ -1413,21 +1414,14 @@ export default function App() {
 
   const handleResetProject = useCallback(() => {
     const ok = window.confirm(
-      'Сбросить весь проект?\n\nБудут удалены экраны, ручные схемы data/power и сохранённые данные. Это нельзя отменить.',
+      'ХАРД-РЕСЕТ проекта?\n\n' +
+        'Страница перезагрузится сразу — все расчёты и процессы остановятся.\n' +
+        'Удалятся экраны, ручные схемы data/power и сохранённые данные.\n' +
+        'Это нельзя отменить.',
     )
     if (!ok) return
-    clearPersistedProject()
-    const next = createDefaultPersistedProject()
-    setScreens(next.screens)
-    setActiveScreenId(next.activeScreenId)
-    setRoutingByScreen(next.routingByScreen)
-    setGridLayout(next.gridLayout)
-    setShowCombinedPacking(next.showCombinedPacking)
-    setEquipmentList(null)
-    setDataPaintUndo({})
-    setPowerPaintUndo({})
-    setEmptyPaintMode(false)
-    setPaintKeyboardFocus('data')
+    clearRoutingCache()
+    hardResetProjectAndReload()
   }, [])
 
   const config = activeScreen
@@ -1727,6 +1721,7 @@ export default function App() {
                   high={config.cabinetsHigh}
                   mode="data"
                   screenName={activeScreen.name}
+                  eventName={equipmentList?.meta.eventName ?? ''}
                   wallWidthM={config.wallWidthM}
                   wallHeightM={config.wallHeightM}
                   controllerModel={config.controllerModel}
@@ -1789,6 +1784,7 @@ export default function App() {
                   high={config.cabinetsHigh}
                   mode="power"
                   screenName={activeScreen.name}
+                  eventName={equipmentList?.meta.eventName ?? ''}
                   wallWidthM={config.wallWidthM}
                   wallHeightM={config.wallHeightM}
                   controllerModel={config.controllerModel}
@@ -1838,6 +1834,14 @@ export default function App() {
                 />
               </div>
 
+              {equipmentList && (
+                <EquipmentListTable
+                  state={equipmentList}
+                  onChange={setEquipmentList}
+                  onRefreshFromRouting={handleRefreshEquipmentList}
+                />
+              )}
+
               <RoutingSchema lines={result!.routingSchema} />
 
               <div className="print-break">
@@ -1856,14 +1860,6 @@ export default function App() {
                 <CableScheduleTable
                   entries={combinedCableSchedule}
                   title="Combined Cable Schedule"
-                />
-              )}
-
-              {equipmentList && (
-                <EquipmentListTable
-                  state={equipmentList}
-                  onChange={setEquipmentList}
-                  onRefreshFromRouting={handleRefreshEquipmentList}
                 />
               )}
             </div>
