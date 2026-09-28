@@ -30,6 +30,9 @@ export const CONTROLLER_MODELS: ControllerModel[] = [
 
 export type TrunkLengthM = 15 | 30 | 50
 
+/** Нумерация портов Data Backup: авто или вручную */
+export type BackupPortMode = 'auto' | 'manual'
+
 
 
 /** Частота обновления экрана (Гц) — влияет на лимит пикселей на data-порт */
@@ -156,6 +159,19 @@ export interface ScreenConfig {
 
   signalBackup: boolean
 
+  /**
+   * Нумерация Data / Data Backup на схеме и в легенде.
+   * auto — ≤5: backup со следующих свободных; 6–10: CVT10 Main/Backup с одинаковыми номерами.
+   * manual — mainPortDisplayNumbers / backupPortDisplayNumbers.
+   */
+  backupPortMode: BackupPortMode
+
+  /** Ручные номера Main: внутренний portNumber → номер на схеме */
+  mainPortDisplayNumbers: Record<number, number>
+
+  /** Ручные номера Backup: внутренний main portNumber → номер Backup на схеме */
+  backupPortDisplayNumbers: Record<number, number>
+
   trunkLengthM: TrunkLengthM
 
   /** Частота обновления — лимит пикселей на 1G data-порт */
@@ -184,6 +200,12 @@ export interface ScreenConfig {
   stripWidths: number[]
 
   /**
+   * Высота каждой полосы в рядах кабинетов (сверху вниз).
+   * Длина = число полос; значение 1…cabinetsHigh. По умолчанию все = cabinetsHigh.
+   */
+  stripHeights: number[]
+
+  /**
    * Два NovaStar VX1000: стрипы делятся между контроллерами (только data/тикшорет).
    * Нумерация data-портов вида 1-1, 2-1. Power / электричество не зависит от режима.
    */
@@ -195,6 +217,46 @@ export interface ScreenConfig {
    */
   stripControllerIds: number[]
 
+  /**
+   * Питч/размер кабинета на полосу (разные кубики в одном экране).
+   * inherit — как у экрана; preset — пресет; screen — питч другого экрана проекта.
+   */
+  stripPitchConfigs: StripPitchConfig[]
+
+  /**
+   * Микс рядов Big/Small на каждой полосе (сверху вниз).
+   * stripRowMixBands[i] — bands для полосы i; пустой массив = микс выкл.
+   */
+  stripRowMixBands: RowMixBand[][]
+
+  /** @deprecated мигрируется в stripRowMixBands при sync */
+  rowMixBands?: RowMixBand[]
+
+}
+
+
+
+/** Полоса микса рядов (линии Big или Small) */
+export interface RowMixBand {
+  /** Только 3.9 Big / 3.9 Small */
+  size: '3.9-big' | '3.9-small'
+  /** Число горизонтальных линий (рядов) */
+  rows: number
+}
+
+/** Источник питча для одной полосы */
+export interface StripPitchConfig {
+  kind: 'inherit' | 'preset' | 'screen'
+  /** Для kind === 'preset' */
+  pitchPreset?: PitchPresetId
+  /** Для kind === 'screen' — id экрана-источника */
+  screenId?: ScreenId
+  /** Снимок геометрии (preset/screen) */
+  cabinetWidthMm?: number
+  cabinetHeightMm?: number
+  pixelPitchMm?: number
+  pixelsWide?: number
+  pixelsHigh?: number
 }
 
 
@@ -464,6 +526,9 @@ export interface RoutingOptions {
 
   manualOverrides?: ManualRoutingOverrides
 
+  /** Другие экраны проекта — для питча полосы kind=screen */
+  projectScreens?: ScreenConfig[]
+
 }
 
 
@@ -472,13 +537,13 @@ export interface RoutingOptions {
 
 const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'> = {
 
-  wallWidthM: 3.0,
+  wallWidthM: 6.0,
 
-  wallHeightM: 2.0,
+  wallHeightM: 2.5,
 
-  cabinetsWide: 6,
+  cabinetsWide: 12,
 
-  cabinetsHigh: 4,
+  cabinetsHigh: 5,
 
   cabinetWidthMm: 500,
 
@@ -508,6 +573,12 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
 
   signalBackup: false,
 
+  backupPortMode: 'auto',
+
+  mainPortDisplayNumbers: {},
+
+  backupPortDisplayNumbers: {},
+
   trunkLengthM: 50,
 
   refreshRate: 50,
@@ -519,11 +590,18 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
 
   hangMount: false,
 
-  stripWidths: [6],
+  stripWidths: [12],
+
+  /** Пусто = все полосы на полную высоту стены (заполняет sync) */
+  stripHeights: [],
 
   dualVx1000: false,
 
   stripControllerIds: [1],
+
+  stripPitchConfigs: [{ kind: 'inherit' }],
+
+  stripRowMixBands: [],
 
 }
 
@@ -566,6 +644,22 @@ export function createScreen(
 
     stripControllerIds:
       partial?.stripControllerIds ?? DEFAULT_SCREEN_FIELDS.stripControllerIds,
+
+    stripPitchConfigs:
+      partial?.stripPitchConfigs ?? DEFAULT_SCREEN_FIELDS.stripPitchConfigs,
+
+    stripRowMixBands:
+      partial?.stripRowMixBands ?? DEFAULT_SCREEN_FIELDS.stripRowMixBands,
+
+    stripHeights: partial?.stripHeights ?? [],
+
+    backupPortMode: partial?.backupPortMode ?? DEFAULT_SCREEN_FIELDS.backupPortMode,
+
+    mainPortDisplayNumbers:
+      partial?.mainPortDisplayNumbers ?? DEFAULT_SCREEN_FIELDS.mainPortDisplayNumbers,
+
+    backupPortDisplayNumbers:
+      partial?.backupPortDisplayNumbers ?? DEFAULT_SCREEN_FIELDS.backupPortDisplayNumbers,
 
   }
 

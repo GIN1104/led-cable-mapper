@@ -19,10 +19,9 @@ import {
   inferChainStart,
   linkDirection,
   orderCabinetsFromStart,
-  orderCabinetsFromStartSnake,
   orderPowerCabinetsFromStart,
   orderPowerRegionByPreset,
-  orderRegionBySnake,
+  orderPowerRegionPreferStraight,
   powerLinkLengthBetween,
 } from './cabinetGrid'
 import type { CellActiveFn } from './rectangularPartition'
@@ -226,21 +225,23 @@ function orderPackedVerticalLine(
   const width = maxCol - minCol + 1
   const height = maxRow - minRow + 1
 
-  // 3.9 big/small: змейка — стрелки чередуют направление по рядам
+  // 3.9 big/small: прямой обход (горизонталь или вертикаль), змейка — только если нужна
   const horizontalPrefer =
     config.pitchPreset === '3.9-big' ||
     config.pitchPreset === '3.9-small' ||
     config.pitchPreset === 'custom'
   if (horizontalPrefer) {
-    const snake = orderRegionBySnake(
+    const straight = orderPowerRegionPreferStraight(
       cabinets,
       minCol,
       minRow,
       width,
       height,
       config.chainStartEdge,
+      config.cabinetWidthMm,
+      config.cabinetHeightMm,
     )
-    if (snake.length === cabinets.length) return snake
+    if (straight.length === cabinets.length) return straight
   }
 
   const ordered = orderPowerRegionByPreset(
@@ -802,13 +803,15 @@ function partitionBandHorizontalStrips(
         }
         const blockMinRow = Math.min(...blockRows)
         const blockMaxRow = Math.max(...blockRows)
-        const ordered = orderRegionBySnake(
+        const ordered = orderPowerRegionPreferStraight(
           blockCabs,
           minCol,
           blockMinRow,
           bandWidth,
           blockMaxRow - blockMinRow + 1,
           config.chainStartEdge,
+          config.cabinetWidthMm,
+          config.cabinetHeightMm,
         )
         paths.push(ordered)
         removeFromIndexes(ordered)
@@ -1198,14 +1201,14 @@ export function splitPathForCenterFeed(
       const feed = [...left].sort(
         (a, b) => b.col - a.col || b.row - a.row || a.label.localeCompare(b.label),
       )[0]!
-      // Змейка от FEED к краю — иначе все горизонтальные стрелки в одну сторону
-      parts.push(orderCabinetsFromStartSnake(left, feed.label, 'right'))
+      // Прямой обход от FEED к краю (без змейки, если возможно)
+      parts.push(orderCabinetsFromStart(left, feed.label, 'right'))
     }
     if (right.length > 0) {
       const rightStart = [...right].sort(
         (a, b) => a.col - b.col || b.row - a.row || a.label.localeCompare(b.label),
       )[0]!
-      parts.push(orderCabinetsFromStartSnake(right, rightStart.label, 'left'))
+      parts.push(orderCabinetsFromStart(right, rightStart.label, 'left'))
     }
     return parts.length > 0 ? parts : [path]
   }

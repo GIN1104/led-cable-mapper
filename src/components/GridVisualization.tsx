@@ -8,12 +8,22 @@ import type {
   RoutingResult,
 } from '../types'
 import {
+  cellPxBatch,
+  cellPxFromPixels,
+  warnIfAspectBroken,
+} from '../lib/cabinetCellSize'
+import {
   edgeToDirection,
+  normalizeStripHeights,
   normalizeStripWidths,
   sameStripCol,
   stripColumnRanges,
-  stripGapsBeforeCol,
+  stripHeightInactiveLabels,
 } from '../lib/cabinetGrid'
+import {
+  resolvePortDisplayAssignment,
+  shouldShowCvt10Headers,
+} from '../lib/backupPortNumbering'
 import { COLORS } from '../lib/constants'
 import { inferDataChainStart } from '../lib/dataRouting'
 import {
@@ -47,6 +57,8 @@ interface GridVisualizationProps {
   mode: GridVisualizationMode
   /** Имя экрана — для имени файла data-ports-/power-lines-*.png */
   screenName?: string
+  /** שם האירוע — добавляется в имя файла при сохранении фото */
+  eventName?: string
   /** Физический размер стены — для Print screen info */
   wallWidthM?: number
   wallHeightM?: number
@@ -81,6 +93,8 @@ interface GridVisualizationProps {
   powerFeedMode?: PowerFeedMode
   /** Вертикальные полосы: ширины в колонках; зазоры только визуальные */
   stripWidths?: number[]
+  /** Высота полос в рядах (сверху); меньше cabinetsHigh — нижние ряды empty */
+  stripHeights?: number[]
   /** Два VX1000 — подсказки UI / лейблы D1-1 */
   dualVx1000?: boolean
   /** Назначение стрипов на VX (1|2) — для будущих подсказок */
@@ -97,42 +111,42 @@ interface GridVisualizationProps {
   /** Физический размер кабинета — для пропорций ячеек на схеме */
   cabinetWidthMm?: number
   cabinetHeightMm?: number
+  /** Размер кабинета (мм) на полосу — если задан, ячейки стрипа масштабируются отдельно */
+  stripCabinetSizes?: Array<{
+    w: number
+    h: number
+    pixelsWide: number
+    pixelsHigh: number
+  }>
+  /**
+   * Пиксели каждого ряда по полосам — микс Big/Small на стрип.
+   * null на полосе = микс выкл.; length = высота полосы при активном миксе.
+   */
+  rowCabinetPixelsPerStrip?: Array<
+    Array<{ pixelsWide: number; pixelsHigh: number }> | null
+  >
+  /** V-Backup включён — вторая строка легенды Data Backup */
+  signalBackup?: boolean
+  backupPortMode?: 'auto' | 'manual'
+  mainPortDisplayNumbers?: Record<number, number>
+  backupPortDisplayNumbers?: Record<number, number>
+  onBackupNumberingChange?: (patch: {
+    backupPortMode?: 'auto' | 'manual'
+    mainPortDisplayNumbers?: Record<number, number>
+    backupPortDisplayNumbers?: Record<number, number>
+  }) => void
+  /**
+   * Только одна схема (Data или Power) слушает стрелки.
+   * false — listener не вешается, чтобы не трогать другую схему.
+   */
+  keyboardActive?: boolean
+  /** Клик/фокус по этой схеме — сделать её владельцем стрелок */
+  onClaimKeyboard?: () => void
 }
 
-const DESKTOP_CELL_BASE = { w: 88, h: 64, gap: 12, pad: 40, stripGap: 32 }
-const MOBILE_CELL_BASE = { w: 56, h: 44, gap: 6, pad: 24, stripGap: 18 }
-
-/** Размер ячейки сетки с сохранением пропорций кабинета (мм) */
-function cellMetricsForCabinet(
-  cabinetWidthMm: number,
-  cabinetHeightMm: number,
-  isMobile: boolean,
-): { w: number; h: number; gap: number; pad: number; stripGap: number } {
-  const base = isMobile ? MOBILE_CELL_BASE : DESKTOP_CELL_BASE
-  const minW = isMobile ? 28 : 40
-  const minH = isMobile ? 22 : 32
-
-  const cw = Math.max(100, cabinetWidthMm)
-  const ch = Math.max(100, cabinetHeightMm)
-  const aspect = cw / ch
-  const baseAspect = base.w / base.h
-
-  let w: number
-  let h: number
-  if (aspect >= baseAspect) {
-    w = base.w
-    h = base.w / aspect
-  } else {
-    h = base.h
-    w = base.h * aspect
-  }
-
-  const scaleUp = Math.max(minW / w, minH / h, 1)
-  w = Math.round(w * scaleUp)
-  h = Math.round(h * scaleUp)
-
-  return { w, h, gap: base.gap, pad: base.pad, stripGap: base.stripGap }
-}
+/** gap=0 — кубики вплотную; stripGap — заметный разделитель между полосами */
+const DESKTOP_CELL_BASE = { gap: 0, pad: 40, stripGap: 24 }
+const MOBILE_CELL_BASE = { gap: 0, pad: 24, stripGap: 14 }
 
 const ZOOM_MIN = 0.5
 const ZOOM_MAX = 3
@@ -285,13 +299,12 @@ function MidContinuousChain({
   )
 }
 
-/** В auto каждая видимая data-линия остаётся внутри своего блока/стрипа. */
+/** Data/power-линия остаётся внутри своего стрипа — режем цепочку на границах полос. */
 function splitAutoChainByStrips<T extends { col: number }>(
   cabinets: T[],
   stripWidths: number[],
-  manualMode: boolean,
 ): T[][] {
-  if (manualMode || stripWidths.length <= 1 || cabinets.length < 2) {
+  if (stripWidths.length <= 1 || cabinets.length < 2) {
     return cabinets.length > 0 ? [cabinets] : []
   }
 
@@ -312,13 +325,15 @@ function splitAutoChainByStrips<T extends { col: number }>(
 /**
  * Ровная «полоса» вдоль змейки: на горизонтали — сдвиг по Y, на вертикали — по X.
  * На углу берём пересечение полос (оба сдвига) → только прямые 90°, без зигзагов.
+ * Сдвиги всегда в пределах реального размера кубика (gap=0 / разные стрипы).
  */
 function buildSmoothLanePoints(
   cabinets: { col: number; row: number }[],
   cabCenter: (col: number, row: number) => { x: number; y: number },
   kind: 'data' | 'backup',
   wide: number,
-  cellW: number,
+  getCellW: (col: number) => number,
+  getCellH: (col: number, row?: number) => number,
   isRtl: boolean,
   isMobile: boolean,
 ): { x: number; y: number }[] {
@@ -326,12 +341,19 @@ function buildSmoothLanePoints(
 
   const centers = cabinets.map((c) => cabCenter(c.col, c.row))
   const yMag = isMobile ? DATA_LANE_OFFSET_MID.mobile : DATA_LANE_OFFSET_MID.desktop
-  const yOff = kind === 'data' ? -yMag : yMag
+  const yOffBase = kind === 'data' ? -yMag : yMag
+  const margin = isMobile ? 5 : 7
 
   const isHoriz = (a: { x: number; y: number }, b: { x: number; y: number }) =>
     Math.abs(b.x - a.x) >= Math.abs(b.y - a.y)
 
   return centers.map((c, i) => {
+    const cab = cabinets[i]!
+    const cellW = getCellW(cab.col)
+    const cellH = getCellH(cab.col, cab.row)
+    const maxDx = Math.max(2, cellW / 2 - margin)
+    const maxDy = Math.max(2, cellH / 2 - margin)
+
     const prev = i > 0 ? centers[i - 1]! : null
     const next = i < centers.length - 1 ? centers[i + 1]! : null
     const touchH =
@@ -341,20 +363,53 @@ function buildSmoothLanePoints(
 
     let dx = 0
     let dy = 0
-    if (touchH) dy = yOff
+    if (touchH) {
+      dy = Math.sign(yOffBase) * Math.min(Math.abs(yOffBase), maxDy)
+    }
     if (touchV) {
       dx = verticalLaneDesiredNx(
         kind,
-        cabinets[i]!.col,
+        cab.col,
         wide,
         cellW,
         isRtl,
         isMobile,
         true,
+        margin,
       )
+      dx = Math.sign(dx || 1) * Math.min(Math.abs(dx), maxDx)
     }
     return { x: c.x + dx, y: c.y + dy }
   })
+}
+
+/** Вставляет углы 90°, убирает диагональные сегменты (ровные ← / ↑↓). */
+function orthogonalizeLanePoints(
+  points: { x: number; y: number }[],
+): { x: number; y: number }[] {
+  if (points.length < 2) return points
+  const out: { x: number; y: number }[] = [points[0]!]
+  for (let i = 1; i < points.length; i++) {
+    const prev = out[out.length - 1]!
+    const cur = points[i]!
+    const dx = Math.abs(cur.x - prev.x)
+    const dy = Math.abs(cur.y - prev.y)
+    if (dx > 0.5 && dy > 0.5) {
+      // Угол: сначала по большей оси предыдущего хода, иначе по X
+      const before = out.length >= 2 ? out[out.length - 2]! : null
+      const cameHoriz =
+        before != null
+          ? Math.abs(prev.x - before.x) >= Math.abs(prev.y - before.y)
+          : dx >= dy
+      if (cameHoriz) {
+        out.push({ x: cur.x, y: prev.y })
+      } else {
+        out.push({ x: prev.x, y: cur.y })
+      }
+    }
+    out.push(cur)
+  }
+  return out
 }
 
 const TRUNK_FEED_COLOR = '#ea580c'
@@ -362,32 +417,34 @@ const END_LABEL_COLOR = '#0f766e'
 
 const LARGE_GRID_THRESHOLD = 100
 
-/** Левый край кабинета с учётом визуальных зазоров между полосами */
-function cabinetLeft(
-  col: number,
-  cellW: number,
+/** Раскладка колонок при разных размерах кубиков по стрипам */
+function buildVariableColLayout(
+  stripWidths: number[],
+  stripCellWs: number[],
   gap: number,
   pad: number,
   stripGap: number,
-  stripWidths: number[],
-) {
-  return pad + col * (cellW + gap) + stripGapsBeforeCol(col, stripWidths) * stripGap
-}
-
-function cabinetCenter(
-  col: number,
-  row: number,
-  cellW: number,
-  cellH: number,
-  gap: number,
-  pad: number,
-  stripGap = 0,
-  stripWidths: number[] = [1],
-) {
-  return {
-    x: cabinetLeft(col, cellW, gap, pad, stripGap, stripWidths) + cellW / 2,
-    y: pad + row * (cellH + gap) + cellH / 2,
+): { lefts: number[]; widths: number[]; totalInnerW: number } {
+  const lefts: number[] = []
+  const widths: number[] = []
+  let x = pad
+  let col = 0
+  for (let si = 0; si < stripWidths.length; si++) {
+    if (si > 0) x += stripGap
+    const cellW = stripCellWs[si] ?? stripCellWs[0] ?? 56
+    for (let i = 0; i < stripWidths[si]!; i++) {
+      lefts[col] = x
+      widths[col] = cellW
+      x += cellW + gap
+      col++
+    }
+    if (gap > 0 && stripWidths[si]! > 0) {
+      // последний gap внутри полосы не нужен перед stripGap — уже учтён в цикле
+    }
   }
+  // убрать хвостовой gap после последней колонки
+  const totalInnerW = gap > 0 ? x - gap - pad : x - pad
+  return { lefts, widths, totalInnerW }
 }
 
 /** Mid: чуть ближе к центру, но не на цифры */
@@ -422,15 +479,20 @@ function verticalLaneDesiredNx(
   isRtl: boolean,
   isMobile = false,
   midLanes = false,
+  margin = 6,
 ): number {
   const outer = verticalOuterSign(col, wide, isRtl)
   const edgeTable = midLanes ? VERTICAL_EDGE_INSET_MID : VERTICAL_EDGE_INSET
   const gapTable = midLanes ? VERTICAL_PAIR_GAP_MID : VERTICAL_PAIR_GAP
-  const edgeInset = isMobile ? edgeTable.mobile : edgeTable.desktop
+  const edgeInsetRaw = isMobile ? edgeTable.mobile : edgeTable.desktop
   const pairGap = isMobile ? gapTable.mobile : gapTable.desktop
-  const outerFromCenter = cellW / 2 - edgeInset
+  // Не выходим за край кубика: inset не больше половины минус запас
+  const maxOuter = Math.max(2, cellW / 2 - margin)
+  const edgeInset = Math.min(edgeInsetRaw, Math.max(2, cellW / 2 - margin - 2))
+  const outerFromCenter = Math.min(maxOuter, Math.max(2, cellW / 2 - edgeInset))
   if (kind === 'data') return outer * outerFromCenter
-  return outer * (outerFromCenter - pairGap)
+  const backupFromCenter = Math.max(2, outerFromCenter - pairGap)
+  return outer * Math.min(maxOuter, backupFromCenter)
 }
 
 /** Преобразует desiredNx (px) в параметр offset для ArrowPath */
@@ -598,6 +660,7 @@ export default memo(function GridVisualization({
   high,
   mode,
   screenName = 'Screen',
+  eventName = '',
   wallWidthM = 0,
   wallHeightM = 0,
   controllerModel = 'Generic 1G Controller',
@@ -624,6 +687,7 @@ export default memo(function GridVisualization({
   pitchPreset = '3.9-small',
   powerFeedMode = 'edge',
   stripWidths: stripWidthsProp,
+  stripHeights: stripHeightsProp,
   dualVx1000 = false,
   dataPortControllers,
   onSetDataPortController,
@@ -633,6 +697,15 @@ export default memo(function GridVisualization({
   screenPixelsHigh = 0,
   cabinetWidthMm = 500,
   cabinetHeightMm = 500,
+  stripCabinetSizes,
+  rowCabinetPixelsPerStrip,
+  signalBackup: _signalBackup = false,
+  backupPortMode = 'auto',
+  mainPortDisplayNumbers = {},
+  backupPortDisplayNumbers = {},
+  onBackupNumberingChange,
+  keyboardActive = false,
+  onClaimKeyboard,
 }: GridVisualizationProps) {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
@@ -647,23 +720,213 @@ export default memo(function GridVisualization({
     return () => mq.removeEventListener('change', onChange)
   }, [])
 
-  const { w: CELL_W, h: CELL_H, gap: GAP, pad: PAD, stripGap: STRIP_GAP } = useMemo(
-    () => cellMetricsForCabinet(cabinetWidthMm, cabinetHeightMm, isMobile),
-    [cabinetWidthMm, cabinetHeightMm, isMobile],
-  )
   const stripWidths = useMemo(
     () => normalizeStripWidths(stripWidthsProp, wide),
     [stripWidthsProp, wide],
   )
-  const stripExtraW = Math.max(0, stripWidths.length - 1) * STRIP_GAP
+
+  const layoutBase = isMobile ? MOBILE_CELL_BASE : DESKTOP_CELL_BASE
+  const { gap: GAP, pad: PAD, stripGap: STRIP_GAP } = layoutBase
+
+  const defaultPixels = useMemo(() => {
+    const preset = pitchPreset !== 'custom' ? getPitchPreset(pitchPreset) : undefined
+    if (preset) {
+      return { pixelsWide: preset.pixelsWide, pixelsHigh: preset.pixelsHigh }
+    }
+    return {
+      pixelsWide: Math.max(1, Math.round(cabinetWidthMm / 3.9)),
+      pixelsHigh: Math.max(1, Math.round(cabinetHeightMm / 3.9)),
+    }
+  }, [pitchPreset, cabinetWidthMm, cabinetHeightMm])
+
+  const stripCellMetrics = useMemo(() => {
+    const pixelItems = stripWidths.map((_, i) => {
+      const size = stripCabinetSizes?.[i]
+      return {
+        pixelsWide: size?.pixelsWide ?? defaultPixels.pixelsWide,
+        pixelsHigh: size?.pixelsHigh ?? defaultPixels.pixelsHigh,
+      }
+    })
+    const cells = cellPxBatch(pixelItems, isMobile)
+    warnIfAspectBroken(cells, 'strip cells')
+    return cells.map((c) => ({
+      w: c.w,
+      h: c.h,
+      gap: layoutBase.gap,
+      pad: layoutBase.pad,
+      stripGap: layoutBase.stripGap,
+    }))
+  }, [stripWidths, stripCabinetSizes, defaultPixels, isMobile, layoutBase])
+
+  /** Высоты ячеек по рядам внутри каждой полосы при миксе Big/Small */
+  const stripMixCellHs = useMemo(() => {
+    if (!rowCabinetPixelsPerStrip) return null
+    return rowCabinetPixelsPerStrip.map((rows) => {
+      if (!rows) return null
+      const cells = cellPxBatch(rows, isMobile)
+      warnIfAspectBroken(cells, 'row mix')
+      return cells.map((c) => c.h)
+    })
+  }, [rowCabinetPixelsPerStrip, isMobile])
+
+  const stripMixBlockHeights = useMemo(() => {
+    if (!stripMixCellHs) return null
+    return stripMixCellHs.map((rowHs) => {
+      if (!rowHs) return null
+      return rowHs.reduce((sum, h, i) => sum + h + (i > 0 ? GAP : 0), 0)
+    })
+  }, [stripMixCellHs, GAP])
+
+  const hasStripRowMix = useMemo(
+    () => stripMixCellHs?.some((r) => r != null) ?? false,
+    [stripMixCellHs],
+  )
+
+  const stripCellWs = useMemo(
+    () => stripCellMetrics.map((m) => m.w),
+    [stripCellMetrics],
+  )
+  const stripCellHs = useMemo(
+    () => stripCellMetrics.map((m) => m.h),
+    [stripCellMetrics],
+  )
+  const baseCell = useMemo(
+    () => cellPxFromPixels(defaultPixels.pixelsWide, defaultPixels.pixelsHigh, isMobile),
+    [defaultPixels, isMobile],
+  )
+  const CELL_W = Math.max(...stripCellWs, baseCell.w)
+  const CELL_H = Math.max(
+    ...stripCellHs,
+    ...(stripMixCellHs?.flatMap((r) => r ?? []) ?? []),
+    baseCell.h,
+  )
+  const stripHeightsNorm = useMemo(
+    () => normalizeStripHeights(stripHeightsProp ?? [], stripWidths.length, high),
+    [stripHeightsProp, stripWidths.length, high],
+  )
+  const allStripsFullHeight = useMemo(
+    () => stripHeightsNorm.every((sh) => sh >= high),
+    [stripHeightsNorm, high],
+  )
+  const wallContentHeight = useMemo(() => {
+    return Math.max(
+      ...stripWidths.map((_, si) => {
+        const mixBlockH = stripMixBlockHeights?.[si]
+        if (mixBlockH != null) return mixBlockH
+        const sh = stripHeightsNorm[si] ?? high
+        const ch = stripCellHs[si] ?? CELL_H
+        return sh * ch + (sh - 1) * GAP
+      }),
+      1,
+    )
+  }, [
+    stripWidths,
+    stripMixBlockHeights,
+    stripHeightsNorm,
+    stripCellHs,
+    high,
+    CELL_H,
+    GAP,
+  ])
+
+  const topLabelSpace = stripWidths.length > 1 ? 14 : 0
+  const gridOriginY = PAD + topLabelSpace
+
+  const colLayout = useMemo(
+    () => buildVariableColLayout(stripWidths, stripCellWs, GAP, PAD, STRIP_GAP),
+    [stripWidths, stripCellWs, GAP, PAD, STRIP_GAP],
+  )
+
+  const stripIndexByCol = useMemo(() => {
+    const map = new Array<number>(wide).fill(0)
+    let col = 0
+    stripWidths.forEach((w, si) => {
+      for (let i = 0; i < w; i++) map[col++] = si
+    })
+    return map
+  }, [stripWidths, wide])
+
+  const rowMixTagAt = useCallback(
+    (col: number, row: number) => {
+      const si = stripIndexByCol[col] ?? 0
+      const rows = rowCabinetPixelsPerStrip?.[si]
+      if (!rows) return null
+      const sh = stripHeightsNorm[si] ?? high
+      const rowInStrip = row - (high - sh)
+      if (rowInStrip < 0 || rowInStrip >= rows.length) return null
+      return rows[rowInStrip].pixelsHigh >= 200 ? 'Big' : 'Small'
+    },
+    [stripIndexByCol, rowCabinetPixelsPerStrip, stripHeightsNorm, high],
+  )
+
+  const cellWAt = useCallback(
+    (col: number) => colLayout.widths[col] ?? CELL_W,
+    [colLayout.widths, CELL_W],
+  )
+  const cellHAt = useCallback(
+    (col: number, row = 0) => {
+      const si = stripIndexByCol[col] ?? 0
+      const sh = stripHeightsNorm[si] ?? high
+      const rowInStrip = row - (high - sh)
+      const mixRowHs = stripMixCellHs?.[si]
+      if (mixRowHs && rowInStrip >= 0 && rowInStrip < mixRowHs.length) {
+        return mixRowHs[rowInStrip] ?? CELL_H
+      }
+      return stripCellHs[si] ?? CELL_H
+    },
+    [stripMixCellHs, stripHeightsNorm, stripCellHs, stripIndexByCol, high, CELL_H],
+  )
   const cabLeft = useCallback(
-    (col: number) => cabinetLeft(col, CELL_W, GAP, PAD, STRIP_GAP, stripWidths),
-    [CELL_W, GAP, PAD, STRIP_GAP, stripWidths],
+    (col: number) => colLayout.lefts[col] ?? PAD,
+    [colLayout.lefts, PAD],
+  )
+  const cabTop = useCallback(
+    (col: number, row: number) => {
+      const si = stripIndexByCol[col] ?? 0
+      const sh = stripHeightsNorm[si] ?? high
+      const startRow = high - sh
+      if (row < startRow) return gridOriginY - 9999
+      const rowInStrip = row - startRow
+      const mixRowHs = stripMixCellHs?.[si]
+      const ch = stripCellHs[si] ?? CELL_H
+
+      if (mixRowHs) {
+        const stripBlockH = stripMixBlockHeights?.[si] ?? 0
+        const stripTop = gridOriginY + (wallContentHeight - stripBlockH)
+        let y = stripTop
+        for (let r = 0; r < rowInStrip; r++) {
+          y += (mixRowHs[r] ?? CELL_H) + GAP
+        }
+        return y
+      }
+
+      if (allStripsFullHeight) {
+        return gridOriginY + row * (ch + GAP)
+      }
+      const stripBlockH = sh * ch + (sh - 1) * GAP
+      const stripTop = gridOriginY + (wallContentHeight - stripBlockH)
+      return stripTop + rowInStrip * (ch + GAP)
+    },
+    [
+      stripMixCellHs,
+      stripMixBlockHeights,
+      stripIndexByCol,
+      stripHeightsNorm,
+      high,
+      stripCellHs,
+      allStripsFullHeight,
+      gridOriginY,
+      wallContentHeight,
+      CELL_H,
+      GAP,
+    ],
   )
   const cabCenter = useCallback(
-    (col: number, row: number) =>
-      cabinetCenter(col, row, CELL_W, CELL_H, GAP, PAD, STRIP_GAP, stripWidths),
-    [CELL_W, CELL_H, GAP, PAD, STRIP_GAP, stripWidths],
+    (col: number, row: number) => ({
+      x: cabLeft(col) + cellWAt(col) / 2,
+      y: cabTop(col, row) + cellHAt(col, row) / 2,
+    }),
+    [cabLeft, cabTop, cellWAt, cellHAt],
   )
   const editBtnClass =
     'touch-manipulation min-h-[44px] rounded-md px-3 py-2 text-xs font-semibold transition active:scale-[0.98] sm:min-h-[36px] sm:px-2.5 sm:py-1'
@@ -679,7 +942,6 @@ export default memo(function GridVisualization({
     dataChains,
     backupChains,
     powerLines,
-    backupLinks,
     powerLinks,
     warnings,
     summary,
@@ -689,6 +951,7 @@ export default memo(function GridVisualization({
   const lineDirection = edgeToDirection(chainStartEdge)
   const isRtl = lineDirection === 'rtl'
   const isReshetPower = !isData && pitchPreset === '3.9-reshet'
+  const isReshetData = isData && pitchPreset === '3.9-reshet'
   const is29Power = !isData && pitchPreset === '2.9'
 
   const sequenceStepMap = useMemo(() => {
@@ -887,6 +1150,40 @@ export default memo(function GridVisualization({
       }))
   }, [isData, dualVx1000, dataChains, backupChains])
 
+  const portAssignment = useMemo(() => {
+    if (!isData) {
+      return {
+        layout: 'offset' as const,
+        mainDisplayByPort: {} as Record<number, number>,
+        backupDisplayByPort: {} as Record<number, number>,
+      }
+    }
+    return resolvePortDisplayAssignment(dataChains, {
+      backupPortMode,
+      mainPortDisplayNumbers,
+      backupPortDisplayNumbers,
+    })
+  }, [
+    isData,
+    dataChains,
+    backupPortMode,
+    mainPortDisplayNumbers,
+    backupPortDisplayNumbers,
+  ])
+
+  const showCvt10Headers = useMemo(
+    () => shouldShowCvt10Headers(portAssignment, Boolean(dualVx1000)),
+    [portAssignment, dualVx1000],
+  )
+
+  const backupLegendPorts = useMemo(() => {
+    if (!isData) return [] as number[]
+    return dataChains
+      .filter((c) => !c.isBackup && c.cabinets.length > 0)
+      .map((c) => c.portNumber)
+      .sort((a, b) => a - b)
+  }, [isData, dataChains])
+
   const headerStats = useMemo(() => {
     if (isData && dualVxBreakdown) return null
 
@@ -968,6 +1265,8 @@ export default memo(function GridVisualization({
   /** Контекст VX1/VX2 для выбора и создания линий D1-x / D2-x */
   const [manualVxContext, setManualVxContext] = useState<1 | 2>(1)
   const manualKeyboardRef = useRef<HTMLDivElement>(null)
+  /** Синхронный «кончик» линии для стрелок — без ожидания React state */
+  const paintTipRef = useRef<string | null>(null)
 
   const getChainForPort = useCallback(
     (port: number) => {
@@ -978,6 +1277,17 @@ export default memo(function GridVisualization({
     },
     [chainOrder],
   )
+
+  const focusManualKeyboard = useCallback(() => {
+    onClaimKeyboard?.()
+    manualKeyboardRef.current?.focus({ preventScroll: true })
+  }, [onClaimKeyboard])
+
+  useEffect(() => {
+    const chain = getChainForPort(activeValue)
+    paintTipRef.current =
+      chain.at(-1) ?? startPoints?.[activeValue] ?? null
+  }, [activeValue, getChainForPort, chainOrder, startPoints])
 
   const canDualVxManual =
     isData && dualVx1000 && stripWidths.length > 1 && manualMode
@@ -1021,10 +1331,21 @@ export default memo(function GridVisualization({
     setEditMode('assign')
   }, [manualMode, wide, high, mode])
 
-  const emptySet = useMemo(() => new Set(emptyCabinets), [emptyCabinets])
+  const emptySet = useMemo(() => {
+    const set = new Set(emptyCabinets)
+    for (const label of stripHeightInactiveLabels(
+      stripWidths,
+      stripHeightsProp ?? [],
+      wide,
+      high,
+    )) {
+      set.add(label)
+    }
+    return set
+  }, [emptyCabinets, stripWidths, stripHeightsProp, wide, high])
 
-  const svgW = PAD * 2 + wide * CELL_W + (wide - 1) * GAP + stripExtraW
-  const svgH = PAD * 2 + high * CELL_H + (high - 1) * GAP + 30
+  const svgW = PAD * 2 + colLayout.totalInnerW
+  const svgH = gridOriginY + wallContentHeight + PAD + 8
 
   const gridScrollRef = useRef<HTMLDivElement>(null)
   const [fitScale, setFitScale] = useState(1)
@@ -1350,14 +1671,22 @@ export default memo(function GridVisualization({
       else if (key === 'ArrowUp') nextRow = cab.row - 1
       else if (key === 'ArrowDown') nextRow = cab.row + 1
       else return null
+      // Тикшорет не переходит между полосами
+      if (
+        stripWidths.length > 1 &&
+        (key === 'ArrowLeft' || key === 'ArrowRight') &&
+        !sameStripCol(cab.col, nextCol, stripWidths)
+      ) {
+        return null
+      }
       return labelAtCell(nextCol, nextRow)
     },
-    [cabinets, labelAtCell],
+    [cabinets, labelAtCell, stripWidths],
   )
 
-  /** Стрелки продолжают активную линию от последнего кабинета (режим Paint) */
+  /** Стрелки — только у активной схемы (keyboardActive), иначе Data ломает Power */
   useEffect(() => {
-    if (!manualMode || editMode !== 'assign') return
+    if (!manualMode || editMode !== 'assign' || !keyboardActive) return
 
     const onKeyDown = (e: KeyboardEvent) => {
       const isArrow =
@@ -1366,37 +1695,43 @@ export default memo(function GridVisualization({
         e.key === 'ArrowUp' ||
         e.key === 'ArrowDown'
       if (!isArrow) return
-
-      const target = e.target as HTMLElement | null
-      if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
-          target.isContentEditable)
-      ) {
-        return
-      }
+      if (e.altKey || e.ctrlKey || e.metaKey) return
 
       e.preventDefault()
       e.stopPropagation()
 
       const chain = getChainForPort(activeValue)
-      const last = chain.at(-1)
+      let last = paintTipRef.current
+      if (!last || (chain.length > 0 && !chain.includes(last))) {
+        last = chain.at(-1) ?? startPoints?.[activeValue] ?? null
+      }
+      if (!last) {
+        const assigned = Object.entries(manualAssignments)
+          .filter(([, v]) => v === activeValue)
+          .map(([label]) => label)
+        last = assigned.at(-1) ?? null
+      }
       if (!last) return
 
       const next = neighborLabel(last, e.key)
       if (!next || emptySet.has(next)) return
 
-      // Стрелка назад на предыдущий кабинет — снять последний (как undo)
-      const prev = chain.at(-2)
-      if (prev && next === prev && onUndoCabinet) {
+      const tipIndex = chain.lastIndexOf(last)
+      const prev = tipIndex > 0 ? chain[tipIndex - 1] : chain.at(-2)
+      // Стрелка назад — undo только если next реально предыдущий в ЭТОЙ цепочке
+      if (prev && next === prev && onUndoCabinet && chain.includes(last)) {
         onUndoCabinet(last)
+        paintTipRef.current = prev
         return
       }
 
       if (next === last) return
+      if (chain.includes(next) && next !== prev) {
+        paintTipRef.current = next
+        return
+      }
 
+      paintTipRef.current = next
       assignTo([next], activeValue)
     }
 
@@ -1405,19 +1740,23 @@ export default memo(function GridVisualization({
   }, [
     manualMode,
     editMode,
+    keyboardActive,
     getChainForPort,
     activeValue,
     neighborLabel,
     emptySet,
     onUndoCabinet,
     assignTo,
+    startPoints,
+    manualAssignments,
   ])
 
   useEffect(() => {
-    if (manualMode && editMode === 'assign') {
+    // Фокус только когда эта схема — владелец стрелок (не красть у Power/Data)
+    if (manualMode && editMode === 'assign' && keyboardActive) {
       manualKeyboardRef.current?.focus({ preventScroll: true })
     }
-  }, [manualMode, editMode, activeValue])
+  }, [manualMode, editMode, keyboardActive])
 
   const handleCabinetClick = useCallback(
     (label: string, shiftKey: boolean, altKey: boolean) => {
@@ -1469,10 +1808,15 @@ export default memo(function GridVisualization({
       const lastInActive = getChainForPort(activeValue).at(-1)
       if (onUndoCabinet && label === lastInActive) {
         onUndoCabinet(label)
+        const chain = getChainForPort(activeValue)
+        paintTipRef.current = chain.at(-2) ?? null
+        focusManualKeyboard()
         return
       }
 
+      paintTipRef.current = label
       assignTo([label], activeValue)
+      focusManualKeyboard()
     },
     [
       manualMode,
@@ -1488,18 +1832,20 @@ export default memo(function GridVisualization({
       chainOrder,
       getChainForPort,
       onUndoCabinet,
+      focusManualKeyboard,
     ],
   )
 
   const handleLegendClick = useCallback(
     (value: number) => {
       if (!manualMode) return
+      focusManualKeyboard()
       setActiveValue(value)
       if (selectedLabels.size > 0) {
         assignTo([...selectedLabels], value)
       }
     },
-    [manualMode, selectedLabels, assignTo],
+    [manualMode, selectedLabels, assignTo, focusManualKeyboard],
   )
 
   const handleClearManual = useCallback(() => {
@@ -1522,7 +1868,7 @@ export default memo(function GridVisualization({
     setExportBusy(true)
     try {
       const dataUrl = await captureDiagram()
-      const filename = panelExportFilename(mode, screenName)
+      const filename = panelExportFilename(mode, screenName, eventName)
       await printPanelPng(dataUrl, title, filename, {
         ...printInfo,
         date: new Date().toLocaleDateString(),
@@ -1537,14 +1883,14 @@ export default memo(function GridVisualization({
     } finally {
       setExportBusy(false)
     }
-  }, [captureDiagram, exportBusy, isData, mode, printInfo, screenName, title])
+  }, [captureDiagram, eventName, exportBusy, isData, mode, printInfo, screenName, title])
 
   const handleWhatsAppShare = useCallback(async () => {
     if (exportBusy) return
     setExportBusy(true)
     try {
       const dataUrl = await captureDiagram()
-      const filename = panelExportFilename(mode, screenName)
+      const filename = panelExportFilename(mode, screenName, eventName)
       await sharePanelViaWhatsApp({ dataUrl, filename, mode })
     } catch (error) {
       console.error('WhatsApp share failed', error)
@@ -1556,14 +1902,14 @@ export default memo(function GridVisualization({
     } finally {
       setExportBusy(false)
     }
-  }, [captureDiagram, exportBusy, isData, mode, screenName])
+  }, [captureDiagram, eventName, exportBusy, isData, mode, screenName])
 
   const handleSaveImage = useCallback(async () => {
     if (exportBusy) return
     setExportBusy(true)
     try {
       const dataUrl = await captureDiagram()
-      const filename = panelExportFilename(mode, screenName)
+      const filename = panelExportFilename(mode, screenName, eventName)
       downloadDataUrl(dataUrl, filename)
     } catch (error) {
       console.error('Save image failed', error)
@@ -1575,11 +1921,14 @@ export default memo(function GridVisualization({
     } finally {
       setExportBusy(false)
     }
-  }, [captureDiagram, exportBusy, isData, mode, screenName])
+  }, [captureDiagram, eventName, exportBusy, isData, mode, screenName])
 
   return (
     <div
       ref={captureRef}
+      onMouseDown={() => {
+        if (manualMode) onClaimKeyboard?.()
+      }}
       className={`overflow-x-auto rounded-xl border bg-white p-3 shadow-sm sm:p-4 ${
         manualMode || emptyPaintMode
           ? 'border-amber-300 ring-1 ring-amber-200'
@@ -1596,6 +1945,11 @@ export default memo(function GridVisualization({
               {emptyPaintMode && (!manualMode || editMode === 'empty')
                 ? 'EMPTY MODE'
                 : 'EDIT MODE'}
+            </span>
+          )}
+          {hasStripRowMix && (
+            <span className="rounded bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-900">
+              Big + Small mix
             </span>
           )}
         </div>
@@ -1740,6 +2094,8 @@ export default memo(function GridVisualization({
         <div
           ref={manualKeyboardRef}
           tabIndex={-1}
+          onMouseDown={() => onClaimKeyboard?.()}
+          onFocus={() => onClaimKeyboard?.()}
           className="sticky top-0 z-10 mb-3 space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-xs text-amber-900 shadow-sm outline-none"
         >
           <p className="px-1 text-[11px] font-semibold text-amber-950">
@@ -1935,126 +2291,267 @@ export default memo(function GridVisualization({
         </div>
       )}
 
-      <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600">
+      <div className="mb-3 space-y-1.5 text-xs text-slate-600">
         {isData ? (
           <>
-            <span className="font-medium text-slate-700">Data:</span>
-            {usedLineNumbers.map((port) => {
-              const c = lineColorFor(port)
-              const hasWarning = warnedIds.has(port)
-              return (
-                <button
-                  key={`leg-d-${port}`}
-                  type="button"
-                  disabled={!manualMode}
-                  onClick={() => handleLegendClick(port)}
-                  className={`${legendBtnClass} ${
-                    manualMode
-                      ? activeValue === port
-                        ? 'bg-amber-100 ring-1 ring-amber-400'
-                        : 'hover:bg-slate-100'
-                      : ''
-                  }`}
-                >
-                  <span
-                    className="inline-block h-3 w-3 rounded-sm border-2"
-                    style={{ backgroundColor: c.fill, borderColor: c.stroke }}
-                  />
-                  D{displayIdByNumber.get(port) ?? port}
-                  {hasWarning && (
-                    <span className="rounded bg-red-100 px-1 text-[9px] font-bold text-red-700">
-                      !
-                    </span>
-                  )}
-                </button>
-              )
-            })}
-            {backupLinks.length > 0 && (
-              <>
-                <span className="font-medium text-slate-700">Backup:</span>
+            <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+              <div className="flex flex-col gap-0.5 pb-0.5 text-[10px] font-semibold leading-tight text-slate-700">
+                <span>{showCvt10Headers ? 'CVT10 - Main' : 'Data'}</span>
+                <span className="text-slate-400">↓</span>
+                <span>{showCvt10Headers ? 'CVT10 - Backup' : 'Data Backup'}</span>
+              </div>
+              {(backupLegendPorts.length > 0 ? backupLegendPorts : usedLineNumbers).map(
+                (port) => {
+                  const c = lineColorFor(port)
+                  const hasWarning = warnedIds.has(port)
+                  const mainLabel =
+                    displayIdByNumber.get(port) ??
+                    String(portAssignment.mainDisplayByPort[port] ?? port)
+                  const backupChain = backupChains.find(
+                    (ch) => (ch.backupForPort ?? ch.portNumber) === port,
+                  )
+                  const backupLabel =
+                    backupChain?.displayId ??
+                    String(
+                      portAssignment.backupDisplayByPort[port] ?? `${port}b`,
+                    )
+                  const bkpColor = backupLineColor(port)
+                  return (
+                    <div
+                      key={`leg-pair-${port}`}
+                      className="flex flex-col items-center gap-0.5"
+                    >
+                      <button
+                        type="button"
+                        disabled={!manualMode}
+                        onClick={() => handleLegendClick(port)}
+                        className={`${legendBtnClass} ${
+                          manualMode
+                            ? activeValue === port
+                              ? 'bg-amber-100 ring-1 ring-amber-400'
+                              : 'hover:bg-slate-100'
+                            : ''
+                        }`}
+                      >
+                        <span
+                          className="inline-block h-3 w-3 rounded-sm border-2"
+                          style={{
+                            backgroundColor: c.fill,
+                            borderColor: c.stroke,
+                          }}
+                        />
+                        D{mainLabel}
+                        {hasWarning && (
+                          <span className="rounded bg-red-100 px-1 text-[9px] font-bold text-red-700">
+                            !
+                          </span>
+                        )}
+                      </button>
+                      <span
+                        className="text-sm font-bold leading-none text-slate-400"
+                        aria-hidden
+                      >
+                        ↓
+                      </span>
+                      <span className="flex items-center gap-1.5 rounded-md px-2 py-0.5 text-slate-600">
+                        <span
+                          className="inline-block h-0.5 w-4 border-t-[3px] border-dashed"
+                          style={{ borderColor: bkpColor.stroke }}
+                        />
+                        D{backupLabel}
+                      </span>
+                    </div>
+                  )
+                },
+              )}
+              <div className="flex flex-col gap-1 pb-0.5 text-slate-600">
                 <span className="flex items-center gap-1.5">
                   <span
-                    className="inline-block h-0.5 w-5 border-t-[3px] border-dashed"
-                    style={{ borderColor: backupLineColor(1).stroke }}
+                    className="inline-block h-3 w-3 rounded-sm border-[3px]"
+                    style={{ borderColor: '#ca8a04' }}
                   />
-                  резерв
+                  ★ START
                 </span>
-              </>
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className="inline-block h-3 w-3 rounded-sm border-[3px]"
+                    style={{ borderColor: END_LABEL_COLOR }}
+                  />
+                  End
+                </span>
+              </div>
+            </div>
+            {onBackupNumberingChange && backupLegendPorts.length > 0 && (
+              <div className="flex flex-col gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-medium text-slate-600">
+                    Нумерация портов
+                  </span>
+                  <select
+                    className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[11px]"
+                    value={backupPortMode}
+                    onChange={(e) => {
+                      const mode = e.target.value as 'auto' | 'manual'
+                      if (mode === 'manual') {
+                        onBackupNumberingChange({
+                          backupPortMode: 'manual',
+                          mainPortDisplayNumbers: {
+                            ...portAssignment.mainDisplayByPort,
+                          },
+                          backupPortDisplayNumbers: {
+                            ...portAssignment.backupDisplayByPort,
+                          },
+                        })
+                      } else {
+                        onBackupNumberingChange({
+                          backupPortMode: 'auto',
+                          mainPortDisplayNumbers: {},
+                          backupPortDisplayNumbers: {},
+                        })
+                      }
+                    }}
+                  >
+                    <option value="auto">Авто</option>
+                    <option value="manual">Вручную</option>
+                  </select>
+                  <span className="text-[10px] text-slate-400">
+                    {portAssignment.layout === 'paired'
+                      ? '6–10 линий → CVT10 Main / Backup'
+                      : '≤5 линий → backup со следующих свободных'}
+                  </span>
+                </div>
+                {backupPortMode === 'manual' && (
+                  <div className="flex flex-wrap gap-2">
+                    {backupLegendPorts.map((port) => (
+                      <label
+                        key={`num-${port}`}
+                        className="flex items-center gap-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600"
+                      >
+                        <span className="font-semibold text-slate-700">#{port}</span>
+                        Main
+                        <input
+                          type="number"
+                          min={1}
+                          max={99}
+                          className="w-10 rounded border border-slate-300 px-0.5 py-0.5 text-center"
+                          value={
+                            mainPortDisplayNumbers[port] ??
+                            portAssignment.mainDisplayByPort[port] ??
+                            port
+                          }
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10)
+                            if (Number.isNaN(val)) return
+                            onBackupNumberingChange({
+                              backupPortMode: 'manual',
+                              mainPortDisplayNumbers: {
+                                ...mainPortDisplayNumbers,
+                                ...portAssignment.mainDisplayByPort,
+                                [port]: val,
+                              },
+                              backupPortDisplayNumbers: {
+                                ...backupPortDisplayNumbers,
+                                ...portAssignment.backupDisplayByPort,
+                              },
+                            })
+                          }}
+                        />
+                        Bkp
+                        <input
+                          type="number"
+                          min={1}
+                          max={99}
+                          className="w-10 rounded border border-slate-300 px-0.5 py-0.5 text-center"
+                          value={
+                            backupPortDisplayNumbers[port] ??
+                            portAssignment.backupDisplayByPort[port] ??
+                            port
+                          }
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10)
+                            if (Number.isNaN(val)) return
+                            onBackupNumberingChange({
+                              backupPortMode: 'manual',
+                              mainPortDisplayNumbers: {
+                                ...mainPortDisplayNumbers,
+                                ...portAssignment.mainDisplayByPort,
+                              },
+                              backupPortDisplayNumbers: {
+                                ...backupPortDisplayNumbers,
+                                ...portAssignment.backupDisplayByPort,
+                                [port]: val,
+                              },
+                            })
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
-            <span className="flex items-center gap-1.5 text-slate-600">
-              <span
-                className="inline-block h-3 w-3 rounded-sm border-[3px]"
-                style={{ borderColor: '#ca8a04' }}
-              />
-              ★ START
-            </span>
-            <span className="flex items-center gap-1.5 text-slate-600">
-              <span
-                className="inline-block h-3 w-3 rounded-sm border-[3px]"
-                style={{ borderColor: END_LABEL_COLOR }}
-              />
-              End
-            </span>
           </>
         ) : (
           <>
-            <span className="font-medium text-slate-700">Power:</span>
-            {usedLineNumbers.map((line) => {
-              const c = lineColorFor(line)
-              const hasWarning = warnedIds.has(line)
-              return (
-                <button
-                  key={`leg-p-${line}`}
-                  type="button"
-                  disabled={!manualMode}
-                  onClick={() => handleLegendClick(line)}
-                  className={`${legendBtnClass} ${
-                    manualMode
-                      ? activeValue === line
-                        ? 'bg-amber-100 ring-1 ring-amber-400'
-                        : 'hover:bg-slate-100'
-                      : ''
-                  }`}
-                >
-                  <span
-                    className="inline-block h-3 w-3 rounded-sm border-2"
-                    style={{ backgroundColor: c.fill, borderColor: c.stroke }}
-                  />
-                  P{line}
-                  {hasWarning && (
-                    <span className="rounded bg-red-100 px-1 text-[9px] font-bold text-red-700">
-                      !
-                    </span>
-                  )}
-                </button>
-              )
-            })}
-            <span className="flex items-center gap-1.5 text-slate-600">
-              <span
-                className="inline-block h-3 w-3 rounded-sm border-[3px]"
-                style={{ borderColor: '#ca8a04' }}
-              />
-              ★ START (цепь)
-            </span>
-            <span className="flex items-center gap-1.5 text-slate-600">
-              <span
-                className="inline-block h-3 w-3 rounded-sm border-[3px]"
-                style={{ borderColor: END_LABEL_COLOR }}
-              />
-              End
-            </span>
-            <span className="flex items-center gap-1.5 text-slate-600">
-              <span
-                className="inline-block h-3 w-3 rounded-sm border-[3px]"
-                style={{ borderColor: TRUNK_FEED_COLOR }}
-              />
-              FEED (trunk)
-            </span>
-            <span className="text-slate-500">
-              {powerFeedMode === 'center'
-                ? 'Center: из центра экрана — линия влево и линия вправо'
-                : 'Edge: FEED/START на краю, линия на всю ширину'}
-            </span>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <span className="font-medium text-slate-700">Power:</span>
+              {usedLineNumbers.map((line) => {
+                const c = lineColorFor(line)
+                const hasWarning = warnedIds.has(line)
+                return (
+                  <button
+                    key={`leg-p-${line}`}
+                    type="button"
+                    disabled={!manualMode}
+                    onClick={() => handleLegendClick(line)}
+                    className={`${legendBtnClass} ${
+                      manualMode
+                        ? activeValue === line
+                          ? 'bg-amber-100 ring-1 ring-amber-400'
+                          : 'hover:bg-slate-100'
+                        : ''
+                    }`}
+                  >
+                    <span
+                      className="inline-block h-3 w-3 rounded-sm border-2"
+                      style={{ backgroundColor: c.fill, borderColor: c.stroke }}
+                    />
+                    P{line}
+                    {hasWarning && (
+                      <span className="rounded bg-red-100 px-1 text-[9px] font-bold text-red-700">
+                        !
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+              <span className="flex items-center gap-1.5 text-slate-600">
+                <span
+                  className="inline-block h-3 w-3 rounded-sm border-[3px]"
+                  style={{ borderColor: '#ca8a04' }}
+                />
+                ★ START (цепь)
+              </span>
+              <span className="flex items-center gap-1.5 text-slate-600">
+                <span
+                  className="inline-block h-3 w-3 rounded-sm border-[3px]"
+                  style={{ borderColor: END_LABEL_COLOR }}
+                />
+                End
+              </span>
+              <span className="flex items-center gap-1.5 text-slate-600">
+                <span
+                  className="inline-block h-3 w-3 rounded-sm border-[3px]"
+                  style={{ borderColor: TRUNK_FEED_COLOR }}
+                />
+                FEED (trunk)
+              </span>
+              <span className="text-slate-500">
+                {powerFeedMode === 'center'
+                  ? 'Center: из центра экрана — линия влево и линия вправо'
+                  : 'Edge: FEED/START на краю, линия на всю ширину'}
+              </span>
+            </div>
           </>
         )}
       </div>
@@ -2082,13 +2579,13 @@ export default memo(function GridVisualization({
           <g id="strip-labels" pointerEvents="none">
             {stripColumnRanges(stripWidths).map(({ index, startCol, endCol }) => {
               const x1 = cabLeft(startCol)
-              const x2 = cabLeft(endCol - 1) + CELL_W
+              const x2 = cabLeft(endCol - 1) + cellWAt(endCol - 1)
               const mid = (x1 + x2) / 2
               return (
                 <text
                   key={`strip-lbl-${index}`}
                   x={mid}
-                  y={Math.max(12, PAD - 10)}
+                  y={Math.max(12, gridOriginY - 10)}
                   textAnchor="middle"
                   fontSize={isMobile ? 9 : 11}
                   fontWeight={600}
@@ -2103,7 +2600,9 @@ export default memo(function GridVisualization({
         <g id="cabinets">
           {cabinets.map((cab) => {
             const x = cabLeft(cab.col)
-            const y = PAD + cab.row * (CELL_H + GAP)
+            const y = cabTop(cab.col, cab.row)
+            const cellW = cellWAt(cab.col)
+            const cellH = cellHAt(cab.col, cab.row)
             const isEmpty = emptySet.has(cab.label)
             const lineNum = isEmpty ? 0 : (assignmentMap.get(cab.label) ?? 0)
             const isSelected = selectedLabels.has(cab.label)
@@ -2136,6 +2635,7 @@ export default memo(function GridVisualization({
 
             const lineColors = lineColorFor(lineNum)
             const isInteractive = manualMode || emptyPaintMode
+            const rowMixTag = rowMixTagAt(cab.col, cab.row)
 
             return (
               <g
@@ -2143,11 +2643,23 @@ export default memo(function GridVisualization({
                 onClick={(e) => handleCabinetClick(cab.label, e.shiftKey, e.altKey)}
                 style={{ cursor: isInteractive ? 'pointer' : 'default' }}
               >
+                {rowMixTag && !isEmpty && (
+                  <text
+                    x={x + 5}
+                    y={y + 11}
+                    fontSize={8}
+                    fontWeight={700}
+                    fill="#c2410c"
+                    pointerEvents="none"
+                  >
+                    {rowMixTag}
+                  </text>
+                )}
                 <rect
                   x={x}
                   y={y}
-                  width={CELL_W}
-                  height={CELL_H}
+                  width={cellW}
+                  height={cellH}
                   rx={6}
                   fill={
                     isEmpty
@@ -2177,8 +2689,8 @@ export default memo(function GridVisualization({
                 {isEmpty ? (
                   <>
                     <text
-                      x={x + CELL_W / 2}
-                      y={y + CELL_H / 2 - 4}
+                      x={x + cellW / 2}
+                      y={y + cellH / 2 - 4}
                       textAnchor="middle"
                       fontSize={11}
                       fontWeight={700}
@@ -2188,8 +2700,8 @@ export default memo(function GridVisualization({
                       EMPTY
                     </text>
                     <text
-                      x={x + CELL_W / 2}
-                      y={y + CELL_H / 2 + 10}
+                      x={x + cellW / 2}
+                      y={y + cellH / 2 + 10}
                       textAnchor="middle"
                       fontSize={9}
                       fill="#94a3b8"
@@ -2203,8 +2715,8 @@ export default memo(function GridVisualization({
                 {cabId ? (
                   <>
                     <text
-                      x={x + CELL_W / 2}
-                      y={y + CELL_H / 2}
+                      x={x + cellW / 2}
+                      y={y + cellH / 2}
                       textAnchor="middle"
                       dominantBaseline="central"
                       fontSize={idFont}
@@ -2216,8 +2728,8 @@ export default memo(function GridVisualization({
                     </text>
                     {!simplifyLabels && (
                       <text
-                        x={x + CELL_W / 2}
-                        y={y + CELL_H - 5}
+                        x={x + cellW / 2}
+                        y={y + cellH - 5}
                         textAnchor="middle"
                         fontSize={8}
                         fontWeight={500}
@@ -2231,8 +2743,8 @@ export default memo(function GridVisualization({
                   </>
                 ) : (
                   <text
-                    x={x + CELL_W / 2}
-                    y={y + CELL_H / 2}
+                    x={x + cellW / 2}
+                    y={y + cellH / 2}
                     textAnchor="middle"
                     dominantBaseline="central"
                     fontSize={14}
@@ -2295,7 +2807,7 @@ export default memo(function GridVisualization({
                     from.y,
                     to.x,
                     to.y,
-                    (towardRight ? 1 : -1) * (CELL_W / 2 - xInset),
+                    (towardRight ? 1 : -1) * (cellWAt(link.from.col) / 2 - xInset),
                   )
                 }
               } else {
@@ -2327,21 +2839,20 @@ export default memo(function GridVisualization({
               .filter((c) => !c.isBackup && c.cabinets.length >= 2)
               .flatMap((chain) => {
                 const colors = lineColorFor(chain.portNumber)
-                return splitAutoChainByStrips(
-                  chain.cabinets,
-                  stripWidths,
-                  manualMode,
-                ).map((segment, segmentIndex) => (
+                return splitAutoChainByStrips(chain.cabinets, stripWidths).map((segment, segmentIndex) => (
                   <MidContinuousChain
                     key={`dat-mid-${chain.portNumber}-${segmentIndex}`}
-                    points={buildSmoothLanePoints(
-                      segment,
-                      cabCenter,
-                      'data',
-                      wide,
-                      CELL_W,
-                      isRtl,
-                      isMobile,
+                    points={orthogonalizeLanePoints(
+                      buildSmoothLanePoints(
+                        segment,
+                        cabCenter,
+                        'data',
+                        wide,
+                        cellWAt,
+                        cellHAt,
+                        isRtl,
+                        isMobile,
+                      ),
                     )}
                     color={MID_LINE_COLOR}
                     arrowColor={colors.arrow}
@@ -2354,21 +2865,20 @@ export default memo(function GridVisualization({
             backupChains
               .filter((c) => c.cabinets.length >= 2)
               .flatMap((chain) =>
-                splitAutoChainByStrips(
-                  chain.cabinets,
-                  stripWidths,
-                  manualMode,
-                ).map((segment, segmentIndex) => (
+                splitAutoChainByStrips(chain.cabinets, stripWidths).map((segment, segmentIndex) => (
                   <MidContinuousChain
                     key={`bkp-mid-${chain.portNumber}-${segmentIndex}`}
-                    points={buildSmoothLanePoints(
-                      segment,
-                      cabCenter,
-                      'backup',
-                      wide,
-                      CELL_W,
-                      isRtl,
-                      isMobile,
+                    points={orthogonalizeLanePoints(
+                      buildSmoothLanePoints(
+                        segment,
+                        cabCenter,
+                        'backup',
+                        wide,
+                        cellWAt,
+                        cellHAt,
+                        isRtl,
+                        isMobile,
+                      ),
                     )}
                     color={MID_BACKUP_LINE_COLOR}
                     arrowColor={backupLineColor(chain.portNumber).arrow}
@@ -2384,7 +2894,9 @@ export default memo(function GridVisualization({
           {cabinets.map((cab) => {
             if (emptySet.has(cab.label) || !startLabels.has(cab.label)) return null
             const x = cabLeft(cab.col)
-            const y = PAD + cab.row * (CELL_H + GAP)
+            const y = cabTop(cab.col, cab.row)
+            const cellW = cellWAt(cab.col)
+            const cellH = cellHAt(cab.col, cab.row)
             const lineNum =
               startLineByLabel.get(cab.label) ?? assignmentMap.get(cab.label) ?? 0
             const lineColors = lineColorFor(lineNum)
@@ -2405,13 +2917,13 @@ export default memo(function GridVisualization({
                 Math.ceil(lineId.length * badgeFont * 0.68) + badgePadX * 2,
                 isMobile ? 30 : simplifyLabels ? 34 : 28,
               ),
-              isMobile ? CELL_W - starLane - 3 : Infinity,
+              isMobile ? cellW - starLane - 3 : Infinity,
             )
-            const badgeX = isRtl ? x + CELL_W - badgeW - 2 : x + 2
+            const badgeX = isRtl ? x + cellW - badgeW - 2 : x + 2
             const badgeY = y + 2
             const starSize = isMobile ? 9 : simplifyLabels ? 15 : 18
             const starRadius = isMobile ? 5 : simplifyLabels ? 9 : 10.5
-            const starX = isRtl ? x + starLane / 2 + 1 : x + CELL_W - starLane / 2 - 1
+            const starX = isRtl ? x + starLane / 2 + 1 : x + cellW - starLane / 2 - 1
             const starY = isMobile ? y + 8 : y + 13
             const labelSize = isMobile
               ? simplifyLabels
@@ -2469,8 +2981,8 @@ export default memo(function GridVisualization({
                 {/* START снизу; при FEED на том же кабинете подпись FEED/START уже есть */}
                 {!isAlsoFeed && (
                   <text
-                    x={x + CELL_W / 2}
-                    y={y + CELL_H - (simplifyLabels || isMobile ? 5 : 6)}
+                    x={x + cellW / 2}
+                    y={y + cellH - (simplifyLabels || isMobile ? 5 : 6)}
                     textAnchor="middle"
                     fontSize={labelSize}
                     fontWeight={900}
@@ -2493,7 +3005,9 @@ export default memo(function GridVisualization({
             cabinets.map((cab) => {
               if (emptySet.has(cab.label) || !feedLabels.has(cab.label)) return null
               const x = cabLeft(cab.col)
-              const y = PAD + cab.row * (CELL_H + GAP)
+              const y = cabTop(cab.col, cab.row)
+              const cellW = cellWAt(cab.col)
+              const cellH = cellHAt(cab.col, cab.row)
               const isAlsoStart = startLabels.has(cab.label)
               const isAlsoEnd = endLabels.has(cab.label)
               const labelSize = isAlsoStart
@@ -2514,7 +3028,7 @@ export default memo(function GridVisualization({
                 <g key={`feed-${cab.label}`}>
                   {!isAlsoStart && (
                     <circle
-                      cx={x + CELL_W / 2}
+                      cx={x + cellW / 2}
                       cy={y + 10}
                       r={simplifyLabels ? 4 : 5}
                       fill={TRUNK_FEED_COLOR}
@@ -2523,8 +3037,8 @@ export default memo(function GridVisualization({
                     />
                   )}
                   <text
-                    x={x + CELL_W / 2}
-                    y={y + CELL_H - 6}
+                    x={x + cellW / 2}
+                    y={y + cellH - 6}
                     textAnchor="middle"
                     fontSize={labelSize}
                     fontWeight={isAlsoStart ? 900 : 700}
@@ -2547,14 +3061,17 @@ export default memo(function GridVisualization({
             // На короткой линии Start/FEED уже показывают End в комбинированной подписи
             if (startLabels.has(cab.label) || feedLabels.has(cab.label)) return null
             const x = cabLeft(cab.col)
-            const y = PAD + cab.row * (CELL_H + GAP)
+            const y = cabTop(cab.col, cab.row)
+            const cellW = cellWAt(cab.col)
+            const cellH = cellHAt(cab.col, cab.row)
             const endFont =
               simplifyLabels || isMobile ? (isMobile && simplifyLabels ? 12 : 10) : 8
             const badgePadX = simplifyLabels || isMobile ? 5 : 4
             const badgeH = endFont + (simplifyLabels || isMobile ? 6 : 4)
             const badgeW = Math.ceil(3 * endFont * 0.72) + badgePadX * 2
-            const badgeX = x + (CELL_W - badgeW) / 2
-            const badgeY = y + CELL_H - badgeH - 2
+            const badgeX = x + (cellW - badgeW) / 2
+            // Тикшорет: End сверху последнего кубика; power — снизу
+            const badgeY = isData ? y + 2 : y + cellH - badgeH - 2
             return (
               <g key={`end-${cab.label}`}>
                 <rect
@@ -2589,12 +3106,14 @@ export default memo(function GridVisualization({
             : '← Controller / PDU (control room side)'}
           {' · '}
           {isData
-            ? 'Snake / змейка (RTL / справа налево)'
+            ? isReshetData
+              ? 'Data ↑ по столбцу (ровные линии, Reshet)'
+              : 'Data ← справа налево (ровные ряды)'
             : isReshetPower
               ? 'Power ↑ только вверх (Reshet)'
               : is29Power
                 ? 'Power ↑↓ вертикально (2.9)'
-                : `Змейка power (${isRtl ? 'RTL' : 'LTR'} старт)`}
+                : `Power ${isRtl ? '← RTL' : '→ LTR'} / ↑↓ (мин. змейка)`}
           {!isData && (
             <>
               {' · '}

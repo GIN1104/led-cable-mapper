@@ -16,6 +16,9 @@ import {
   resolveEquipmentAutoQuantity,
   resolveEquipmentScreenResults,
   roundUpToNext20,
+  roundUpToNext10,
+  speakonJumpersQuantity,
+  screenUsesPitch39,
   tikshoretCableQuantity,
 } from '../src/lib/equipmentList.ts'
 
@@ -697,6 +700,48 @@ assertEq(
   'long russian',
   state10x3.rows.find((r) => r.id === 'comm-cable-long')?.russian ?? '',
   'Тикшорет Длинный',
+)
+
+// --- ספיקונים מגשרים (pitch 3.9): ceil(cabs/10)*10 + 10 ---
+console.log('\n=== speakon jumpers (pitch 3.9) ===')
+assertEq('roundUp10 0 → 0', roundUpToNext10(0), 0)
+assertEq('roundUp10 1 → 10', roundUpToNext10(1), 10)
+assertEq('roundUp10 10 → 10', roundUpToNext10(10), 10)
+assertEq('roundUp10 11 → 20', roundUpToNext10(11), 20)
+assertEq('roundUp10 24 → 30', roundUpToNext10(24), 30)
+assertEq('jumpers 24 → 40', speakonJumpersQuantity(24), 40)
+assertEq('jumpers 60 → 70', speakonJumpersQuantity(60), 70)
+assertEq('jumpers 0 → 0', speakonJumpersQuantity(0), 0)
+assertEq('screen 3.9-big is 3.9', screenUsesPitch39(screen10x3) ? 1 : 0, 1)
+
+const jumpersQty = resolveEquipmentAutoQuantity(
+  'speakonJumpers',
+  [screen10x3],
+  equipmentResults,
+  result10x3.cableSchedule,
+)
+const expectedJumpers = speakonJumpersQuantity(result10x3.summary.totalCabinets)
+assertEq('speakon-jumpers auto 10×3 big', jumpersQty, expectedJumpers)
+assertEq(
+  'speakon-jumpers row qty',
+  qtyById(state10x3, 'speakon-jumpers'),
+  String(expectedJumpers),
+)
+
+const screen29 = syncCabinetGridFromMeters(
+  applyPitchPreset(makeConfig(6, 3, 's29', '2.9'), '2.9'),
+)
+assertEq('screen 2.9 is not 3.9', screenUsesPitch39(screen29) ? 1 : 0, 0)
+const result29 = computeRouting(screen29)
+assertEq(
+  'speakon-jumpers empty on 2.9',
+  resolveEquipmentAutoQuantity(
+    'speakonJumpers',
+    [screen29],
+    [{ screen: screen29, result: result29 }],
+    result29.cableSchedule,
+  ) ?? '',
+  '',
 )
 
 if (failed > 0) {

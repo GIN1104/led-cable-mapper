@@ -342,20 +342,33 @@ const ok6Ltr = runCase(6, 3, 'left', '6m×3m 3.9 Big LTR (12 better than 10)', [
   ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12'],
 ])
 
+/** Вертикаль снизу вверх по столбцам слева направо */
+function vertColsLeftToRight(
+  fromCol: number,
+  toCol: number,
+  letters: string[],
+): string[] {
+  const out: string[] = []
+  for (let c = fromCol; c <= toCol; c++) {
+    for (const L of letters) out.push(`${L}${c}`)
+  }
+  return out
+}
+
 /*
  * 6m×3.5m 3.9 Small: 12×7 = 84 cab, max 24 → теор. min 4.
- * Упаковка по 3 столбца (21) — 4 равные линии, змейка по рядам.
+ * Упаковка по 3 столбца (21) — 4 равные линии; блок 3×7 → вертикальная змейка по столбцам.
  */
 const ok6x35Small = runCase(
   6,
   3.5,
   'left',
-  '6m×3.5m 3.9 Small LTR (min 4 equal packs)',
+  '6m×3.5m 3.9 Small LTR (min 4 equal packs, vertical snake cols)',
   [
-    horizSnakeRows(rowLetters(7), 1, 3),
-    horizSnakeRows(rowLetters(7), 4, 6),
-    horizSnakeRows(rowLetters(7), 7, 9),
-    horizSnakeRows(rowLetters(7), 10, 12),
+    vertSnakeCols(1, 3, rowLetters(7)),
+    vertSnakeCols(4, 6, rowLetters(7)),
+    vertSnakeCols(7, 9, rowLetters(7)),
+    vertSnakeCols(10, 12, rowLetters(7)),
   ],
   '3.9-small',
 )
@@ -391,14 +404,14 @@ const okDecisions =
 
 /*
  * 2.9: 5m×4m = 10×8, max 40 → 2 линии по 5 полных столбцов (40), без mid-column.
- * Порядок — вертикальная змейка (короткие кабели между столбцами).
+ * Порядок — вертикальная змейка по столбцам (длинные ↑/↓ участки).
  */
 const letters8_29 = rowLetters(8)
 const ok29_5x4 = runCase(
   5,
   4,
   'left',
-  '5m×4m 2.9 LTR (full columns×5)',
+  '5m×4m 2.9 LTR (full columns×5, vertical snake)',
   [
     vertSnakeCols(1, 5, letters8_29),
     vertSnakeCols(6, 10, letters8_29),
