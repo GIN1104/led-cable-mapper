@@ -38,6 +38,7 @@ import RoutingSchema from './components/RoutingSchema'
 import CableScheduleTable from './components/CableScheduleTable'
 import PackingListView from './components/PackingListView'
 import EquipmentListTable from './components/EquipmentListTable'
+import EventPackExportButtons from './components/EventPackExportButtons'
 import RoutingSpinner from './components/RoutingSpinner'
 import {
   buildEquipmentListState,
@@ -1596,14 +1597,17 @@ export default function App() {
             </div>
             <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
               {equipmentList && (
-                <button
-                  type="button"
-                  onClick={() => void downloadEquipmentListXlsx(equipmentList)}
-                  className="touch-manipulation rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-800 shadow-sm transition hover:bg-emerald-100"
-                  title="Сохранить רשימת ציוד в Excel"
-                >
-                  שמור xlsx
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void downloadEquipmentListXlsx(equipmentList)}
+                    className="touch-manipulation rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-800 shadow-sm transition hover:bg-emerald-100"
+                    title="Сохранить רשימת ציוד в Excel"
+                  >
+                    שמור xlsx
+                  </button>
+                  <EventPackExportButtons state={equipmentList} />
+                </>
               )}
               <button
                 type="button"

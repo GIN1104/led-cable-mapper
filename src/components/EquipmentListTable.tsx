@@ -6,6 +6,7 @@ import type {
   EquipmentListState,
 } from '../lib/equipmentList'
 import { createEmptyCustomRow, downloadEquipmentListXlsx } from '../lib/equipmentList'
+import EventPackExportButtons from './EventPackExportButtons'
 import CollapsibleSection from './CollapsibleSection'
 
 interface EquipmentListTableProps {
@@ -147,6 +148,7 @@ export default function EquipmentListTable({
           >
             Сохранить Excel (.xlsx)
           </button>
+          <EventPackExportButtons state={state} compact />
         </div>
 
         <div className="overflow-x-auto">

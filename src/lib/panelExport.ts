@@ -161,8 +161,21 @@ function waitTwoFrames(): Promise<void> {
   })
 }
 
+/** Снимки карточек тикшорет (data) и хашмаль (power) с текущей страницы */
+export async function captureSchemePanels(): Promise<{
+  dataPng: string
+  powerPng: string
+} | null> {
+  const dataEl = document.querySelector<HTMLElement>('[data-scheme-panel="data"]')
+  const powerEl = document.querySelector<HTMLElement>('[data-scheme-panel="power"]')
+  if (!dataEl || !powerEl) return null
+  const dataPng = await capturePanelPng(dataEl, 3)
+  const powerPng = await capturePanelPng(powerEl, 3)
+  return { dataPng, powerPng }
+}
+
 /** Рендер всей карточки панели (заголовок, легенда, zoom, SVG) в PNG data URL */
-export async function capturePanelPng(element: HTMLElement): Promise<string> {
+export async function capturePanelPng(element: HTMLElement, pixelRatio = 2): Promise<string> {
   const restoreOverflow = expandOverflowForCapture(element)
   try {
     await waitTwoFrames()
@@ -170,7 +183,7 @@ export async function capturePanelPng(element: HTMLElement): Promise<string> {
     const height = Math.ceil(Math.max(element.scrollHeight, element.offsetHeight))
     return await toPng(element, {
       backgroundColor: '#ffffff',
-      pixelRatio: 2,
+      pixelRatio,
       cacheBust: true,
       width,
       height,

@@ -1926,6 +1926,7 @@ export default memo(function GridVisualization({
   return (
     <div
       ref={captureRef}
+      data-scheme-panel={mode}
       onMouseDown={() => {
         if (manualMode) onClaimKeyboard?.()
       }}
