@@ -8,11 +8,13 @@ import type {
 import { createEmptyCustomRow, downloadEquipmentListXlsx } from '../lib/equipmentList'
 import EventPackExportButtons from './EventPackExportButtons'
 import CollapsibleSection from './CollapsibleSection'
+import type { TripBridge } from '../lib/tripBridge'
 
 interface EquipmentListTableProps {
   state: EquipmentListState
   onChange: (next: EquipmentListState) => void
   onRefreshFromRouting: () => void
+  tripBridge?: TripBridge | null
 }
 
 function MetaField({
@@ -41,6 +43,7 @@ export default function EquipmentListTable({
   state,
   onChange,
   onRefreshFromRouting,
+  tripBridge = null,
 }: EquipmentListTableProps) {
   const updateMeta = useCallback(
     (patch: Partial<EquipmentListMeta>) => {
@@ -148,7 +151,7 @@ export default function EquipmentListTable({
           >
             Сохранить Excel (.xlsx)
           </button>
-          <EventPackExportButtons state={state} compact />
+          <EventPackExportButtons state={state} compact tripBridge={tripBridge} />
         </div>
 
         <div className="overflow-x-auto">
@@ -303,14 +306,14 @@ export default function EquipmentListTable({
           הוסף שורה / Add row / Добавить строку
         </button>
 
-        <div className="grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-3">
+        <div className="grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2 lg:grid-cols-3">
           <MetaField
             label="מיקום (локация)"
             value={state.meta.location}
             onChange={(location) => updateMeta({ location })}
           />
           <MetaField
-            label="שעות (часы)"
+            label="שעות (часы / время)"
             value={state.meta.hours}
             onChange={(hours) => updateMeta({ hours })}
           />
@@ -319,6 +322,23 @@ export default function EquipmentListTable({
             value={state.meta.contact}
             onChange={(contact) => updateMeta({ contact })}
           />
+          <MetaField
+            label="רכב (машина)"
+            value={state.meta.car ?? ''}
+            onChange={(car) => updateMeta({ car })}
+          />
+          <MetaField
+            label="סוג (типы: screen/stage)"
+            value={state.meta.types ?? ''}
+            onChange={(types) => updateMeta({ types })}
+          />
+          {(state.meta.tripId ?? '').trim() !== '' && (
+            <MetaField
+              label="trip_id"
+              value={state.meta.tripId ?? ''}
+              onChange={(tripId) => updateMeta({ tripId })}
+            />
+          )}
         </div>
       </div>
     </CollapsibleSection>

@@ -68,6 +68,12 @@ export interface EquipmentListMeta {
   location: string
   hours: string
   contact: string
+  /** Машина / רכב из deep-link выезда */
+  car?: string
+  /** screen | stage | screen,stage */
+  types?: string
+  /** id выезда (дублируется в TripBridge; не путать с upload_token) */
+  tripId?: string
 }
 
 /** Строка, добавленная пользователем в конец списка (не из шаблона) */
@@ -154,6 +160,22 @@ export const EMPTY_EQUIPMENT_META: EquipmentListMeta = {
   location: '',
   hours: '',
   contact: '',
+  car: '',
+  types: '',
+  tripId: '',
+}
+
+/** Meta пуста / дефолт — deep-link можно применить без confirm */
+export function isEquipmentMetaEmpty(meta: EquipmentListMeta | null | undefined): boolean {
+  if (!meta) return true
+  return !(
+    meta.eventDate?.trim() ||
+    meta.eventName?.trim() ||
+    meta.location?.trim() ||
+    meta.hours?.trim() ||
+    meta.contact?.trim() ||
+    meta.car?.trim()
+  )
 }
 
 /** Создаёт пустую пользовательскую строку с уникальным id */
@@ -836,6 +858,8 @@ export function equipmentListToCsv(state: EquipmentListState): string {
     `מיקום:,${state.meta.location}`,
     `שעות:,${state.meta.hours}`,
     `איש קשר:,${state.meta.contact}`,
+    `רכב:,${state.meta.car ?? ''}`,
+    `סוג:,${state.meta.types ?? ''}`,
   )
 
   return `\uFEFF${lines.join('\r\n')}`
@@ -1114,7 +1138,11 @@ export async function equipmentListToXlsxBlob(
     { label: 'מיקום:', value: state.meta.location, rowSpan: 2 },
     { label: 'שעות:', value: state.meta.hours, rowSpan: 2 },
     { label: 'איש קשר:', value: state.meta.contact, rowSpan: 1 },
+    { label: 'רכב:', value: state.meta.car ?? '', rowSpan: 1 },
   ]
+  if (state.meta.types?.trim()) {
+    footerBlocks.push({ label: 'סוג:', value: state.meta.types, rowSpan: 1 })
+  }
 
   let footerRow = footerStart
   for (const block of footerBlocks) {

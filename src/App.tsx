@@ -39,10 +39,13 @@ import CableScheduleTable from './components/CableScheduleTable'
 import PackingListView from './components/PackingListView'
 import EquipmentListTable from './components/EquipmentListTable'
 import EventPackExportButtons from './components/EventPackExportButtons'
+import TripBridgeBanner from './components/TripBridgeBanner'
 import RoutingSpinner from './components/RoutingSpinner'
 import {
   buildEquipmentListState,
   downloadEquipmentListXlsx,
+  EMPTY_EQUIPMENT_META,
+  isEquipmentMetaEmpty,
   resolveEquipmentScreenResults,
 } from './lib/equipmentList'
 import type { EquipmentListState } from './lib/equipmentList'
@@ -54,6 +57,15 @@ import {
   savePersistedProject,
 } from './lib/projectPersistence'
 import { clearRoutingCache } from './hooks/useRoutingResults'
+import {
+  clearTripBridge,
+  loadTripBridge,
+  parseTripBridgeFromUrl,
+  saveTripBridge,
+  stripTripQueryFromUrl,
+  tripBridgeToMetaPatch,
+  type TripBridge,
+} from './lib/tripBridge'
 
 type ManualOverrides = ScreenRoutingState['manualOverrides']
 type DataUndoSnapshot = Pick<
@@ -157,6 +169,7 @@ export default function App() {
   const [equipmentList, setEquipmentList] = useState<EquipmentListState | null>(
     initialProject.equipmentList,
   )
+  const [tripBridge, setTripBridge] = useState<TripBridge | null>(() => loadTripBridge())
   /** История полных состояний — одно действие пользователя = один снимок. */
   const [dataPaintUndo, setDataPaintUndo] = useState<Record<string, DataUndoSnapshot[]>>({})
   const [powerPaintUndo, setPowerPaintUndo] = useState<Record<string, PowerUndoSnapshot[]>>({})
@@ -423,6 +436,56 @@ export default function App() {
       return { ...next, customRows }
     })
   }, [result, screens, equipmentScreenResults, equipmentCableSchedule, equipmentPackingList])
+
+  const applyTripMeta = useCallback((bridge: TripBridge) => {
+    const patch = tripBridgeToMetaPatch(bridge)
+    setEquipmentList((prev) => {
+      if (!prev) {
+        return {
+          meta: { ...EMPTY_EQUIPMENT_META, ...patch },
+          rows: [],
+          customRows: [],
+        }
+      }
+      return { ...prev, meta: { ...prev.meta, ...patch } }
+    })
+  }, [])
+
+  /** Deep-link выезда: session bridge + meta события; upload_token не в localStorage */
+  useEffect(() => {
+    const fromUrl = parseTripBridgeFromUrl(window.location.search)
+    if (fromUrl) {
+      saveTripBridge(fromUrl)
+      setTripBridge(fromUrl)
+      stripTripQueryFromUrl()
+
+      const existingMeta = equipmentList?.meta
+      const empty = isEquipmentMetaEmpty(existingMeta)
+      const differentTrip =
+        Boolean(existingMeta?.tripId?.trim()) &&
+        existingMeta!.tripId !== fromUrl.tripId
+
+      if (!empty && (differentTrip || !existingMeta?.tripId)) {
+        const ok = window.confirm(
+          'Открыт deep-link выезда. Заполнить данные события из ссылки?',
+        )
+        if (ok) applyTripMeta(fromUrl)
+      } else {
+        applyTripMeta(fromUrl)
+      }
+      return
+    }
+
+    const stored = loadTripBridge()
+    if (stored) setTripBridge(stored)
+    // только при монтировании
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleDetachTrip = useCallback(() => {
+    clearTripBridge()
+    setTripBridge(null)
+  }, [])
 
   useEffect(() => {
     const gridKey = `${activeScreen.id}:${activeScreen.cabinetsWide}x${activeScreen.cabinetsHigh}`
@@ -1518,6 +1581,13 @@ export default function App() {
         />
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {tripBridge && (
+            <TripBridgeBanner
+              bridge={tripBridge}
+              eventName={equipmentList?.meta.eventName}
+              onDetach={handleDetachTrip}
+            />
+          )}
           <header className="no-print flex shrink-0 flex-col gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-6">
             <div className="flex min-w-0 items-start gap-3">
               <button
@@ -1606,7 +1676,10 @@ export default function App() {
                   >
                     שמור xlsx
                   </button>
-                  <EventPackExportButtons state={equipmentList} />
+                  <EventPackExportButtons
+                    state={equipmentList}
+                    tripBridge={tripBridge}
+                  />
                 </>
               )}
               <button
@@ -1843,6 +1916,7 @@ export default function App() {
                   state={equipmentList}
                   onChange={setEquipmentList}
                   onRefreshFromRouting={handleRefreshEquipmentList}
+                  tripBridge={tripBridge}
                 />
               )}
 

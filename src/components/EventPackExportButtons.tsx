@@ -6,20 +6,29 @@ import {
   type EquipmentListState,
 } from '../lib/equipmentList'
 import { uploadBlobToGoogleDrive } from '../lib/googleDrive'
+import type { TripBridge } from '../lib/tripBridge'
+import {
+  chunkFiles,
+  collectSchemePngFiles,
+  uploadSchemeImagesToTrip,
+} from '../lib/tripUpload'
 
 interface EventPackExportButtonsProps {
   state: EquipmentListState
   /** Не давать клику всплыть (кнопки в шапке сворачиваемой секции) */
   stopPropagation?: boolean
   compact?: boolean
+  /** Активный deep-link выезда — кнопка «Отправить схемы в выезд» */
+  tripBridge?: TripBridge | null
 }
 
 export default function EventPackExportButtons({
   state,
   stopPropagation = false,
   compact = false,
+  tripBridge = null,
 }: EventPackExportButtonsProps) {
-  const [busy, setBusy] = useState<'excel' | 'drive' | null>(null)
+  const [busy, setBusy] = useState<'excel' | 'drive' | 'trip' | null>(null)
 
   const run = async (kind: 'excel' | 'drive') => {
     if (busy) return
@@ -42,9 +51,35 @@ export default function EventPackExportButtons({
     }
   }
 
+  const sendToTrip = async () => {
+    if (busy || !tripBridge) return
+    setBusy('trip')
+    try {
+      const files = await collectSchemePngFiles(state.meta.eventName || tripBridge.title)
+      const batches = chunkFiles(files, 5)
+      let uploaded = 0
+      for (const batch of batches) {
+        const result = await uploadSchemeImagesToTrip(tripBridge, batch)
+        if (!result.ok) throw new Error(result.error || 'Ошибка загрузки')
+        uploaded += result.uploaded ?? batch.length
+      }
+      const open = window.confirm(
+        `Схемы отправлены в выезд (${uploaded} файл/ов).\nОткрыть карточку выезда?`,
+      )
+      if (open && tripBridge.returnTripUrl) {
+        window.open(tripBridge.returnTripUrl, '_blank', 'noopener,noreferrer')
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Не удалось отправить схемы')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const pad = compact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2.5 text-sm'
   const excelClass = `touch-manipulation rounded-lg border border-emerald-300 bg-white font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 disabled:opacity-60 ${pad}`
   const driveClass = `touch-manipulation rounded-lg border border-sky-300 bg-sky-50 font-medium text-sky-900 shadow-sm transition hover:bg-sky-100 disabled:opacity-60 ${pad}`
+  const tripClass = `touch-manipulation rounded-lg border border-violet-400 bg-violet-700 font-semibold text-white shadow-sm transition hover:bg-violet-800 disabled:opacity-60 ${pad}`
 
   return (
     <>
@@ -72,6 +107,20 @@ export default function EventPackExportButtons({
       >
         {busy === 'drive' ? 'Google Drive…' : 'Google Drive'}
       </button>
+      {tripBridge && (
+        <button
+          type="button"
+          disabled={busy != null}
+          className={tripClass}
+          title="PNG схем Data/Power → карточка выезда (Apps Script)"
+          onClick={(event) => {
+            if (stopPropagation) event.stopPropagation()
+            void sendToTrip()
+          }}
+        >
+          {busy === 'trip' ? 'В выезд…' : 'Отправить схемы в выезд'}
+        </button>
+      )}
     </>
   )
 }
