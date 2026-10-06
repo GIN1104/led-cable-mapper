@@ -25,7 +25,11 @@ export async function buildSchemeFileFromElement(
   screenName: string,
   eventName?: string,
 ): Promise<SchemeUploadFile> {
-  const dataUrl = await capturePanelPng(el, 2)
+  // pixelRatio 3 — как Excel/Drive: SVG на экране, в файл уходит растровый PNG
+  const dataUrl = await capturePanelPng(el, 3)
+  if (!dataUrl.startsWith('data:image/png')) {
+    throw new Error('Снимок схемы не в формате PNG')
+  }
   const blob = await dataUrlToPngBlob(dataUrl)
   const png =
     blob.type === 'image/png' ? blob : new Blob([blob], { type: 'image/png' })
@@ -55,10 +59,14 @@ export async function collectSchemePngFiles(eventName?: string): Promise<SchemeU
     const screenHint =
       el.getAttribute('data-screen-name')?.trim() ||
       (total > 1 ? `screen-${index + 1}` : 'screen')
-    const dataUrl = await capturePanelPng(el, 2)
+    // SVG в DOM → PNG data URL (image/png), не сырой SVG
+    const dataUrl = await capturePanelPng(el, 3)
     const blob = await dataUrlToPngBlob(dataUrl)
     if (blob.type && !blob.type.includes('png') && blob.type !== 'application/octet-stream') {
       throw new Error('Ожидался PNG схемы')
+    }
+    if (!dataUrl.startsWith('data:image/png')) {
+      throw new Error('Снимок схемы не в формате PNG')
     }
     files.push({
       filename: panelExportFilename(mode, screenHint, eventName),
