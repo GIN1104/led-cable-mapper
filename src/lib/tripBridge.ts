@@ -169,3 +169,27 @@ export function tripBridgeToMetaPatch(bridge: TripBridge): {
     tripId: bridge.tripId,
   }
 }
+
+/**
+ * URL карточки выезда с гарантированным trip_id текущего bridge.
+ * Бот кладёт ?trip=…&view=files — если trip отсутствует/другой, подставляем свой.
+ */
+export function resolveReturnTripCardUrl(bridge: TripBridge): string | null {
+  const raw = bridge.returnTripUrl?.trim()
+  if (!raw || !bridge.tripId) return null
+  try {
+    const url = new URL(raw)
+    const current =
+      url.searchParams.get('trip') || url.searchParams.get('trip_id') || ''
+    if (current !== bridge.tripId) {
+      url.searchParams.delete('trip_id')
+      url.searchParams.set('trip', bridge.tripId)
+    }
+    if (!url.searchParams.get('view')) {
+      url.searchParams.set('view', 'files')
+    }
+    return url.toString()
+  } catch {
+    return raw
+  }
+}

@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import type { TripBridge } from '../lib/tripBridge'
-import { formatTripDateForMeta } from '../lib/tripBridge'
+import {
+  formatTripDateForMeta,
+  resolveReturnTripCardUrl,
+} from '../lib/tripBridge'
 import {
   chunkFiles,
   collectSchemePngFiles,
@@ -27,13 +30,14 @@ export default function TripBridgeBanner({
   const dateLabel = formatTripDateForMeta(bridge.date) || bridge.date
   const tripShort =
     bridge.tripId.length > 12 ? `${bridge.tripId.slice(0, 8)}…` : bridge.tripId
+  const cardUrl = resolveReturnTripCardUrl(bridge)
 
   const openCard = () => {
-    if (!bridge.returnTripUrl) {
+    if (!cardUrl) {
       window.alert('В ссылке нет return_trip_url — карточку выезда открыть нельзя.')
       return
     }
-    window.open(bridge.returnTripUrl, '_blank', 'noopener,noreferrer')
+    window.open(cardUrl, '_blank', 'noopener,noreferrer')
   }
 
   const saveLocal = async () => {
@@ -102,8 +106,8 @@ export default function TripBridgeBanner({
       const open = window.confirm(
         `Схемы отправлены в выезд (${uploaded} файл/ов).\nОткрыть карточку выезда?`,
       )
-      if (open && bridge.returnTripUrl) {
-        window.open(bridge.returnTripUrl, '_blank', 'noopener,noreferrer')
+      if (open && cardUrl) {
+        window.open(cardUrl, '_blank', 'noopener,noreferrer')
       }
     } catch (error) {
       const message =
@@ -174,7 +178,7 @@ export default function TripBridgeBanner({
           </button>
           <button
             type="button"
-            disabled={!bridge.returnTripUrl || busy != null}
+            disabled={!cardUrl || busy != null}
             onClick={openCard}
             className="touch-manipulation rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-medium text-violet-900 transition hover:bg-violet-100 disabled:opacity-50"
           >

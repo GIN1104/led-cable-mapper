@@ -7,6 +7,7 @@ import {
 } from '../lib/equipmentList'
 import { uploadBlobToGoogleDrive } from '../lib/googleDrive'
 import type { TripBridge } from '../lib/tripBridge'
+import { resolveReturnTripCardUrl } from '../lib/tripBridge'
 import {
   chunkFiles,
   collectSchemePngFiles,
@@ -70,8 +71,9 @@ export default function EventPackExportButtons({
       const open = window.confirm(
         `Схемы отправлены в выезд (${uploaded} файл/ов).\nОткрыть карточку выезда?`,
       )
-      if (open && tripBridge.returnTripUrl) {
-        window.open(tripBridge.returnTripUrl, '_blank', 'noopener,noreferrer')
+      const cardUrl = resolveReturnTripCardUrl(tripBridge)
+      if (open && cardUrl) {
+        window.open(cardUrl, '_blank', 'noopener,noreferrer')
       }
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Не удалось отправить схемы')
