@@ -1,4 +1,8 @@
-import { panelExportFilename, capturePanelPng } from './panelExport'
+import {
+  downloadDataUrl,
+  panelExportFilename,
+  capturePanelPng,
+} from './panelExport'
 import type { TripBridge } from './tripBridge'
 
 export interface SchemeUploadFile {
@@ -457,4 +461,309 @@ export function chunkFiles<T>(items: T[], maxFiles = 5): T[][] {
     chunks.push(items.slice(i, i + maxFiles))
   }
   return chunks
+}
+
+/** Сохранить PNG схем на диск (обход, если GAS отклонил токен). */
+export async function downloadSchemeFilesLocally(
+  files: SchemeUploadFile[],
+): Promise<number> {
+  let n = 0
+  for (const file of files) {
+    const dataUrl = file.base64
+      ? `data:image/png;base64,${file.base64}`
+      : await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(String(reader.result ?? ''))
+          reader.onerror = () => reject(reader.error ?? new Error('FileReader'))
+          reader.readAsDataURL(file.blob)
+        })
+    downloadDataUrl(dataUrl, file.filename)
+    n += 1
+    await new Promise((r) => window.setTimeout(r, 120))
+  }
+  return n
+}
+
+const TINY_PNG_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
+export interface TripDiagnoseProbe {
+  id: string
+  title: string
+  ok: boolean | null
+  error: string | null
+  raw: unknown
+  ms: number
+  note?: string
+}
+
+function submitFormFieldsAndWait(
+  uploadUrl: string,
+  fields: Record<string, string>,
+  timeoutMs = 25_000,
+): Promise<{ ok: boolean | null; error: string | null; raw: unknown; ms: number }> {
+  return new Promise((resolve) => {
+    const nonce = makeNonce()
+    const frameName = `diag-${nonce}`
+    const started = Date.now()
+    let settled = false
+
+    const iframe = document.createElement('iframe')
+    iframe.name = frameName
+    iframe.style.cssText =
+      'position:absolute;width:1px;height:1px;border:0;opacity:0;left:-9999px'
+    document.body.appendChild(iframe)
+
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = uploadUrl
+    form.target = frameName
+    form.enctype = 'application/x-www-form-urlencoded'
+    form.style.display = 'none'
+    const withNonce = {
+      ...fields,
+      scheme_nonce: fields.scheme_nonce ?? nonce,
+      clientOrigin: fields.clientOrigin ?? window.location.origin,
+      client_origin: fields.client_origin ?? window.location.origin,
+    }
+    appendFormFields(form, withNonce)
+    document.body.appendChild(form)
+
+    const cleanup = () => {
+      window.removeEventListener('message', onMessage, true)
+      window.clearTimeout(timer)
+      form.remove()
+      iframe.remove()
+    }
+
+    const finish = (ok: boolean | null, error: string | null, raw: unknown) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve({ ok, error, raw, ms: Date.now() - started })
+    }
+
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data
+      if (!data || typeof data !== 'object') return
+      const envelope = data as Record<string, unknown>
+      if (
+        envelope.channel === 'crew-scheme-response' ||
+        typeof (envelope.result as { ok?: boolean } | undefined)?.ok === 'boolean' ||
+        typeof envelope.ok === 'boolean'
+      ) {
+        const parsed = resultFromUnknown(data, withNonce.scheme_nonce || nonce)
+        if (parsed) {
+          finish(parsed.ok, parsed.error ?? null, data)
+          return
+        }
+        finish(null, 'получен postMessage, но формат не разобран', data)
+      }
+    }
+
+    const timer = window.setTimeout(() => {
+      finish(null, 'timeout — нет postMessage', null)
+    }, timeoutMs)
+
+    window.addEventListener('message', onMessage, true)
+    try {
+      form.submit()
+    } catch (error) {
+      finish(
+        false,
+        error instanceof Error ? error.message : 'form.submit failed',
+        null,
+      )
+    }
+  })
+}
+
+/**
+ * Зонд: несколько запросов к upload_url, чтобы локализовать отказ.
+ * Результат — console + возвращаемый отчёт (для alert).
+ */
+export async function diagnoseTripUpload(bridge: TripBridge): Promise<{
+  summary: string
+  probes: TripDiagnoseProbe[]
+  verdict: string
+}> {
+  const tinyFile = {
+    name: 'diag-probe.png',
+    mimeType: 'image/png',
+    base64: TINY_PNG_B64,
+  }
+
+  const basePayload = {
+    action: 'uploadSchemeImages' as const,
+    trip_id: bridge.tripId,
+    upload_token: bridge.uploadToken,
+    files: [tinyFile],
+    meta: { source: 'led-cable-mapper', title: bridge.title || 'diag' },
+  }
+
+  const probesPlan: Array<{
+    id: string
+    title: string
+    fields: Record<string, string>
+    note?: string
+  }> = [
+    {
+      id: 'A_normal',
+      title: 'A. Нормальный scheme_payload (как кнопка Отправить)',
+      fields: {
+        scheme_payload: JSON.stringify(basePayload),
+      },
+    },
+    {
+      id: 'B_no_token',
+      title: 'B. Без upload_token в JSON',
+      fields: {
+        scheme_payload: JSON.stringify({ ...basePayload, upload_token: '' }),
+      },
+      note: 'Если ошибка ДРУГАЯ, чем у A — сервер читает токен из payload',
+    },
+    {
+      id: 'C_bad_token',
+      title: 'C. Заведомо неверный upload_token',
+      fields: {
+        scheme_payload: JSON.stringify({
+          ...basePayload,
+          upload_token: '00000000000000000000000000000000',
+        }),
+      },
+      note: 'Если как у A — отказ именно auth, не формат PNG',
+    },
+    {
+      id: 'D_no_files',
+      title: 'D. Пустой files[]',
+      fields: {
+        scheme_payload: JSON.stringify({ ...basePayload, files: [] }),
+      },
+      note: 'Если всё ещё unauthorized — падает ДО проверки файлов',
+    },
+    {
+      id: 'E_top_level_auth',
+      title: 'E. Токен ещё и в полях формы (дубль)',
+      fields: {
+        scheme_payload: JSON.stringify(basePayload),
+        action: 'uploadSchemeImages',
+        trip_id: bridge.tripId,
+        upload_token: bridge.uploadToken,
+        upload_transport: 'form',
+      },
+    },
+    {
+      id: 'F_wrong_trip',
+      title: 'F. Чужой trip_id, тот же token',
+      fields: {
+        scheme_payload: JSON.stringify({
+          ...basePayload,
+          trip_id: '00000000000000000000000000000000',
+        }),
+      },
+      note: 'Если ошибка другая — сервер сверяет token↔trip',
+    },
+  ]
+
+  const probes: TripDiagnoseProbe[] = []
+  for (const plan of probesPlan) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await submitFormFieldsAndWait(bridge.uploadUrl, plan.fields)
+    probes.push({
+      id: plan.id,
+      title: plan.title,
+      ok: res.ok,
+      error: res.error,
+      raw: res.raw,
+      ms: res.ms,
+      note: plan.note,
+    })
+  }
+
+  const errOf = (id: string) =>
+    probes.find((p) => p.id === id)?.error?.toLowerCase() ?? ''
+
+  const a = errOf('A_normal')
+  const b = errOf('B_no_token')
+  const c = errOf('C_bad_token')
+  const d = errOf('D_no_files')
+  const f = errOf('F_wrong_trip')
+
+  let verdict: string
+  if (probes.some((p) => p.ok === true)) {
+    verdict =
+      'Один из вариантов ПРОШЁЛ — смотри какой probe ok=true; подстроим mapper под него.'
+  } else if (
+    a.includes('unauthorized') &&
+    c.includes('unauthorized') &&
+    b.includes('unauthorized')
+  ) {
+    verdict =
+      'ПРОБЛЕМА НА GAS (auth): и валидный, и пустой, и фейковый токен → одинаковый unauthorized. ' +
+      'Mapper шлёт payload верно; сервер не принимает upload_token / сломан деплой или хранилище токенов. ' +
+      'Обойти отказ с клиента нельзя — чинить doPost/проверку токена у хозяина Apps Script. ' +
+      'Картинки можно сохранить локально кнопкой «Скачать PNG».'
+  } else if (a.includes('unauthorized') && !b.includes('unauthorized')) {
+    verdict =
+      'Сервер читает upload_token (пустой токен даёт другую ошибку). Значит токен из ссылки не совпадает с тем, что лежит в Storage GAS для этого trip_id.'
+  } else if (a.includes('unauthorized') && f && !f.includes('unauthorized')) {
+    verdict =
+      'Токен привязан к trip_id (чужой trip даёт другую ошибку). Проверьте пару trip_id↔upload_token в боте.'
+  } else if (a.includes('unauthorized') && d && !d.includes('unauthorized')) {
+    verdict =
+      'Auth проходит, падает на файлах — смотрите формат files[].base64 на GAS.'
+  } else {
+    verdict =
+      'Смотрите таблицу probe в console — ошибки различаются; пришлите хозяинy GAS этот лог.'
+  }
+
+  const report = {
+    when: new Date().toISOString(),
+    origin: typeof window !== 'undefined' ? window.location.origin : '',
+    tripId: bridge.tripId,
+    tokenPrefix: bridge.uploadToken.slice(0, 16),
+    tokenLength: bridge.uploadToken.length,
+    uploadUrl: bridge.uploadUrl,
+    probes,
+    verdict,
+  }
+
+  console.group('[TripUpload DIAG]')
+  console.log('bridge', {
+    tripId: report.tripId,
+    tokenPrefix: report.tokenPrefix,
+    tokenLength: report.tokenLength,
+    uploadUrl: report.uploadUrl,
+    origin: report.origin,
+  })
+  console.table(
+    probes.map((p) => ({
+      id: p.id,
+      title: p.title,
+      ok: p.ok,
+      error: p.error,
+      ms: p.ms,
+    })),
+  )
+  console.log('raw messages', probes.map((p) => ({ id: p.id, raw: p.raw })))
+  console.log('VERDICT:', verdict)
+  console.groupEnd()
+
+  const summary = [
+    'Диагностика upload → Apps Script',
+    `trip: ${bridge.tripId}`,
+    `token: ${report.tokenPrefix}… (${report.tokenLength} символов)`,
+    `origin: ${report.origin}`,
+    '',
+    ...probes.map(
+      (p) =>
+        `${p.id}: ok=${String(p.ok)} err=${p.error ?? '—'} (${p.ms}ms)`,
+    ),
+    '',
+    `ВЫВОД: ${verdict}`,
+    '',
+    'Подробности: Console → [TripUpload DIAG]',
+  ].join('\n')
+
+  return { summary, probes, verdict }
 }

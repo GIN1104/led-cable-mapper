@@ -4,6 +4,8 @@ import { formatTripDateForMeta } from '../lib/tripBridge'
 import {
   chunkFiles,
   collectSchemePngFiles,
+  diagnoseTripUpload,
+  downloadSchemeFilesLocally,
   prepareSchemeBridge,
   uploadSchemeImagesToTrip,
 } from '../lib/tripUpload'
@@ -19,7 +21,7 @@ export default function TripBridgeBanner({
   eventName,
   onDetach,
 }: TripBridgeBannerProps) {
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<'send' | 'diag' | 'local' | null>(null)
   const [status, setStatus] = useState<string | null>(null)
 
   const dateLabel = formatTripDateForMeta(bridge.date) || bridge.date
@@ -34,11 +36,50 @@ export default function TripBridgeBanner({
     window.open(bridge.returnTripUrl, '_blank', 'noopener,noreferrer')
   }
 
+  const saveLocal = async () => {
+    if (busy) return
+    setBusy('local')
+    setStatus('Скачивание PNG…')
+    try {
+      const files = await collectSchemePngFiles(eventName || bridge.title)
+      const n = await downloadSchemeFilesLocally(files)
+      setStatus(`Скачано локально: ${n} PNG`)
+      window.alert(
+        `Сохранено на диск: ${n} PNG.\n(В карточку выезда это не попадает — только локально.)`,
+      )
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Не удалось сохранить PNG'
+      setStatus(message)
+      window.alert(message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const runDiagnose = async () => {
+    if (busy) return
+    setBusy('diag')
+    setStatus('Диагностика upload…')
+    try {
+      const { summary, verdict } = await diagnoseTripUpload(bridge)
+      setStatus(verdict.slice(0, 180) + (verdict.length > 180 ? '…' : ''))
+      window.alert(summary)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Диагностика не удалась'
+      setStatus(message)
+      window.alert(message)
+      console.error('[TripUpload DIAG]', error)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const sendSchemes = async () => {
     if (busy) return
-    // iframe до await — иначе браузер/WebView хуже принимает form→postMessage
     const bridgeHandle = prepareSchemeBridge()
-    setBusy(true)
+    setBusy('send')
     setStatus(null)
     try {
       const files = await collectSchemePngFiles(eventName || bridge.title)
@@ -68,9 +109,25 @@ export default function TripBridgeBanner({
       const message =
         error instanceof Error ? error.message : 'Не удалось отправить схемы'
       setStatus(message)
-      window.alert(message)
+      const save = window.confirm(
+        `${message}\n\nОбойти отказ токена GAS с клиента нельзя.\nСкачать PNG схем на этот компьютер сейчас?`,
+      )
+      if (save) {
+        try {
+          const files = await collectSchemePngFiles(eventName || bridge.title)
+          const n = await downloadSchemeFilesLocally(files)
+          setStatus(`${message} · скачано локально ${n} PNG`)
+          window.alert(`Скачано локально: ${n} PNG`)
+        } catch (saveError) {
+          window.alert(
+            saveError instanceof Error ? saveError.message : 'Не удалось скачать PNG',
+          )
+        }
+      } else {
+        window.alert(message)
+      }
     } finally {
-      setBusy(false)
+      setBusy(null)
     }
   }
 
@@ -93,15 +150,31 @@ export default function TripBridgeBanner({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={busy}
+            disabled={busy != null}
             onClick={() => void sendSchemes()}
             className="touch-manipulation rounded-lg border border-violet-400 bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-800 disabled:opacity-60"
           >
-            {busy ? 'Отправка…' : 'Отправить все схемы'}
+            {busy === 'send' ? 'Отправка…' : 'Отправить все схемы'}
           </button>
           <button
             type="button"
-            disabled={!bridge.returnTripUrl || busy}
+            disabled={busy != null}
+            onClick={() => void runDiagnose()}
+            className="touch-manipulation rounded-lg border border-amber-400 bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-950 transition hover:bg-amber-200 disabled:opacity-60"
+          >
+            {busy === 'diag' ? 'Диагностика…' : 'Диагностика GAS'}
+          </button>
+          <button
+            type="button"
+            disabled={busy != null}
+            onClick={() => void saveLocal()}
+            className="touch-manipulation rounded-lg border border-emerald-400 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-100 disabled:opacity-60"
+          >
+            {busy === 'local' ? 'Скачивание…' : 'Скачать PNG'}
+          </button>
+          <button
+            type="button"
+            disabled={!bridge.returnTripUrl || busy != null}
             onClick={openCard}
             className="touch-manipulation rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-medium text-violet-900 transition hover:bg-violet-100 disabled:opacity-50"
           >
@@ -109,7 +182,7 @@ export default function TripBridgeBanner({
           </button>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy != null}
             onClick={onDetach}
             className="touch-manipulation rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
           >
