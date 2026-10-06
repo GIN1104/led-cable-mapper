@@ -45,7 +45,6 @@ import {
   buildEquipmentListState,
   downloadEquipmentListXlsx,
   EMPTY_EQUIPMENT_META,
-  isEquipmentMetaEmpty,
   resolveEquipmentScreenResults,
 } from './lib/equipmentList'
 import type { EquipmentListState } from './lib/equipmentList'
@@ -451,33 +450,24 @@ export default function App() {
     })
   }, [])
 
-  /** Deep-link выезда: session bridge + meta события; upload_token не в localStorage */
+  /** Deep-link выезда: session bridge + meta; без confirm (в Telegram WebView он подвешивает страницу) */
   useEffect(() => {
-    const fromUrl = parseTripBridgeFromUrl(window.location.search)
-    if (fromUrl) {
-      saveTripBridge(fromUrl)
-      setTripBridge(fromUrl)
-      stripTripQueryFromUrl()
-
-      const existingMeta = equipmentList?.meta
-      const empty = isEquipmentMetaEmpty(existingMeta)
-      const differentTrip =
-        Boolean(existingMeta?.tripId?.trim()) &&
-        existingMeta!.tripId !== fromUrl.tripId
-
-      if (!empty && (differentTrip || !existingMeta?.tripId)) {
-        const ok = window.confirm(
-          'Открыт deep-link выезда. Заполнить данные события из ссылки?',
-        )
-        if (ok) applyTripMeta(fromUrl)
-      } else {
+    try {
+      const fromUrl = parseTripBridgeFromUrl(window.location.search)
+      if (fromUrl) {
+        saveTripBridge(fromUrl)
+        setTripBridge(fromUrl)
+        // Meta из ссылки всегда перекрывает шапку события — так задумано deep-link из бота
         applyTripMeta(fromUrl)
+        stripTripQueryFromUrl()
+        return
       }
-      return
-    }
 
-    const stored = loadTripBridge()
-    if (stored) setTripBridge(stored)
+      const stored = loadTripBridge()
+      if (stored) setTripBridge(stored)
+    } catch (error) {
+      console.error('TripBridge deep-link failed', error)
+    }
     // только при монтировании
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

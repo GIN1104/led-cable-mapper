@@ -47,10 +47,30 @@ export function formatTripDateForMeta(date: string): string {
   return `${m[3]}.${m[2]}.${m[1]}`
 }
 
+function paramsFromLocation(
+  search: string,
+  hash: string,
+): URLSearchParams {
+  const fromSearch = new URLSearchParams(
+    search.startsWith('?') ? search.slice(1) : search,
+  )
+  if (fromSearch.get('trip_id') && fromSearch.get('upload_url') && fromSearch.get('upload_token')) {
+    return fromSearch
+  }
+  // Запасной вариант: параметры в hash (некоторые клиенты Telegram так открывают)
+  const rawHash = hash.startsWith('#') ? hash.slice(1) : hash
+  if (rawHash.includes('trip_id=')) {
+    const q = rawHash.startsWith('?') ? rawHash.slice(1) : rawHash
+    return new URLSearchParams(q)
+  }
+  return fromSearch
+}
+
 export function parseTripBridgeFromUrl(
   search: string = typeof window !== 'undefined' ? window.location.search : '',
+  hash: string = typeof window !== 'undefined' ? window.location.hash : '',
 ): TripBridge | null {
-  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
+  const params = paramsFromLocation(search, hash)
   const tripId = pick(params, 'trip_id')
   const uploadUrl = pick(params, 'upload_url')
   const uploadToken = pick(params, 'upload_token')
