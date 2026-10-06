@@ -37,6 +37,7 @@ import {
 import type { TripBridge } from '../lib/tripBridge'
 import {
   buildSchemeFileFromElement,
+  prepareSchemeBridge,
   uploadSchemeImagesToTrip,
 } from '../lib/tripUpload'
 import { CUSTOM_PRESET_LABEL, getPitchPreset } from '../lib/pitchPresets'
@@ -1939,6 +1940,7 @@ export default memo(function GridVisualization({
       window.alert('Схема недоступна для отправки.')
       return
     }
+    const bridgeHandle = prepareSchemeBridge()
     setTripSendBusy(true)
     try {
       const file = await buildSchemeFileFromElement(
@@ -1947,7 +1949,7 @@ export default memo(function GridVisualization({
         screenName || 'screen',
         eventName,
       )
-      const result = await uploadSchemeImagesToTrip(tripBridge, [file])
+      const result = await uploadSchemeImagesToTrip(tripBridge, [file], bridgeHandle)
       if (!result.ok) {
         window.alert(result.error || 'Не удалось отправить схему в выезд.')
         return

@@ -4,6 +4,7 @@ import { formatTripDateForMeta } from '../lib/tripBridge'
 import {
   chunkFiles,
   collectSchemePngFiles,
+  prepareSchemeBridge,
   uploadSchemeImagesToTrip,
 } from '../lib/tripUpload'
 
@@ -35,6 +36,8 @@ export default function TripBridgeBanner({
 
   const sendSchemes = async () => {
     if (busy) return
+    // iframe до await — иначе браузер/WebView хуже принимает form→postMessage
+    const bridgeHandle = prepareSchemeBridge()
     setBusy(true)
     setStatus(null)
     try {
@@ -47,7 +50,8 @@ export default function TripBridgeBanner({
             ? `Отправка ${i + 1}/${batches.length}…`
             : 'Отправка схем…',
         )
-        const result = await uploadSchemeImagesToTrip(bridge, batches[i]!)
+        const handle = i === 0 ? bridgeHandle : prepareSchemeBridge()
+        const result = await uploadSchemeImagesToTrip(bridge, batches[i]!, handle)
         if (!result.ok) {
           throw new Error(result.error || 'Ошибка загрузки')
         }

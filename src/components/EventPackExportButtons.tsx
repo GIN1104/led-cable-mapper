@@ -10,6 +10,7 @@ import type { TripBridge } from '../lib/tripBridge'
 import {
   chunkFiles,
   collectSchemePngFiles,
+  prepareSchemeBridge,
   uploadSchemeImagesToTrip,
 } from '../lib/tripUpload'
 
@@ -53,13 +54,16 @@ export default function EventPackExportButtons({
 
   const sendToTrip = async () => {
     if (busy || !tripBridge) return
+    const firstHandle = prepareSchemeBridge()
     setBusy('trip')
     try {
       const files = await collectSchemePngFiles(state.meta.eventName || tripBridge.title)
       const batches = chunkFiles(files, 5)
       let uploaded = 0
-      for (const batch of batches) {
-        const result = await uploadSchemeImagesToTrip(tripBridge, batch)
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i]!
+        const handle = i === 0 ? firstHandle : prepareSchemeBridge()
+        const result = await uploadSchemeImagesToTrip(tripBridge, batch, handle)
         if (!result.ok) throw new Error(result.error || 'Ошибка загрузки')
         uploaded += result.uploaded ?? batch.length
       }
