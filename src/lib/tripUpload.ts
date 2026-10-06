@@ -4,6 +4,8 @@ import type { TripBridge } from './tripBridge'
 export interface SchemeUploadFile {
   filename: string
   blob: Blob
+  /** PNG без префикса data:image/png;base64, — если уже известен */
+  base64?: string
 }
 
 export interface TripUploadResult {
@@ -12,10 +14,225 @@ export interface TripUploadResult {
   error?: string
 }
 
+interface SchemeFilePayload {
+  name: string
+  mimeType: string
+  base64: string
+}
+
+interface SchemeUploadPayload {
+  action: 'uploadSchemeImages'
+  trip_id: string
+  upload_token: string
+  files: SchemeFilePayload[]
+  meta: {
+    source: string
+    title?: string
+    types?: string
+  }
+}
+
+const UPLOAD_TIMEOUT_MS = 120_000
+
 /** data URL → Blob PNG */
 export async function dataUrlToPngBlob(dataUrl: string): Promise<Blob> {
   const response = await fetch(dataUrl)
   return response.blob()
+}
+
+function stripPngDataUrlPrefix(dataUrl: string): string {
+  const marker = 'base64,'
+  const idx = dataUrl.indexOf(marker)
+  if (idx === -1) return dataUrl
+  return dataUrl.slice(idx + marker.length)
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'))
+    reader.readAsDataURL(blob)
+  })
+  return stripPngDataUrlPrefix(dataUrl)
+}
+
+function makeNonce(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
+function isAllowedBridgeOrigin(origin: string): boolean {
+  if (!origin) return false
+  if (typeof window !== 'undefined' && origin === window.location.origin) return true
+  try {
+    const host = new URL(origin).hostname
+    return (
+      host === 'script.google.com' ||
+      host === 'script.googleusercontent.com' ||
+      host.endsWith('.googleusercontent.com') ||
+      host.endsWith('.google.com')
+    )
+  } catch {
+    return false
+  }
+}
+
+function formatUploadError(raw: string, fallback: string): string {
+  const text = raw.trim()
+  if (!text) return fallback
+  const lower = text.toLowerCase()
+  if (lower.includes('unauthorized') || lower === 'unauthorized') {
+    return (
+      'unauthorized — сервер отклонил upload_token. ' +
+      'Откройте mapper заново по свежей ссылке из бота и сразу нажмите «Отправить».'
+    )
+  }
+  return text.length > 280 ? `${text.slice(0, 280)}…` : text
+}
+
+/**
+ * Мост к Apps Script: скрытая form + scheme_payload / scheme_nonce / clientOrigin,
+ * ответ через postMessage (как postSchemeForm из bridge/mapper-upload.js).
+ */
+export function postSchemeForm(
+  uploadUrl: string,
+  payload: SchemeUploadPayload,
+): Promise<TripUploadResult> {
+  if (typeof document === 'undefined' || typeof window === 'undefined') {
+    return Promise.resolve({ ok: false, error: 'postSchemeForm только в браузере' })
+  }
+
+  return new Promise((resolve) => {
+    const nonce = makeNonce()
+    const frameName = `led-trip-upload-${nonce}`
+    let settled = false
+
+    const iframe = document.createElement('iframe')
+    iframe.name = frameName
+    iframe.setAttribute('aria-hidden', 'true')
+    iframe.style.cssText =
+      'position:absolute;width:0;height:0;border:0;clip:rect(0,0,0,0);visibility:hidden'
+
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = uploadUrl
+    form.target = frameName
+    form.acceptCharset = 'UTF-8'
+    form.style.display = 'none'
+    form.enctype = 'application/x-www-form-urlencoded'
+
+    const addField = (name: string, value: string) => {
+      const input = document.createElement('input')
+      input.type = 'hidden'
+      input.name = name
+      input.value = value
+      form.appendChild(input)
+    }
+
+    addField('scheme_payload', JSON.stringify(payload))
+    addField('scheme_nonce', nonce)
+    addField('clientOrigin', window.location.origin)
+
+    const cleanup = () => {
+      window.removeEventListener('message', onMessage)
+      window.clearTimeout(timer)
+      form.remove()
+      iframe.remove()
+    }
+
+    const finish = (result: TripUploadResult) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(result)
+    }
+
+    const onMessage = (event: MessageEvent) => {
+      if (!isAllowedBridgeOrigin(event.origin)) return
+
+      let data: unknown = event.data
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data) as unknown
+        } catch {
+          return
+        }
+      }
+      if (!data || typeof data !== 'object') return
+
+      const record = data as Record<string, unknown>
+      const msgNonce =
+        (typeof record.scheme_nonce === 'string' && record.scheme_nonce) ||
+        (typeof record.nonce === 'string' && record.nonce) ||
+        (typeof record.clientNonce === 'string' && record.clientNonce) ||
+        ''
+      if (msgNonce !== nonce) return
+
+      const nested =
+        record.result && typeof record.result === 'object'
+          ? (record.result as Record<string, unknown>)
+          : record.payload && typeof record.payload === 'object'
+            ? (record.payload as Record<string, unknown>)
+            : record
+
+      if (typeof nested.ok === 'boolean') {
+        finish({
+          ok: nested.ok,
+          uploaded: typeof nested.uploaded === 'number' ? nested.uploaded : undefined,
+          error: nested.ok
+            ? undefined
+            : formatUploadError(String(nested.error ?? ''), 'Ошибка загрузки'),
+        })
+        return
+      }
+
+      if (typeof nested.error === 'string') {
+        finish({ ok: false, error: formatUploadError(nested.error, 'Ошибка загрузки') })
+      }
+    }
+
+    const timer = window.setTimeout(() => {
+      finish({
+        ok: false,
+        error:
+          'Таймаут ответа Apps Script (postMessage). Проверьте upload_url и деплой Web App.',
+      })
+    }, UPLOAD_TIMEOUT_MS)
+
+    window.addEventListener('message', onMessage)
+    document.body.appendChild(iframe)
+    document.body.appendChild(form)
+
+    try {
+      form.submit()
+    } catch (error) {
+      finish({
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Не удалось отправить форму в Apps Script',
+      })
+    }
+  })
+}
+
+async function toSchemeFilePayload(file: SchemeUploadFile): Promise<SchemeFilePayload> {
+  const base64 =
+    file.base64 ??
+    (await blobToBase64(
+      file.blob.type === 'image/png'
+        ? file.blob
+        : new Blob([file.blob], { type: 'image/png' }),
+    ))
+  return {
+    name: file.filename,
+    mimeType: 'image/png',
+    base64,
+  }
 }
 
 /** Один PNG-файл схемы из DOM-элемента панели */
@@ -25,7 +242,6 @@ export async function buildSchemeFileFromElement(
   screenName: string,
   eventName?: string,
 ): Promise<SchemeUploadFile> {
-  // pixelRatio 3 — как Excel/Drive: SVG на экране, в файл уходит растровый PNG
   const dataUrl = await capturePanelPng(el, 3)
   if (!dataUrl.startsWith('data:image/png')) {
     throw new Error('Снимок схемы не в формате PNG')
@@ -36,12 +252,12 @@ export async function buildSchemeFileFromElement(
   return {
     filename: panelExportFilename(mode, screenName || 'screen', eventName),
     blob: png,
+    base64: stripPngDataUrlPrefix(dataUrl),
   }
 }
 
 /**
  * Снимает все видимые панели схем на странице (data + power).
- * Имена: panelExportFilename + индекс, если панелей несколько.
  */
 export async function collectSchemePngFiles(eventName?: string): Promise<SchemeUploadFile[]> {
   const dataPanels = [
@@ -59,18 +275,15 @@ export async function collectSchemePngFiles(eventName?: string): Promise<SchemeU
     const screenHint =
       el.getAttribute('data-screen-name')?.trim() ||
       (total > 1 ? `screen-${index + 1}` : 'screen')
-    // SVG в DOM → PNG data URL (image/png), не сырой SVG
     const dataUrl = await capturePanelPng(el, 3)
-    const blob = await dataUrlToPngBlob(dataUrl)
-    if (blob.type && !blob.type.includes('png') && blob.type !== 'application/octet-stream') {
-      throw new Error('Ожидался PNG схемы')
-    }
     if (!dataUrl.startsWith('data:image/png')) {
       throw new Error('Снимок схемы не в формате PNG')
     }
+    const blob = await dataUrlToPngBlob(dataUrl)
     files.push({
       filename: panelExportFilename(mode, screenHint, eventName),
       blob: blob.type === 'image/png' ? blob : new Blob([blob], { type: 'image/png' }),
+      base64: stripPngDataUrlPrefix(dataUrl),
     })
   }
 
@@ -84,38 +297,7 @@ export async function collectSchemePngFiles(eventName?: string): Promise<SchemeU
 }
 
 /**
- * URL для POST: auth-поля дублируем в query.
- * У Apps Script multipart часто не попадает в e.parameter — тогда сервер отвечает unauthorized.
- */
-function buildUploadRequestUrl(bridge: TripBridge): string {
-  const url = new URL(bridge.uploadUrl)
-  url.searchParams.set('action', 'uploadSchemeImages')
-  url.searchParams.set('trip_id', bridge.tripId)
-  url.searchParams.set('upload_token', bridge.uploadToken)
-  url.searchParams.set('upload_transport', bridge.uploadTransport || 'form')
-  return url.toString()
-}
-
-function formatUploadError(raw: string, fallback: string): string {
-  const text = raw.trim()
-  if (!text) return fallback
-  const lower = text.toLowerCase()
-  if (lower.includes('unauthorized') || lower === 'unauthorized') {
-    return (
-      'unauthorized — сервер отклонил upload_token. ' +
-      'Откройте mapper заново по свежей ссылке из бота (токен одноразовый/сгорает) ' +
-      'и сразу нажмите «Отправить».'
-    )
-  }
-  return text.length > 280 ? `${text.slice(0, 280)}…` : text
-}
-
-/**
- * Отправка PNG в Apps Script выезда (multipart FormData).
- *
- * Контракт:
- *   action=uploadSchemeImages, trip_id, upload_token, meta (JSON), files
- * Auth дублируется в query + FormData (без кастомных headers — иначе CORS preflight к GAS).
+ * Отправка PNG в Apps Script выезда через form-bridge (scheme_payload + postMessage).
  */
 export async function uploadSchemeImagesToTrip(
   bridge: TripBridge,
@@ -128,85 +310,29 @@ export async function uploadSchemeImagesToTrip(
     return { ok: false, error: 'Нет файлов для отправки' }
   }
 
-  const metaJson = JSON.stringify({
-    source: 'led-cable-mapper',
-    title: bridge.title || undefined,
-    types: bridge.types || undefined,
-  })
-
-  const form = new FormData()
-  form.append('action', 'uploadSchemeImages')
-  form.append('trip_id', bridge.tripId)
-  form.append('upload_token', bridge.uploadToken)
-  form.append('upload_transport', bridge.uploadTransport || 'form')
-  form.append('meta', metaJson)
-
-  files.forEach((file, index) => {
-    const png =
-      file.blob.type === 'image/png'
-        ? file.blob
-        : new Blob([file.blob], { type: 'image/png' })
-    form.append('files', png, file.filename)
-    form.append(`file${index}`, png, file.filename)
-    form.append(`filename${index}`, file.filename)
-  })
-
-  // Query несёт auth на случай, если GAS не разобрал multipart text-поля.
-  const requestUrl = buildUploadRequestUrl(bridge)
-
-  let response: Response
   try {
-    response = await fetch(requestUrl, {
-      method: 'POST',
-      body: form,
-      credentials: 'omit',
-      mode: 'cors',
-    })
-  } catch {
+    const filePayloads = await Promise.all(files.map((file) => toSchemeFilePayload(file)))
+    const payload: SchemeUploadPayload = {
+      action: 'uploadSchemeImages',
+      trip_id: bridge.tripId,
+      upload_token: bridge.uploadToken,
+      files: filePayloads,
+      meta: {
+        source: 'led-cable-mapper',
+        title: bridge.title || undefined,
+        types: bridge.types || undefined,
+      },
+    }
+    return await postSchemeForm(bridge.uploadUrl, payload)
+  } catch (error) {
     return {
       ok: false,
       error:
-        'Сеть или CORS: не удалось достучаться до upload_url. Проверьте Apps Script (доступ «Anyone») и CORS.',
+        error instanceof Error
+          ? error.message
+          : 'Не удалось подготовить отправку схем в выезд',
     }
   }
-
-  const text = await response.text()
-  let parsed: TripUploadResult | null = null
-  try {
-    parsed = JSON.parse(text) as TripUploadResult
-  } catch {
-    if (!response.ok) {
-      return {
-        ok: false,
-        error: formatUploadError(text, `HTTP ${response.status}`),
-      }
-    }
-    // Иногда GAS отдаёт plain "unauthorized"
-    if (/unauthorized/i.test(text)) {
-      return { ok: false, error: formatUploadError(text, 'unauthorized') }
-    }
-    return { ok: true, uploaded: files.length }
-  }
-
-  if (parsed && typeof parsed.ok === 'boolean') {
-    return {
-      ok: parsed.ok,
-      uploaded: parsed.uploaded,
-      error: parsed.ok
-        ? undefined
-        : formatUploadError(parsed.error || '', 'Ошибка загрузки'),
-    }
-  }
-  if (!response.ok) {
-    return { ok: false, error: formatUploadError(text, `HTTP ${response.status}`) }
-  }
-  if (parsed && typeof (parsed as { error?: string }).error === 'string') {
-    return {
-      ok: false,
-      error: formatUploadError((parsed as { error: string }).error, 'Ошибка загрузки'),
-    }
-  }
-  return { ok: true, uploaded: files.length }
 }
 
 /** Режет список на пачки по maxFiles (лимит GAS ≈ 5). */
