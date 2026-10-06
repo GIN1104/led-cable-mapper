@@ -15,11 +15,14 @@
     "verify:strips": "tsx scripts/verify-strip-routing.mts",
     "verify:manual": "tsx scripts/verify-manual-routing.mts",
     "verify:equipment": "tsx scripts/verify-equipment-list.mts",
+    "verify:sketch": "tsx scripts/verify-sketch-pdf.mts",
+    "verify:novalct": "tsx scripts/verify-novalct-scr.mts",
     "verify:cell-size": "tsx scripts/verify-cell-size.mts"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
     "html-to-image": "^1.11.13",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

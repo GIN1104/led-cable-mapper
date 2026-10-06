@@ -1,8 +1,15 @@
-import type { CableScheduleEntry, ControllerModel, PackingListItem, RoutingResult, ScreenConfig } from '../types'
+import type ExcelJS from 'exceljs'
+import type { CableScheduleEntry, ControllerModel, PackingListItem, PitchPresetId, RoutingResult, ScreenConfig } from '../types'
 import {
+  cabinetLabel,
+  isRowActiveInStrip,
   normalizeStripControllerIds,
+  normalizeStripHeights,
   normalizeStripWidths,
+  stripColumnRanges,
 } from './cabinetGrid'
+import { resolveStripRowMixPitch } from './rowMix'
+import { resolveStripPitch } from './stripPitch'
 import { controllerForCol } from './dualVxRouting'
 
 /** Ключи строк, для которых количество можно вывести из маршрутизации */
@@ -179,6 +186,109 @@ export function cabinetsPerCase(cabinetWidthMm: number, cabinetHeightMm: number)
   if (cabinetWidthMm === 500 && cabinetHeightMm === 1000) return 6
   if (cabinetWidthMm === 1000 && cabinetHeightMm === 500) return 6
   return cabinetHeightMm >= 1000 || cabinetWidthMm >= 1000 ? 6 : 8
+}
+
+/** Группа кубиков одного типа (питч / размер) для строки «Экран» */
+export interface CabinetTypeBucket {
+  key: string
+  label: string
+  count: number
+  cases: number
+  perCase: number
+}
+
+const CABINET_TYPE_ORDER = ['3.9-big', '3.9-small', '3.9-reshet', '2.9'] as const
+
+/** Подпись типа кубика для листа оборудования */
+export function cabinetTypeMetaFromGeo(geo: {
+  pitchPreset: PitchPresetId
+  cabinetWidthMm: number
+  cabinetHeightMm: number
+  pixelPitchMm: number
+}): { key: string; label: string; perCase: number } {
+  const perCase = cabinetsPerCase(geo.cabinetWidthMm, geo.cabinetHeightMm)
+  switch (geo.pitchPreset) {
+    case '3.9-big':
+      return { key: '3.9-big', label: 'питч 3.9 большие', perCase }
+    case '3.9-small':
+      return { key: '3.9-small', label: 'питч 3.9 маленькие', perCase }
+    case '3.9-reshet':
+      return { key: '3.9-reshet', label: 'питч 3.9 Reshet', perCase }
+    case '2.9':
+      return { key: '2.9', label: 'питч 2.9', perCase }
+    default:
+      return {
+        key: `custom-${geo.cabinetWidthMm}x${geo.cabinetHeightMm}@${geo.pixelPitchMm}`,
+        label: `${geo.cabinetWidthMm}×${geo.cabinetHeightMm} mm`,
+        perCase,
+      }
+  }
+}
+
+/**
+ * Считает активные кубики экрана по типам (микс Big/Small, разные стрипы/питчи).
+ * Учитывает emptyCabinets и высоту полос.
+ */
+export function countActiveCabinetsByType(
+  screen: ScreenConfig,
+  emptyCabinets: string[] = screen.emptyCabinets ?? [],
+): CabinetTypeBucket[] {
+  const empty = new Set(emptyCabinets)
+  const stripWidths = normalizeStripWidths(screen.stripWidths, screen.cabinetsWide)
+  const stripHeights = normalizeStripHeights(
+    screen.stripHeights,
+    stripWidths.length,
+    screen.cabinetsHigh,
+  )
+  const ranges = stripColumnRanges(stripWidths)
+  const counts = new Map<string, CabinetTypeBucket>()
+
+  for (let row = 0; row < screen.cabinetsHigh; row++) {
+    for (let col = 0; col < screen.cabinetsWide; col++) {
+      const label = cabinetLabel(row, col, screen.cabinetsHigh)
+      if (empty.has(label)) continue
+      const stripIdx =
+        ranges.find((r) => col >= r.startCol && col < r.endCol)?.index ?? 0
+      if (!isRowActiveInStrip(row, stripIdx, stripHeights, screen.cabinetsHigh)) {
+        continue
+      }
+
+      const sh = stripHeights[stripIdx] ?? screen.cabinetsHigh
+      const startRow = screen.cabinetsHigh - sh
+      const rowInStrip = row - startRow
+      let geo = resolveStripPitch(screen, stripIdx)
+      const mixGeo = resolveStripRowMixPitch(screen, stripIdx, rowInStrip)
+      if (mixGeo) geo = mixGeo
+
+      const meta = cabinetTypeMetaFromGeo(geo)
+      const prev = counts.get(meta.key)
+      if (prev) {
+        prev.count += 1
+      } else {
+        counts.set(meta.key, {
+          key: meta.key,
+          label: meta.label,
+          count: 1,
+          cases: 0,
+          perCase: meta.perCase,
+        })
+      }
+    }
+  }
+
+  return [...counts.values()]
+    .map((b) => ({
+      ...b,
+      cases: Math.ceil(b.count / Math.max(1, b.perCase)),
+    }))
+    .sort((a, b) => {
+      const ia = (CABINET_TYPE_ORDER as readonly string[]).indexOf(a.key)
+      const ib = (CABINET_TYPE_ORDER as readonly string[]).indexOf(b.key)
+      if (ia >= 0 || ib >= 0) {
+        return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib)
+      }
+      return a.label.localeCompare(b.label, 'ru')
+    })
 }
 
 function formatMeters(value: number): string {
@@ -507,16 +617,30 @@ export function aggregateCvtOptical(
   return { quantity: totalQty, russian }
 }
 
-/** Описание экрана: «Screen 1: 10×3m (60 cab, 10 cases)» */
+/** Описание экрана: при миксе — отдельно большие / маленькие / питчи */
 export function buildScreenSummaryLine(
   screen: ScreenConfig,
   activeCabinets: number,
 ): string {
-  const perCase = cabinetsPerCase(screen.cabinetWidthMm, screen.cabinetHeightMm)
-  const cases = Math.ceil(activeCabinets / perCase)
   const w = formatMeters(screen.wallWidthM)
   const h = formatMeters(screen.wallHeightM)
-  return `${screen.name}: ${w}×${h}m (${activeCabinets} cab, ${cases} cases)`
+  const buckets = countActiveCabinetsByType(screen)
+
+  if (buckets.length === 0) {
+    const perCase = cabinetsPerCase(screen.cabinetWidthMm, screen.cabinetHeightMm)
+    const cases = Math.ceil(Math.max(0, activeCabinets) / perCase)
+    return `${screen.name}: ${w}×${h}m (${activeCabinets} cab, ${cases} cases)`
+  }
+
+  if (buckets.length === 1) {
+    const b = buckets[0]!
+    return `${screen.name}: ${w}×${h}m (${b.label}: ${b.count} cab, ${b.cases} cases)`
+  }
+
+  const parts = buckets.map(
+    (b) => `${b.label}: ${b.count} cab, ${b.cases} cases`,
+  )
+  return `${screen.name}: ${w}×${h}m — ${parts.join('; ')}`
 }
 
 export function buildScreenSummary(
@@ -734,12 +858,43 @@ export function getEquipmentListXlsxFilename(meta: EquipmentListMeta): string {
 /** Скачать .xlsx в браузере */
 export async function downloadEquipmentListXlsx(state: EquipmentListState): Promise<void> {
   const blob = await equipmentListToXlsxBlob(state)
+  downloadBlob(blob, getEquipmentListXlsxFilename(state.meta))
+}
+
+export interface SchemePngs {
+  /** Картинка тикшорет (Data) */
+  dataPng: string
+  /** Картинка хашмаль (Power) */
+  powerPng: string
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = getEquipmentListXlsxFilename(state.meta)
+  anchor.download = filename
   anchor.click()
   URL.revokeObjectURL(url)
+}
+
+/** Имя полного файла: список + схемы */
+export function getFullEventXlsxFilename(meta: EquipmentListMeta): string {
+  return getEquipmentListXlsxFilename(meta).replace(/\.xlsx$/, '-full.xlsx')
+}
+
+/** Один Excel: список и под ним тикшорет, затем хашмаль */
+export async function buildFullEventWorkbook(state: EquipmentListState): Promise<Blob> {
+  const { captureSchemePanels } = await import('./panelExport')
+  const schemes = await captureSchemePanels()
+  if (!schemes) {
+    throw new Error('Схемы тикшорет и хашмаль не найдены на странице. Дождитесь расчёта сетки.')
+  }
+  return equipmentListToXlsxBlob(state, schemes)
+}
+
+export async function downloadFullEventWorkbook(state: EquipmentListState): Promise<void> {
+  const blob = await buildFullEventWorkbook(state)
+  downloadBlob(blob, getFullEventXlsxFilename(state.meta))
 }
 
 /** Границы как в шаблоне «רשימת ציוד לאירוע» */
@@ -757,8 +912,71 @@ function underlineOrValue(value: string, blanks: string): string {
   return trimmed || blanks
 }
 
+/** Снимок схем для Excel снимается в 3×; на листе картинка в размере экрана, пиксели не выбрасываются */
+const SCHEME_CAPTURE_RATIO = 3
+
+async function schemeImageForExcel(
+  dataUrl: string,
+): Promise<{ base64: string; width: number; height: number }> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image()
+    el.onload = () => resolve(el)
+    el.onerror = () => reject(new Error('Не удалось прочитать картинку схемы'))
+    el.src = dataUrl
+  })
+  const comma = dataUrl.indexOf(',')
+  return {
+    base64: comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl,
+    width: Math.max(1, Math.round(img.naturalWidth / SCHEME_CAPTURE_RATIO)),
+    height: Math.max(1, Math.round(img.naturalHeight / SCHEME_CAPTURE_RATIO)),
+  }
+}
+
+/** Резервирует строки под картинку, чтобы следующая схема не наложилась */
+function reserveImageRows(
+  worksheet: ExcelJS.Worksheet,
+  startRow: number,
+  heightPx: number,
+): number {
+  let remaining = heightPx * 0.75
+  let row = startRow
+  while (remaining > 0.5) {
+    worksheet.getRow(row).height = Math.max(15, Math.min(409, remaining))
+    remaining -= 409
+    row += 1
+  }
+  return row
+}
+
+async function appendSchemeImage(
+  workbook: ExcelJS.Workbook,
+  worksheet: ExcelJS.Worksheet,
+  startRow: number,
+  title: string,
+  dataUrl: string,
+): Promise<number> {
+  worksheet.mergeCells(startRow, 1, startRow, 4)
+  const titleCell = worksheet.getCell(startRow, 1)
+  titleCell.value = title
+  titleCell.font = { name: 'Arial', size: 14, bold: true }
+  titleCell.alignment = { horizontal: 'left', vertical: 'middle' }
+  worksheet.getRow(startRow).height = 22
+
+  const { base64, width, height } = await schemeImageForExcel(dataUrl)
+  const imageId = workbook.addImage({ base64, extension: 'png' })
+  const imageStart = startRow + 1
+  worksheet.addImage(imageId, {
+    tl: { col: 0, row: imageStart - 1 },
+    ext: { width, height },
+  })
+  return reserveImageRows(worksheet, imageStart, height) + 1
+}
+
 /** Экспорт в .xlsx (лист «לדים») — оформление как в оригинальном шаблоне */
-export async function equipmentListToXlsxBlob(state: EquipmentListState): Promise<Blob> {
+export async function equipmentListToXlsxBlob(
+  state: EquipmentListState,
+  schemes?: SchemePngs,
+): Promise<Blob> {
   const ExcelJS = (await import('exceljs')).default
 
   const workbook = new ExcelJS.Workbook()
@@ -924,6 +1142,16 @@ export async function equipmentListToXlsxBlob(state: EquipmentListState): Promis
     }
 
     footerRow = end + 1
+  }
+
+  if (schemes?.dataPng && schemes?.powerPng) {
+    worksheet.pageSetup.fitToPage = false
+    worksheet.pageSetup.fitToWidth = 0
+    worksheet.pageSetup.fitToHeight = 0
+    worksheet.pageSetup.orientation = 'portrait'
+    let row = footerRow + 1
+    row = await appendSchemeImage(workbook, worksheet, row, 'תקשורת / Тикшорет', schemes.dataPng)
+    await appendSchemeImage(workbook, worksheet, row, 'חשמל / Хашмаль', schemes.powerPng)
   }
 
   const buffer = await workbook.xlsx.writeBuffer()

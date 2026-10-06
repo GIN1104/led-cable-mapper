@@ -93,7 +93,12 @@ function sortNeighborsForPowerGrowth(
   direction: LineDirection,
 ): Cabinet[] {
   const ltr = direction === 'ltr'
+  const orthoRank = (n: Cabinet) =>
+    Math.abs(n.row - current.row) + Math.abs(n.col - current.col) === 1 ? 0 : 1
   return [...neighbors].sort((a, b) => {
+    const oa = orthoRank(a)
+    const ob = orthoRank(b)
+    if (oa !== ob) return oa - ob
     switch (preset) {
       case '3.9-reshet': {
         const upA = a.row < current.row

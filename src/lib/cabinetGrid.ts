@@ -1314,13 +1314,17 @@ function manhattan(a: Cabinet, b: Cabinet): number {
   return Math.abs(a.row - b.row) + Math.abs(a.col - b.col)
 }
 
-/** Соседи кабинета в группе (4-связность) */
+/** Соседи кабинета в группе (8-связность: ортогональ + диагональ) */
 function groupNeighbors(cab: Cabinet, byPos: Map<string, Cabinet>): Cabinet[] {
   const dirs = [
     [0, 1],
     [0, -1],
     [1, 0],
     [-1, 0],
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
   ] as const
   const result: Cabinet[] = []
   for (const [dr, dc] of dirs) {
@@ -1337,7 +1341,13 @@ function sortNeighborsBySnake(
   startEdge: ChainStartEdge,
 ): Cabinet[] {
   const direction = edgeToDirection(startEdge)
+  const orthoRank = (n: Cabinet) =>
+    Math.abs(n.row - current.row) + Math.abs(n.col - current.col) === 1 ? 0 : 1
   return [...neighbors].sort((a, b) => {
+    // Ортогональ раньше диагонали (диагональ — через пустые / углы)
+    const oa = orthoRank(a)
+    const ob = orthoRank(b)
+    if (oa !== ob) return oa - ob
     const rowA = a.row === current.row
     const rowB = b.row === current.row
     if (rowA !== rowB) return rowA ? -1 : 1
@@ -1643,11 +1653,11 @@ export function snakeOrderForGroup(
   return orderGroupBySnake(cabinets, startEdge)
 }
 
-/** Соседние кабинеты по 4-связности на сетке */
+/** Соседние кабинеты по 8-связности на сетке (диагональ разрешена) */
 export function areAdjacentCabinets(a: Cabinet, b: Cabinet): boolean {
   const dr = Math.abs(a.row - b.row)
   const dc = Math.abs(a.col - b.col)
-  return (dr === 1 && dc === 0) || (dr === 0 && dc === 1)
+  return dr <= 1 && dc <= 1 && dr + dc > 0
 }
 
 /** Длина линка между двумя соседними кабинетами (фиксированные значения для data-backup) */
@@ -1694,6 +1704,11 @@ export function powerLinkLengthBetween(
 }
 
 /** Направление связи */
-export function linkDirection(a: Cabinet, b: Cabinet): 'horizontal' | 'vertical' {
-  return a.row === b.row ? 'horizontal' : 'vertical'
+export function linkDirection(
+  a: Cabinet,
+  b: Cabinet,
+): 'horizontal' | 'vertical' | 'diagonal' {
+  if (a.row === b.row) return 'horizontal'
+  if (a.col === b.col) return 'vertical'
+  return 'diagonal'
 }

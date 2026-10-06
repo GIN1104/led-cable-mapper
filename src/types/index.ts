@@ -392,7 +392,7 @@ export interface GridLink {
 
   chainId: number
 
-  direction: 'horizontal' | 'vertical'
+  direction: 'horizontal' | 'vertical' | 'diagonal'
 
 }
 

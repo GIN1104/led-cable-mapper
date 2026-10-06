@@ -6,6 +6,7 @@ import type {
   PowerFeedMode,
   RefreshRate,
   RoutingResult,
+  ScreenConfig,
 } from '../types'
 import {
   cellPxBatch,
@@ -26,6 +27,7 @@ import {
 } from '../lib/backupPortNumbering'
 import { COLORS } from '../lib/constants'
 import { inferDataChainStart } from '../lib/dataRouting'
+import { downloadNovaLctScr } from '../lib/novaLctScr'
 import {
   capturePanelPng,
   downloadDataUrl,
@@ -57,6 +59,8 @@ interface GridVisualizationProps {
   mode: GridVisualizationMode
   /** Имя экрана — для имени файла data-ports-/power-lines-*.png */
   screenName?: string
+  /** Полный конфиг экрана — нужен для экспорта .scr NovaLCT */
+  screenConfig?: ScreenConfig
   /** שם האירוע — добавляется в имя файла при сохранении фото */
   eventName?: string
   /** Физический размер стены — для Print screen info */
@@ -383,7 +387,7 @@ function buildSmoothLanePoints(
   })
 }
 
-/** Вставляет углы 90°, убирает диагональные сегменты (ровные ← / ↑↓). */
+/** Вставляет углы 90° только на «ломаных» стыках полосы; диагональ кубик→кубик оставляем. */
 function orthogonalizeLanePoints(
   points: { x: number; y: number }[],
 ): { x: number; y: number }[] {
@@ -394,18 +398,10 @@ function orthogonalizeLanePoints(
     const cur = points[i]!
     const dx = Math.abs(cur.x - prev.x)
     const dy = Math.abs(cur.y - prev.y)
+    // Диагональный ход — прямая стрелка (может лечь поверх пустых кубиков)
     if (dx > 0.5 && dy > 0.5) {
-      // Угол: сначала по большей оси предыдущего хода, иначе по X
-      const before = out.length >= 2 ? out[out.length - 2]! : null
-      const cameHoriz =
-        before != null
-          ? Math.abs(prev.x - before.x) >= Math.abs(prev.y - before.y)
-          : dx >= dy
-      if (cameHoriz) {
-        out.push({ x: cur.x, y: prev.y })
-      } else {
-        out.push({ x: prev.x, y: cur.y })
-      }
+      out.push(cur)
+      continue
     }
     out.push(cur)
   }
@@ -660,6 +656,7 @@ export default memo(function GridVisualization({
   high,
   mode,
   screenName = 'Screen',
+  screenConfig,
   eventName = '',
   wallWidthM = 0,
   wallHeightM = 0,
@@ -1923,9 +1920,24 @@ export default memo(function GridVisualization({
     }
   }, [captureDiagram, eventName, exportBusy, isData, mode, screenName])
 
+  const handleSaveNovaLct = useCallback(() => {
+    if (!isData || !screenConfig) return
+    try {
+      downloadNovaLctScr(dataChains, screenConfig, eventName)
+    } catch (error) {
+      console.error('NovaLCT .scr export failed', error)
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : 'Не удалось сохранить .scr для NovaLCT.',
+      )
+    }
+  }, [dataChains, eventName, isData, screenConfig])
+
   return (
     <div
       ref={captureRef}
+      data-scheme-panel={mode}
       onMouseDown={() => {
         if (manualMode) onClaimKeyboard?.()
       }}
@@ -1988,6 +2000,17 @@ export default memo(function GridVisualization({
           >
             Save image / Сохранить картинку / שמור תמונה
           </button>
+          {isData && screenConfig && (
+            <button
+              type="button"
+              onClick={handleSaveNovaLct}
+              aria-label="Сохранить Screen Connection NovaLCT"
+              title="Файл .scr для NovaLCT → Screen Configuration → Screen Connection → Open"
+              className={`${editBtnClass} bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50`}
+            >
+              NovaLCT .scr
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void handleWhatsAppShare()}
@@ -2770,6 +2793,7 @@ export default memo(function GridVisualization({
               const to = cabCenter(link.to.col, link.to.row)
               const colors = lineColorFor(link.chainId)
               const isVert = link.direction === 'vertical'
+              const isDiag = link.direction === 'diagonal'
               const yMag = isMobile ? POWER_LANE_OFFSET.mobile : POWER_LANE_OFFSET.desktop
               const xInset = isMobile
                 ? POWER_VERTICAL_INSET.mobile
@@ -2799,7 +2823,10 @@ export default memo(function GridVisualization({
                   ? nextHorizontal.to.col < nextHorizontal.from.col
                   : col >= wide / 2
               let offset = 0
-              if (isVert) {
+              if (isDiag) {
+                // Диагональ — по центрам, можно поверх пустых клеток
+                offset = 0
+              } else if (isVert) {
                 const dy = to.y - from.y
                 if (Math.abs(dy) > 0.5) {
                   offset = offsetForDesiredNx(

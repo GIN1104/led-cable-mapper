@@ -6,6 +6,7 @@ import {
 } from '../types'
 import { sanitizeLoadedScreen, syncCabinetGridFromMeters } from './cabinetGrid'
 import type { EquipmentListState } from './equipmentList'
+import { clearSketchPdf } from './sketchPdfStore'
 
 const STORAGE_KEY = 'led-cable-mapper:project:v1'
 
@@ -163,8 +164,15 @@ export function hardResetProjectAndReload(): void {
   if (typeof window === 'undefined') return
   const url = new URL(window.location.href)
   url.searchParams.set('reset', '1')
-  // replace — без возврата к «полузависшему» состоянию через Back
-  window.location.replace(`${url.pathname}?${url.searchParams.toString()}${url.hash}`)
+  const next = `${url.pathname}?${url.searchParams.toString()}${url.hash}`
+  let left = false
+  const go = () => {
+    if (left) return
+    left = true
+    window.location.replace(next)
+  }
+  window.setTimeout(go, 500)
+  void clearSketchPdf().finally(go)
 }
 
 /** Аварийный сброс через URL ?reset=1 */
@@ -173,6 +181,7 @@ export function consumeEmergencyResetFromUrl(): boolean {
   const params = new URLSearchParams(window.location.search)
   if (params.get('reset') !== '1') return false
   clearPersistedProject()
+  void clearSketchPdf()
   const clean = window.location.pathname + (window.location.hash || '')
   window.history.replaceState({}, '', clean)
   return true

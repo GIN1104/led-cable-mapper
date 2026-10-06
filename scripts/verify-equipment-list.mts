@@ -10,6 +10,8 @@ import {
   aggregateCvtOptical,
   aggregateLedCards,
   buildEquipmentListState,
+  buildScreenSummaryLine,
+  countActiveCabinetsByType,
   dataLinesPerController,
   resolveCvtModel,
   resolveCvtQtyForScreen,
@@ -21,6 +23,12 @@ import {
   screenUsesPitch39,
   tikshoretCableQuantity,
 } from '../src/lib/equipmentList.ts'
+import {
+  applyStripRowMixBands,
+  bandsFromBigSmallCounts,
+  stripRowMixBandsFor,
+} from '../src/lib/rowMix.ts'
+import { stripPitchFromPreset } from '../src/lib/stripPitch.ts'
 
 function makeConfig(
   wallWidthM: number,
@@ -742,6 +750,45 @@ assertEq(
     result29.cableSchedule,
   ) ?? '',
   '',
+)
+
+// --- Строка «Экран»: микс Big/Small и разные стрипы ---
+console.log('\n=== screen summary by cabinet type ===')
+let mixScreen = makeConfig(6, 5.5, 'mix', 'MixScreen')
+{
+  const all = stripRowMixBandsFor(mixScreen)
+  all[0] = bandsFromBigSmallCounts(4, 3, false)
+  mixScreen = syncCabinetGridFromMeters(applyStripRowMixBands(mixScreen, all))
+}
+const mixBuckets = countActiveCabinetsByType(mixScreen)
+const mixBig = mixBuckets.find((b) => b.key === '3.9-big')
+const mixSmall = mixBuckets.find((b) => b.key === '3.9-small')
+// 6m wide → 12 cols; 4 big + 3 small rows → 48 big + 36 small
+assertEq('mix big count', mixBig?.count ?? 0, 48)
+assertEq('mix small count', mixSmall?.count ?? 0, 36)
+assertEq('mix big cases (÷6)', mixBig?.cases ?? 0, 8)
+assertEq('mix small cases (÷8)', mixSmall?.cases ?? 0, 5)
+const mixLine = buildScreenSummaryLine(mixScreen, 84)
+assertEq(
+  'mix summary contains both types',
+  mixLine.includes('питч 3.9 большие') && mixLine.includes('питч 3.9 маленькие') ? 1 : 0,
+  1,
+)
+
+let dualPitch = syncCabinetGridFromMeters({
+  ...makeConfig(6, 2, 'dual', 'DualPitch'),
+  stripWidths: [6, 6],
+  stripPitchConfigs: [
+    stripPitchFromPreset('3.9-big'),
+    stripPitchFromPreset('2.9'),
+  ],
+})
+dualPitch = syncCabinetGridFromMeters(dualPitch)
+const dualBuckets = countActiveCabinetsByType(dualPitch)
+assertEq(
+  'dual strips types',
+  dualBuckets.map((b) => b.key).sort().join(','),
+  '2.9,3.9-big',
 )
 
 if (failed > 0) {

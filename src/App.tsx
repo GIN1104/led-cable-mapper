@@ -38,6 +38,8 @@ import RoutingSchema from './components/RoutingSchema'
 import CableScheduleTable from './components/CableScheduleTable'
 import PackingListView from './components/PackingListView'
 import EquipmentListTable from './components/EquipmentListTable'
+import EventPackExportButtons from './components/EventPackExportButtons'
+import SketchPdfImport from './components/SketchPdfImport'
 import RoutingSpinner from './components/RoutingSpinner'
 import {
   buildEquipmentListState,
@@ -53,6 +55,7 @@ import {
   savePersistedProject,
 } from './lib/projectPersistence'
 import { clearRoutingCache } from './hooks/useRoutingResults'
+import { applySketchToScreen, type SketchDocument } from './lib/sketchPdf'
 
 type ManualOverrides = ScreenRoutingState['manualOverrides']
 type DataUndoSnapshot = Pick<
@@ -136,12 +139,14 @@ function pruneEmptyFromGrid(emptyCabinets: string[], wide: number, high: number)
 }
 
 export default function App() {
-  const initialProject = useMemo(() => {
-    if (consumeEmergencyResetFromUrl()) {
-      return createDefaultPersistedProject()
-    }
-    return loadPersistedProject() ?? createDefaultPersistedProject()
+  const boot = useMemo(() => {
+    const reset = consumeEmergencyResetFromUrl()
+    const project = reset
+      ? createDefaultPersistedProject()
+      : (loadPersistedProject() ?? createDefaultPersistedProject())
+    return { project, restorePdf: !reset }
   }, [])
+  const initialProject = boot.project
   const [screens, setScreens] = useState<ScreenConfig[]>(initialProject.screens)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activeScreenId, setActiveScreenId] = useState(initialProject.activeScreenId)
@@ -503,6 +508,27 @@ export default function App() {
       return withNext.map((s) => refreshStripPitchSnapshots(s, withNext))
     })
   }, [])
+
+  const handleApplySketch = useCallback(
+    (sketch: SketchDocument) => {
+      const next = applySketchToScreen(activeScreen, sketch)
+      updateActiveScreen(next)
+      setRoutingByScreen((prev) => ({
+        ...prev,
+        [activeScreen.id]: { ...EMPTY_SCREEN_ROUTING },
+      }))
+      setDataPaintUndo((prev) => ({ ...prev, [activeScreen.id]: [] }))
+      setPowerPaintUndo((prev) => ({ ...prev, [activeScreen.id]: [] }))
+      if (sketch.eventName) {
+        setEquipmentList((prev) =>
+          prev
+            ? { ...prev, meta: { ...prev.meta, eventName: sketch.eventName ?? '' } }
+            : prev,
+        )
+      }
+    },
+    [activeScreen, updateActiveScreen],
+  )
 
   const cloneScreenRouting = (state: ScreenRoutingState): ScreenRoutingState => ({
     manualModeData: state.manualModeData,
@@ -1596,14 +1622,17 @@ export default function App() {
             </div>
             <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
               {equipmentList && (
-                <button
-                  type="button"
-                  onClick={() => void downloadEquipmentListXlsx(equipmentList)}
-                  className="touch-manipulation rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-800 shadow-sm transition hover:bg-emerald-100"
-                  title="Сохранить רשימת ציוד в Excel"
-                >
-                  שמור xlsx
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void downloadEquipmentListXlsx(equipmentList)}
+                    className="touch-manipulation rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-800 shadow-sm transition hover:bg-emerald-100"
+                    title="Сохранить רשימת ציוד в Excel"
+                  >
+                    שמור xlsx
+                  </button>
+                  <EventPackExportButtons state={equipmentList} />
+                </>
               )}
               <button
                 type="button"
@@ -1655,7 +1684,9 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <SketchPdfImport onApply={handleApplySketch} restorePdf={boot.restorePdf} />
+            <div className="px-4 py-4 sm:px-6 sm:py-5">
             {result && result.warnings.length > 0 && (              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
                 <p className="text-xs font-semibold text-amber-900">
                   Routing warnings / Предупреждения
@@ -1721,6 +1752,7 @@ export default function App() {
                   high={config.cabinetsHigh}
                   mode="data"
                   screenName={activeScreen.name}
+                  screenConfig={config}
                   eventName={equipmentList?.meta.eventName ?? ''}
                   wallWidthM={config.wallWidthM}
                   wallHeightM={config.wallHeightM}
@@ -1866,7 +1898,9 @@ export default function App() {
               </>
               </div>
             )}
-          </div>        </main>
+            </div>
+          </div>
+        </main>
       </div>
     </div>
   )
