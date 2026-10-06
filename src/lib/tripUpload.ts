@@ -76,13 +76,38 @@ export async function collectSchemePngFiles(eventName?: string): Promise<SchemeU
 }
 
 /**
+ * URL для POST: auth-поля дублируем в query.
+ * У Apps Script multipart часто не попадает в e.parameter — тогда сервер отвечает unauthorized.
+ */
+function buildUploadRequestUrl(bridge: TripBridge): string {
+  const url = new URL(bridge.uploadUrl)
+  url.searchParams.set('action', 'uploadSchemeImages')
+  url.searchParams.set('trip_id', bridge.tripId)
+  url.searchParams.set('upload_token', bridge.uploadToken)
+  url.searchParams.set('upload_transport', bridge.uploadTransport || 'form')
+  return url.toString()
+}
+
+function formatUploadError(raw: string, fallback: string): string {
+  const text = raw.trim()
+  if (!text) return fallback
+  const lower = text.toLowerCase()
+  if (lower.includes('unauthorized') || lower === 'unauthorized') {
+    return (
+      'unauthorized — сервер отклонил upload_token. ' +
+      'Откройте mapper заново по свежей ссылке из бота (токен одноразовый/сгорает) ' +
+      'и сразу нажмите «Отправить».'
+    )
+  }
+  return text.length > 280 ? `${text.slice(0, 280)}…` : text
+}
+
+/**
  * Отправка PNG в Apps Script выезда (multipart FormData).
  *
- * Основной контракт:
- *   action=uploadSchemeImages, trip_id, upload_token, meta (JSON), files (повторяющееся поле)
- *
- * Совместимость: дополнительно кладём file0, file1, … и filename0, … —
- * на случай, если GAS ждёт индексированные поля вместо files[].
+ * Контракт:
+ *   action=uploadSchemeImages, trip_id, upload_token, meta (JSON), files
+ * Auth дублируется в query + FormData (без кастомных headers — иначе CORS preflight к GAS).
  */
 export async function uploadSchemeImagesToTrip(
   bridge: TripBridge,
@@ -95,18 +120,18 @@ export async function uploadSchemeImagesToTrip(
     return { ok: false, error: 'Нет файлов для отправки' }
   }
 
+  const metaJson = JSON.stringify({
+    source: 'led-cable-mapper',
+    title: bridge.title || undefined,
+    types: bridge.types || undefined,
+  })
+
   const form = new FormData()
   form.append('action', 'uploadSchemeImages')
   form.append('trip_id', bridge.tripId)
   form.append('upload_token', bridge.uploadToken)
-  form.append(
-    'meta',
-    JSON.stringify({
-      source: 'led-cable-mapper',
-      title: bridge.title || undefined,
-      types: bridge.types || undefined,
-    }),
-  )
+  form.append('upload_transport', bridge.uploadTransport || 'form')
+  form.append('meta', metaJson)
 
   files.forEach((file, index) => {
     const png =
@@ -118,12 +143,16 @@ export async function uploadSchemeImagesToTrip(
     form.append(`filename${index}`, file.filename)
   })
 
+  // Query несёт auth на случай, если GAS не разобрал multipart text-поля.
+  const requestUrl = buildUploadRequestUrl(bridge)
+
   let response: Response
   try {
-    response = await fetch(bridge.uploadUrl, {
+    response = await fetch(requestUrl, {
       method: 'POST',
       body: form,
       credentials: 'omit',
+      mode: 'cors',
     })
   } catch {
     return {
@@ -139,7 +168,14 @@ export async function uploadSchemeImagesToTrip(
     parsed = JSON.parse(text) as TripUploadResult
   } catch {
     if (!response.ok) {
-      return { ok: false, error: `HTTP ${response.status}: ${text.slice(0, 200)}` }
+      return {
+        ok: false,
+        error: formatUploadError(text, `HTTP ${response.status}`),
+      }
+    }
+    // Иногда GAS отдаёт plain "unauthorized"
+    if (/unauthorized/i.test(text)) {
+      return { ok: false, error: formatUploadError(text, 'unauthorized') }
     }
     return { ok: true, uploaded: files.length }
   }
@@ -148,11 +184,19 @@ export async function uploadSchemeImagesToTrip(
     return {
       ok: parsed.ok,
       uploaded: parsed.uploaded,
-      error: parsed.ok ? undefined : parsed.error || 'Ошибка загрузки',
+      error: parsed.ok
+        ? undefined
+        : formatUploadError(parsed.error || '', 'Ошибка загрузки'),
     }
   }
   if (!response.ok) {
-    return { ok: false, error: `HTTP ${response.status}` }
+    return { ok: false, error: formatUploadError(text, `HTTP ${response.status}`) }
+  }
+  if (parsed && typeof (parsed as { error?: string }).error === 'string') {
+    return {
+      ok: false,
+      error: formatUploadError((parsed as { error: string }).error, 'Ошибка загрузки'),
+    }
   }
   return { ok: true, uploaded: files.length }
 }
