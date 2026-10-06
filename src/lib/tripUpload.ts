@@ -134,18 +134,33 @@ function resultFromUnknown(data: unknown, nonce: string): TripUploadResult | nul
   }
   if (!parsed || typeof parsed !== 'object') return null
 
+  const envelope = parsed as Record<string, unknown>
+  // Контракт crew / Apps Script:
+  // { channel: 'crew-scheme-response', nonce: '', result: { ok, error?, uploaded? } }
+  const channel = typeof envelope.channel === 'string' ? envelope.channel : ''
+  const isCrewChannel =
+    channel === 'crew-scheme-response' || channel === 'scheme-response'
+
   const msgNonce = findStringField(parsed, [
     'scheme_nonce',
     'nonce',
     'clientNonce',
     'requestNonce',
   ])
+  // Пустой nonce от GAS — норма; не сравнивать с нашим UUID.
+  // Непустой — обязан совпасть (защита от чужих postMessage).
   if (msgNonce && msgNonce !== nonce) return null
+
+  // Для crew-канала без nonce принимаем только пока ждём ответ (один pending).
+  if (!msgNonce && !isCrewChannel) {
+    // без канала и без nonce — только если есть явный ok на верхнем уровне
+    if (typeof envelope.ok !== 'boolean' && !envelope.result) return null
+  }
 
   const record = findOkRecord(parsed)
   if (!record) {
     const err = findStringField(parsed, ['error', 'message'])
-    if (err && (!msgNonce || msgNonce === nonce)) {
+    if (err) {
       return { ok: false, error: formatUploadError(err, 'Ошибка загрузки') }
     }
     return null
