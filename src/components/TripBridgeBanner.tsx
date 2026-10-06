@@ -93,7 +93,7 @@ export default function TripBridgeBanner({
             onClick={() => void sendSchemes()}
             className="touch-manipulation rounded-lg border border-violet-400 bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-800 disabled:opacity-60"
           >
-            {busy ? 'Отправка…' : 'Отправить схемы в выезд'}
+            {busy ? 'Отправка…' : 'Отправить все схемы'}
           </button>
           <button
             type="button"

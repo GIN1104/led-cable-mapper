@@ -18,6 +18,23 @@ export async function dataUrlToPngBlob(dataUrl: string): Promise<Blob> {
   return response.blob()
 }
 
+/** Один PNG-файл схемы из DOM-элемента панели */
+export async function buildSchemeFileFromElement(
+  el: HTMLElement,
+  mode: 'data' | 'power',
+  screenName: string,
+  eventName?: string,
+): Promise<SchemeUploadFile> {
+  const dataUrl = await capturePanelPng(el, 2)
+  const blob = await dataUrlToPngBlob(dataUrl)
+  const png =
+    blob.type === 'image/png' ? blob : new Blob([blob], { type: 'image/png' })
+  return {
+    filename: panelExportFilename(mode, screenName || 'screen', eventName),
+    blob: png,
+  }
+}
+
 /**
  * Снимает все видимые панели схем на странице (data + power).
  * Имена: panelExportFilename + индекс, если панелей несколько.

@@ -1828,6 +1828,7 @@ export default function App() {
                   }
                   keyboardActive={paintKeyboardFocus === 'data'}
                   onClaimKeyboard={() => setPaintKeyboardFocus('data')}
+                  tripBridge={tripBridge}
                   manualMode={manualModeData}
                   onManualModeChange={handleManualModeDataChange}
                   emptyCabinets={activeScreen.emptyCabinets}
@@ -1880,6 +1881,7 @@ export default function App() {
                   rowCabinetPixelsPerStrip={rowCabinetPixelsPerStrip}
                   keyboardActive={paintKeyboardFocus === 'power'}
                   onClaimKeyboard={() => setPaintKeyboardFocus('power')}
+                  tripBridge={tripBridge}
                   manualMode={manualModePower}
                   onManualModeChange={handleManualModePowerChange}
                   emptyCabinets={activeScreen.emptyCabinets}

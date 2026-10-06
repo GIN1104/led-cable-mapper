@@ -118,7 +118,7 @@ export default function EventPackExportButtons({
             void sendToTrip()
           }}
         >
-          {busy === 'trip' ? 'В выезд…' : 'Отправить схемы в выезд'}
+          {busy === 'trip' ? 'Отправка…' : 'Отправить все схемы'}
         </button>
       )}
     </>

@@ -34,6 +34,11 @@ import {
   printPanelPng,
   sharePanelViaWhatsApp,
 } from '../lib/panelExport'
+import type { TripBridge } from '../lib/tripBridge'
+import {
+  buildSchemeFileFromElement,
+  uploadSchemeImagesToTrip,
+} from '../lib/tripUpload'
 import { CUSTOM_PRESET_LABEL, getPitchPreset } from '../lib/pitchPresets'
 import { getPowerTrunkCabinet, inferPowerLineStart } from '../lib/powerRouting'
 import {
@@ -142,6 +147,8 @@ interface GridVisualizationProps {
   keyboardActive?: boolean
   /** Клик/фокус по этой схеме — сделать её владельцем стрелок */
   onClaimKeyboard?: () => void
+  /** Deep-link выезда — кнопка отправки PNG этой схемы */
+  tripBridge?: TripBridge | null
 }
 
 /** gap=0 — кубики вплотную; stripGap — заметный разделитель между полосами */
@@ -706,11 +713,13 @@ export default memo(function GridVisualization({
   onBackupNumberingChange,
   keyboardActive = false,
   onClaimKeyboard,
+  tripBridge = null,
 }: GridVisualizationProps) {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
   )
   const [exportBusy, setExportBusy] = useState(false)
+  const [tripSendBusy, setTripSendBusy] = useState(false)
   const captureRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -1923,6 +1932,51 @@ export default memo(function GridVisualization({
     }
   }, [captureDiagram, eventName, exportBusy, isData, mode, screenName])
 
+  const handleSendToTrip = useCallback(async () => {
+    if (!tripBridge || tripSendBusy || exportBusy) return
+    const node = captureRef.current
+    if (!node) {
+      window.alert('Схема недоступна для отправки.')
+      return
+    }
+    setTripSendBusy(true)
+    try {
+      const file = await buildSchemeFileFromElement(
+        node,
+        mode,
+        screenName || 'screen',
+        eventName,
+      )
+      const result = await uploadSchemeImagesToTrip(tripBridge, [file])
+      if (!result.ok) {
+        window.alert(result.error || 'Не удалось отправить схему в выезд.')
+        return
+      }
+      window.alert(
+        isData
+          ? 'Схема Data отправлена в выезд.'
+          : 'Схема Power отправлена в выезд.',
+      )
+    } catch (error) {
+      console.error('Trip single-scheme upload failed', error)
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : 'Не удалось отправить схему в выезд.',
+      )
+    } finally {
+      setTripSendBusy(false)
+    }
+  }, [
+    eventName,
+    exportBusy,
+    isData,
+    mode,
+    screenName,
+    tripBridge,
+    tripSendBusy,
+  ])
+
   return (
     <div
       ref={captureRef}
@@ -1999,6 +2053,17 @@ export default memo(function GridVisualization({
           >
             WhatsApp
           </button>
+          {tripBridge && (
+            <button
+              type="button"
+              onClick={() => void handleSendToTrip()}
+              disabled={exportBusy || tripSendBusy}
+              aria-label="Отправить эту схему в выезд"
+              className={`${editBtnClass} bg-violet-700 text-white hover:bg-violet-800 disabled:cursor-wait disabled:opacity-60`}
+            >
+              {tripSendBusy ? 'Отправка…' : 'Отправить в выезд'}
+            </button>
+          )}
           <div
             className="flex items-center gap-1"
             role="group"
