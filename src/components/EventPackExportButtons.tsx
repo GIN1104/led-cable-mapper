@@ -10,7 +10,7 @@ import type { TripBridge } from '../lib/tripBridge'
 import { resolveReturnTripCardUrl } from '../lib/tripBridge'
 import {
   chunkFiles,
-  collectSchemePngFiles,
+  collectTripPackFiles,
   prepareSchemeBridge,
   uploadSchemeImagesToTrip,
 } from '../lib/tripUpload'
@@ -58,7 +58,7 @@ export default function EventPackExportButtons({
     const firstHandle = prepareSchemeBridge()
     setBusy('trip')
     try {
-      const files = await collectSchemePngFiles(state.meta.eventName || tripBridge.title)
+      const files = await collectTripPackFiles(state, state.meta.eventName || tripBridge.title)
       const batches = chunkFiles(files, 5)
       let uploaded = 0
       for (let i = 0; i < batches.length; i++) {
@@ -69,14 +69,16 @@ export default function EventPackExportButtons({
         uploaded += result.uploaded ?? batch.length
       }
       const open = window.confirm(
-        `Схемы отправлены в выезд (${uploaded} файл/ов).\nОткрыть карточку выезда?`,
+        `Excel и схемы отправлены в выезд (${uploaded} файл/ов).\nОткрыть карточку выезда?`,
       )
       const cardUrl = resolveReturnTripCardUrl(tripBridge)
       if (open && cardUrl) {
         window.open(cardUrl, '_blank', 'noopener,noreferrer')
       }
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Не удалось отправить схемы')
+      window.alert(
+        error instanceof Error ? error.message : 'Не удалось отправить Excel и схемы',
+      )
     } finally {
       setBusy(null)
     }
@@ -118,7 +120,7 @@ export default function EventPackExportButtons({
           type="button"
           disabled={busy != null}
           className={tripClass}
-          title="PNG схем Data/Power → карточка выезда (Apps Script)"
+          title="Excel (список + схемы) и PNG Data/Power → карточка выезда"
           onClick={(event) => {
             if (stopPropagation) event.stopPropagation()
             void sendToTrip()

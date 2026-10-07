@@ -1575,6 +1575,7 @@ export default function App() {
             <TripBridgeBanner
               bridge={tripBridge}
               eventName={equipmentList?.meta.eventName}
+              equipmentList={equipmentList}
               onDetach={handleDetachTrip}
             />
           )}

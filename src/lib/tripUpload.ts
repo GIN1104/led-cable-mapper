@@ -3,13 +3,24 @@ import {
   panelExportFilename,
   capturePanelPng,
 } from './panelExport'
+import {
+  buildFullEventWorkbook,
+  getFullEventXlsxFilename,
+  type EquipmentListState,
+} from './equipmentList'
 import { postSchemeForm } from './mapperUpload.js'
 import type { TripBridge } from './tripBridge'
+
+/** MIME полного Excel (список + схемы) */
+export const XLSX_MIME =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 export interface SchemeUploadFile {
   filename: string
   blob: Blob
-  /** PNG без префикса data:image/png;base64, — если уже известен */
+  /** По умолчанию image/png; для Excel — XLSX_MIME */
+  mimeType?: string
+  /** base64 без data:-префикса — если уже известен */
   base64?: string
 }
 
@@ -72,21 +83,25 @@ export function prepareSchemeBridge(): SchemeBridgeHandle {
   return { nonce: '', frameName: '', iframe: null }
 }
 
+function resolveUploadMime(file: SchemeUploadFile): string {
+  if (file.mimeType) return file.mimeType
+  if (file.blob.type) return file.blob.type
+  if (/\.xlsx$/i.test(file.filename)) return XLSX_MIME
+  return 'image/png'
+}
+
 async function toSchemeFilePayload(file: SchemeUploadFile): Promise<{
   name: string
   mimeType: string
   base64: string
 }> {
-  const base64 =
-    file.base64 ??
-    (await blobToBase64(
-      file.blob.type === 'image/png'
-        ? file.blob
-        : new Blob([file.blob], { type: 'image/png' }),
-    ))
+  const mimeType = resolveUploadMime(file)
+  const typedBlob =
+    file.blob.type === mimeType ? file.blob : new Blob([file.blob], { type: mimeType })
+  const base64 = file.base64 ?? (await blobToBase64(typedBlob))
   return {
     name: file.filename,
-    mimeType: 'image/png',
+    mimeType,
     base64,
   }
 }
@@ -149,8 +164,39 @@ export async function collectSchemePngFiles(eventName?: string): Promise<SchemeU
   return files
 }
 
+/** Полный Excel (список + схемы) как файл для upload в выезд */
+export async function buildEventWorkbookUploadFile(
+  state: EquipmentListState,
+): Promise<SchemeUploadFile> {
+  const blob = await buildFullEventWorkbook(state)
+  const typed =
+    blob.type === XLSX_MIME ? blob : new Blob([blob], { type: XLSX_MIME })
+  return {
+    filename: getFullEventXlsxFilename(state.meta),
+    blob: typed,
+    mimeType: XLSX_MIME,
+  }
+}
+
 /**
- * Отправка PNG через официальный postSchemeForm из mapper-upload.js.
+ * PNG всех схем + полный Excel (если есть список оборудования).
+ * Excel первым — в карточке выезда удобнее видеть пакет целиком.
+ */
+export async function collectTripPackFiles(
+  state: EquipmentListState | null | undefined,
+  eventName?: string,
+): Promise<SchemeUploadFile[]> {
+  const files: SchemeUploadFile[] = []
+  if (state) {
+    files.push(await buildEventWorkbookUploadFile(state))
+  }
+  const pngs = await collectSchemePngFiles(eventName || state?.meta.eventName)
+  files.push(...pngs)
+  return files
+}
+
+/**
+ * Отправка файлов (PNG и/или xlsx) через официальный postSchemeForm.
  * Важно: в payload добавляются transportNonce + clientOrigin внутри JSON.
  */
 export async function uploadSchemeImagesToTrip(
@@ -165,18 +211,18 @@ export async function uploadSchemeImagesToTrip(
     return { ok: false, error: 'Нет файлов для отправки' }
   }
   if (files.length > 5) {
-    return { ok: false, error: 'Можно отправить 1–5 PNG за один раз.' }
+    return { ok: false, error: 'Можно отправить 1–5 файлов за один раз.' }
   }
 
   try {
     for (const file of files) {
       if (file.blob.size > 5 * 1024 * 1024) {
-        return { ok: false, error: 'PNG до 5 МБ каждый.' }
+        return { ok: false, error: `Файл «${file.filename}» больше 5 МБ.` }
       }
     }
     const total = files.reduce((n, f) => n + f.blob.size, 0)
     if (total > 10 * 1024 * 1024) {
-      return { ok: false, error: 'Сумма PNG до 10 МБ.' }
+      return { ok: false, error: 'Сумма файлов до 10 МБ.' }
     }
 
     const filePayloads = await Promise.all(files.map((file) => toSchemeFilePayload(file)))
@@ -226,21 +272,23 @@ export function chunkFiles<T>(items: T[], maxFiles = 5): T[][] {
   return chunks
 }
 
-/** Сохранить PNG схем на диск (обход, если GAS отклонил токен). */
+/** Сохранить файлы на диск (обход, если GAS отклонил токен). */
 export async function downloadSchemeFilesLocally(
   files: SchemeUploadFile[],
 ): Promise<number> {
   let n = 0
   for (const file of files) {
-    const dataUrl = file.base64
-      ? `data:image/png;base64,${file.base64}`
-      : await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(String(reader.result ?? ''))
-          reader.onerror = () => reject(reader.error ?? new Error('FileReader'))
-          reader.readAsDataURL(file.blob)
-        })
-    downloadDataUrl(dataUrl, file.filename)
+    const mime = resolveUploadMime(file)
+    if (file.base64) {
+      downloadDataUrl(`data:${mime};base64,${file.base64}`, file.filename)
+    } else {
+      const url = URL.createObjectURL(file.blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = file.filename
+      anchor.click()
+      URL.revokeObjectURL(url)
+    }
     n += 1
     await new Promise((r) => window.setTimeout(r, 120))
   }
