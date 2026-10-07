@@ -171,8 +171,9 @@ export function tripBridgeToMetaPatch(bridge: TripBridge): {
 }
 
 /**
- * Карточка текущего выезда: ?trip=<tripId>&view=files
- * (view=files — экран с залитыми файлами).
+ * Карточка проекта выезда: только ?trip=<текущий tripId>.
+ * view=files намеренно убираем — это экран «Добавить файлы к работе»,
+ * а нужна карточка «Проект: …».
  */
 export function resolveReturnTripCardUrl(bridge: TripBridge): string | null {
   const raw = bridge.returnTripUrl?.trim()
@@ -180,15 +181,15 @@ export function resolveReturnTripCardUrl(bridge: TripBridge): string | null {
   try {
     const url = new URL(raw)
     url.searchParams.delete('trip_id')
+    url.searchParams.delete('view')
     url.searchParams.set('trip', bridge.tripId)
-    url.searchParams.set('view', 'files')
     return url.toString()
   } catch {
     return raw
   }
 }
 
-/** Открыть карточку выезда с текущим trip_id и view=files. */
+/** Открыть карточку проекта текущего выезда (trip id). */
 export function openReturnTripCard(bridge: TripBridge): boolean {
   const cardUrl = resolveReturnTripCardUrl(bridge)
   if (!cardUrl) return false

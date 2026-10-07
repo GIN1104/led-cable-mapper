@@ -191,7 +191,7 @@ export default function TripBridgeBanner({
             type="button"
             disabled={!cardUrl || busy != null}
             onClick={openCard}
-            title="Открыть карточку текущего выезда (trip + view=files)"
+            title="Открыть карточку проекта текущего выезда (trip)"
             className="touch-manipulation rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-medium text-violet-900 transition hover:bg-violet-100 disabled:opacity-50"
           >
             Открыть карточку выезда
