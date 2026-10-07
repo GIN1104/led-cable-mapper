@@ -7,7 +7,7 @@ import {
 } from '../lib/equipmentList'
 import { uploadBlobToGoogleDrive } from '../lib/googleDrive'
 import type { TripBridge } from '../lib/tripBridge'
-import { resolveReturnTripCardUrl } from '../lib/tripBridge'
+import { openReturnTripCard } from '../lib/tripBridge'
 import {
   chunkFiles,
   collectTripPackFiles,
@@ -71,9 +71,8 @@ export default function EventPackExportButtons({
       const open = window.confirm(
         `Excel и схемы отправлены в выезд (${uploaded} файл/ов).\nОткрыть карточку выезда?`,
       )
-      const cardUrl = resolveReturnTripCardUrl(tripBridge)
-      if (open && cardUrl) {
-        window.open(cardUrl, '_blank', 'noopener,noreferrer')
+      if (open) {
+        openReturnTripCard(tripBridge)
       }
     } catch (error) {
       window.alert(

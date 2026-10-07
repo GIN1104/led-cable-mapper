@@ -3,6 +3,7 @@ import type { EquipmentListState } from '../lib/equipmentList'
 import type { TripBridge } from '../lib/tripBridge'
 import {
   formatTripDateForMeta,
+  openReturnTripCard,
   resolveReturnTripCardUrl,
 } from '../lib/tripBridge'
 import {
@@ -37,11 +38,9 @@ export default function TripBridgeBanner({
   const cardUrl = resolveReturnTripCardUrl(bridge)
 
   const openCard = () => {
-    if (!cardUrl) {
+    if (!openReturnTripCard(bridge)) {
       window.alert('В ссылке нет return_trip_url — карточку выезда открыть нельзя.')
-      return
     }
-    window.open(cardUrl, '_blank', 'noopener,noreferrer')
   }
 
   const saveLocal = async () => {
@@ -114,8 +113,8 @@ export default function TripBridgeBanner({
       const open = window.confirm(
         `${withExcel ? 'Excel и схемы' : 'Схемы'} отправлены в выезд (${uploaded} файл/ов).\nОткрыть карточку выезда?`,
       )
-      if (open && cardUrl) {
-        window.open(cardUrl, '_blank', 'noopener,noreferrer')
+      if (open) {
+        openReturnTripCard(bridge)
       }
     } catch (error) {
       const message =
@@ -192,6 +191,7 @@ export default function TripBridgeBanner({
             type="button"
             disabled={!cardUrl || busy != null}
             onClick={openCard}
+            title="Открыть карточку текущего выезда (trip + view=files)"
             className="touch-manipulation rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-medium text-violet-900 transition hover:bg-violet-100 disabled:opacity-50"
           >
             Открыть карточку выезда
