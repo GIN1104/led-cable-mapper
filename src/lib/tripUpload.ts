@@ -280,7 +280,7 @@ export async function diagnoseTripUpload(bridge: TripBridge): Promise<{
       upload_token: string
       trip_id: string
       files: typeof tiny[]
-    }>,
+    }> = {},
     note?: string,
   ): Promise<TripDiagnoseProbe> => {
     const started = Date.now()
