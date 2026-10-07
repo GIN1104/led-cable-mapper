@@ -1576,6 +1576,9 @@ export default function App() {
               bridge={tripBridge}
               eventName={equipmentList?.meta.eventName}
               equipmentList={equipmentList}
+              screens={screens.map((s) => ({ id: s.id, name: s.name }))}
+              activeScreenId={activeScreenId}
+              onActivateScreen={setActiveScreenId}
               onDetach={handleDetachTrip}
             />
           )}
@@ -1670,6 +1673,9 @@ export default function App() {
                   <EventPackExportButtons
                     state={equipmentList}
                     tripBridge={tripBridge}
+                    screens={screens.map((s) => ({ id: s.id, name: s.name }))}
+                    activeScreenId={activeScreenId}
+                    onActivateScreen={setActiveScreenId}
                   />
                 </>
               )}
@@ -1910,6 +1916,9 @@ export default function App() {
                   onChange={setEquipmentList}
                   onRefreshFromRouting={handleRefreshEquipmentList}
                   tripBridge={tripBridge}
+                  screens={screens.map((s) => ({ id: s.id, name: s.name }))}
+                  activeScreenId={activeScreenId}
+                  onActivateScreen={setActiveScreenId}
                 />
               )}
 

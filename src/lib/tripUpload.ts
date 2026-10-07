@@ -72,6 +72,12 @@ function formatUploadError(raw: string, fallback: string): string {
       'Откройте mapper заново по свежей ссылке из бота и сразу нажмите «Отправить».'
     )
   }
+  if (lower.includes('unsupported_mime')) {
+    return (
+      'unsupported_mime — сервер принимает только PNG (image/png). ' +
+      'Excel (.xlsx) в этот endpoint не проходит; схемы PNG отправляем отдельно.'
+    )
+  }
   return text.length > 280 ? `${text.slice(0, 280)}…` : text
 }
 
@@ -120,6 +126,7 @@ async function captureSchemeFile(
   return {
     filename: panelExportFilename(mode, screenName || 'screen', eventName),
     blob: blob.type === 'image/png' ? blob : new Blob([blob], { type: 'image/png' }),
+    mimeType: 'image/png',
     base64: stripPngDataUrlPrefix(dataUrl),
   }
 }
@@ -164,7 +171,87 @@ export async function collectSchemePngFiles(eventName?: string): Promise<SchemeU
   return files
 }
 
-/** Полный Excel (список + схемы) как файл для upload в выезд */
+/** Экран проекта для поочерёдного снимка схем */
+export interface TripScreenCaptureTarget {
+  id: string
+  name: string
+}
+
+async function waitTwoAnimationFrames(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve())
+    })
+  })
+}
+
+/** Ждём DOM-панели схем после смены активного экрана */
+export async function waitForSchemePanels(
+  screenName: string,
+  timeoutMs = 20000,
+): Promise<void> {
+  const started = Date.now()
+  const want = screenName.trim()
+  while (Date.now() - started < timeoutMs) {
+    const dataEl = document.querySelector<HTMLElement>('[data-scheme-panel="data"]')
+    const powerEl = document.querySelector<HTMLElement>('[data-scheme-panel="power"]')
+    const shown =
+      dataEl?.getAttribute('data-screen-name')?.trim() ||
+      powerEl?.getAttribute('data-screen-name')?.trim() ||
+      ''
+    if (dataEl && powerEl && (!want || shown === want)) {
+      await waitTwoAnimationFrames()
+      // Дать роутингу дорисовать SVG
+      await new Promise((r) => window.setTimeout(r, 120))
+      return
+    }
+    await new Promise((r) => window.setTimeout(r, 50))
+  }
+  throw new Error(
+    want
+      ? `Схемы экрана «${want}» не появились. Дождитесь расчёта сетки.`
+      : 'Схемы не найдены на странице. Дождитесь расчёта сетки.',
+  )
+}
+
+/**
+ * PNG Data/Power для всех экранов проекта (по очереди активирует экран).
+ * Восстанавливает предыдущий activeScreenId в finally.
+ */
+export async function collectSchemePngFilesForScreens(
+  screens: TripScreenCaptureTarget[],
+  activeScreenId: string,
+  activateScreen: (id: string) => void,
+  eventName?: string,
+  onProgress?: (message: string) => void,
+): Promise<SchemeUploadFile[]> {
+  if (screens.length === 0) {
+    return collectSchemePngFiles(eventName)
+  }
+  const files: SchemeUploadFile[] = []
+  try {
+    for (let i = 0; i < screens.length; i++) {
+      const screen = screens[i]!
+      onProgress?.(
+        screens.length > 1
+          ? `Снимок экрана ${i + 1}/${screens.length}: ${screen.name || screen.id}`
+          : 'Снимки схем…',
+      )
+      activateScreen(screen.id)
+      await waitForSchemePanels(screen.name)
+      const batch = await collectSchemePngFiles(eventName)
+      files.push(...batch)
+    }
+  } finally {
+    if (activeScreenId) activateScreen(activeScreenId)
+  }
+  if (files.length === 0) {
+    throw new Error('Не удалось снять схемы ни с одного экрана.')
+  }
+  return files
+}
+
+/** Полный Excel (.xlsx) — для локального скачивания; в GAS даёт unsupported_mime */
 export async function buildEventWorkbookUploadFile(
   state: EquipmentListState,
 ): Promise<SchemeUploadFile> {
@@ -179,20 +266,162 @@ export async function buildEventWorkbookUploadFile(
 }
 
 /**
- * PNG всех схем + полный Excel (если есть список оборудования).
- * Excel первым — в карточке выезда удобнее видеть пакет целиком.
+ * Список оборудования → PNG (вместо xlsx: uploadSchemeImages принимает только image/*).
+ */
+export async function buildEquipmentListPngUploadFile(
+  state: EquipmentListState,
+): Promise<SchemeUploadFile> {
+  const { toPng } = await import('html-to-image')
+  const filename = getFullEventXlsxFilename(state.meta).replace(/\.xlsx$/i, '.png')
+  const meta = state.meta
+  const rows = [
+    ...state.rows.map((r) => ({
+      hebrew: r.hebrew,
+      russian: r.russian,
+      quantity: r.quantity,
+      footprint: r.footprint,
+    })),
+    ...state.customRows.map((r) => ({
+      hebrew: r.hebrew,
+      russian: r.russian,
+      quantity: r.quantity,
+      footprint: r.footprint,
+    })),
+  ]
+
+  const esc = (value: string) =>
+    value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+
+  const metaLine = [
+    meta.eventName && `שם: ${meta.eventName}`,
+    meta.eventDate && `תאריך: ${meta.eventDate}`,
+    meta.hours && `שעות: ${meta.hours}`,
+    meta.location && `מיקום: ${meta.location}`,
+    meta.contact && `איש קשר: ${meta.contact}`,
+    meta.car && `רכב: ${meta.car}`,
+    meta.types && `סוג: ${meta.types}`,
+  ]
+    .filter(Boolean)
+    .map((line) => `<div>${esc(line!)}</div>`)
+    .join('')
+
+  const bodyRows = rows
+    .map(
+      (r) => `<tr>
+      <td>${esc(r.hebrew)}</td>
+      <td style="text-align:left;direction:ltr">${esc(r.russian)}</td>
+      <td>${esc(r.quantity)}</td>
+      <td>${esc(r.footprint)}</td>
+    </tr>`,
+    )
+    .join('')
+
+  const host = document.createElement('div')
+  host.setAttribute('data-trip-excel-png', '1')
+  host.style.cssText =
+    'position:fixed;left:-10000px;top:0;width:900px;background:#fff;padding:24px;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;z-index:-1;'
+  host.innerHTML = `
+    <div style="direction:rtl;text-align:right">
+      <h1 style="margin:0 0 8px;font-size:22px">רשימת ציוד לאירוע</h1>
+      <div style="margin-bottom:16px;font-size:13px;line-height:1.45;color:#334155">${metaLine || '—'}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="background:#e2e8f0">
+            <th style="border:1px solid #94a3b8;padding:6px 8px">ציוד</th>
+            <th style="border:1px solid #94a3b8;padding:6px 8px;text-align:left;direction:ltr">Оборудование</th>
+            <th style="border:1px solid #94a3b8;padding:6px 8px">כמויות</th>
+            <th style="border:1px solid #94a3b8;padding:6px 8px">תופסות</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${bodyRows || '<tr><td colspan="4" style="border:1px solid #94a3b8;padding:8px">אין שורות</td></tr>'}
+        </tbody>
+      </table>
+      <p style="margin:12px 0 0;font-size:11px;color:#64748b">LED Cable Mapper · список как PNG (xlsx на GAS не принимается)</p>
+    </div>
+  `
+  // Стили ячеек
+  host.querySelectorAll('td').forEach((td) => {
+    ;(td as HTMLElement).style.cssText +=
+      'border:1px solid #94a3b8;padding:6px 8px;vertical-align:top;'
+  })
+
+  document.body.appendChild(host)
+  try {
+    await waitTwoAnimationFrames()
+    const dataUrl = await toPng(host, {
+      backgroundColor: '#ffffff',
+      pixelRatio: 2,
+      cacheBust: true,
+      width: Math.ceil(host.scrollWidth),
+      height: Math.ceil(host.scrollHeight),
+    })
+    if (!dataUrl.startsWith('data:image/png')) {
+      throw new Error('Не удалось собрать PNG списка оборудования')
+    }
+    const blob = await dataUrlToPngBlob(dataUrl)
+    return {
+      filename,
+      blob: blob.type === 'image/png' ? blob : new Blob([blob], { type: 'image/png' }),
+      mimeType: 'image/png',
+      base64: stripPngDataUrlPrefix(dataUrl),
+    }
+  } finally {
+    host.remove()
+  }
+}
+
+export interface TripPackFiles {
+  /** Схемы PNG всех экранов */
+  pngs: SchemeUploadFile[]
+  /** Список оборудования как PNG (эквивалент Excel для GAS) */
+  excel: SchemeUploadFile | null
+}
+
+/**
+ * Пакет в выезд: PNG всех экранов + список оборудования (PNG вместо xlsx).
  */
 export async function collectTripPackFiles(
   state: EquipmentListState | null | undefined,
   eventName?: string,
-): Promise<SchemeUploadFile[]> {
-  const files: SchemeUploadFile[] = []
+  screenCapture?: {
+    screens: TripScreenCaptureTarget[]
+    activeScreenId: string
+    activateScreen: (id: string) => void
+    onProgress?: (message: string) => void
+  },
+): Promise<TripPackFiles> {
+  const name = eventName || state?.meta.eventName
+  const pngs = screenCapture
+    ? await collectSchemePngFilesForScreens(
+        screenCapture.screens,
+        screenCapture.activeScreenId,
+        screenCapture.activateScreen,
+        name,
+        screenCapture.onProgress,
+      )
+    : await collectSchemePngFiles(name)
+  let excel: SchemeUploadFile | null = null
   if (state) {
-    files.push(await buildEventWorkbookUploadFile(state))
+    screenCapture?.onProgress?.('Сборка списка оборудования (PNG)…')
+    excel = await buildEquipmentListPngUploadFile(state)
   }
-  const pngs = await collectSchemePngFiles(eventName || state?.meta.eventName)
-  files.push(...pngs)
-  return files
+  return { pngs, excel }
+}
+
+/** Плоский список для локального скачивания / upload */
+export function flattenTripPackFiles(pack: TripPackFiles): SchemeUploadFile[] {
+  return pack.excel ? [pack.excel, ...pack.pngs] : [...pack.pngs]
+}
+
+export interface UploadTripPackResult {
+  uploaded: number
+  excelUploaded: boolean
+  excelError?: string
 }
 
 /**
@@ -259,6 +488,42 @@ export async function uploadSchemeImagesToTrip(
           ? formatUploadError(error.message, error.message)
           : 'Не удалось отправить схемы в выезд',
     }
+  }
+}
+
+/**
+ * Отправка пакета: список оборудования (PNG) + схемы всех экранов, пачками по 5.
+ * Excel как .xlsx на GAS даёт unsupported_mime — поэтому список уходит PNG.
+ */
+export async function uploadTripPackToTrip(
+  bridge: TripBridge,
+  pack: TripPackFiles,
+  onStatus?: (message: string) => void,
+): Promise<UploadTripPackResult> {
+  const allFiles = flattenTripPackFiles(pack)
+  if (allFiles.length === 0) {
+    throw new Error('Нет файлов для отправки')
+  }
+  const batches = chunkFiles(allFiles, 5)
+  let uploaded = 0
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i]!
+    onStatus?.(
+      batches.length > 1
+        ? `Отправка ${i + 1}/${batches.length}…`
+        : pack.excel
+          ? 'Отправка списка и схем…'
+          : 'Отправка схем…',
+    )
+    const result = await uploadSchemeImagesToTrip(bridge, batch)
+    if (!result.ok) {
+      throw new Error(result.error || 'Ошибка загрузки')
+    }
+    uploaded += result.uploaded ?? batch.length
+  }
+  return {
+    uploaded,
+    excelUploaded: Boolean(pack.excel),
   }
 }
 

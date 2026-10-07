@@ -9,10 +9,9 @@ import { uploadBlobToGoogleDrive } from '../lib/googleDrive'
 import type { TripBridge } from '../lib/tripBridge'
 import { openReturnTripCard } from '../lib/tripBridge'
 import {
-  chunkFiles,
   collectTripPackFiles,
-  prepareSchemeBridge,
-  uploadSchemeImagesToTrip,
+  uploadTripPackToTrip,
+  type TripScreenCaptureTarget,
 } from '../lib/tripUpload'
 
 interface EventPackExportButtonsProps {
@@ -22,6 +21,9 @@ interface EventPackExportButtonsProps {
   compact?: boolean
   /** Активный deep-link выезда — кнопка «Отправить схемы в выезд» */
   tripBridge?: TripBridge | null
+  screens?: TripScreenCaptureTarget[]
+  activeScreenId?: string
+  onActivateScreen?: (id: string) => void
 }
 
 export default function EventPackExportButtons({
@@ -29,6 +31,9 @@ export default function EventPackExportButtons({
   stopPropagation = false,
   compact = false,
   tripBridge = null,
+  screens = [],
+  activeScreenId = '',
+  onActivateScreen,
 }: EventPackExportButtonsProps) {
   const [busy, setBusy] = useState<'excel' | 'drive' | 'trip' | null>(null)
 
@@ -55,28 +60,33 @@ export default function EventPackExportButtons({
 
   const sendToTrip = async () => {
     if (busy || !tripBridge) return
-    const firstHandle = prepareSchemeBridge()
     setBusy('trip')
     try {
-      const files = await collectTripPackFiles(state, state.meta.eventName || tripBridge.title)
-      const batches = chunkFiles(files, 5)
-      let uploaded = 0
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i]!
-        const handle = i === 0 ? firstHandle : prepareSchemeBridge()
-        const result = await uploadSchemeImagesToTrip(tripBridge, batch, handle)
-        if (!result.ok) throw new Error(result.error || 'Ошибка загрузки')
-        uploaded += result.uploaded ?? batch.length
-      }
+      const screenCapture =
+        screens.length > 0 && activeScreenId && onActivateScreen
+          ? {
+              screens,
+              activeScreenId,
+              activateScreen: onActivateScreen,
+            }
+          : undefined
+      const pack = await collectTripPackFiles(
+        state,
+        state.meta.eventName || tripBridge.title,
+        screenCapture,
+      )
+      const result = await uploadTripPackToTrip(tripBridge, pack)
       const open = window.confirm(
-        `Excel и схемы отправлены в выезд (${uploaded} файл/ов).\nОткрыть карточку выезда?`,
+        `В выезд отправлено файлов: ${result.uploaded}` +
+          (result.excelUploaded ? ' (включая список оборудования PNG).' : '.') +
+          `\nОткрыть карточку выезда?`,
       )
       if (open) {
         openReturnTripCard(tripBridge)
       }
     } catch (error) {
       window.alert(
-        error instanceof Error ? error.message : 'Не удалось отправить Excel и схемы',
+        error instanceof Error ? error.message : 'Не удалось отправить файлы в выезд',
       )
     } finally {
       setBusy(null)
@@ -119,7 +129,7 @@ export default function EventPackExportButtons({
           type="button"
           disabled={busy != null}
           className={tripClass}
-          title="Excel (список + схемы) и PNG Data/Power → карточка выезда"
+          title="PNG схем всех экранов (+ Excel при поддержке GAS) → карточка выезда"
           onClick={(event) => {
             if (stopPropagation) event.stopPropagation()
             void sendToTrip()

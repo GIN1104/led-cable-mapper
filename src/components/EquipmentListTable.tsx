@@ -9,12 +9,16 @@ import { createEmptyCustomRow, downloadEquipmentListXlsx } from '../lib/equipmen
 import EventPackExportButtons from './EventPackExportButtons'
 import CollapsibleSection from './CollapsibleSection'
 import type { TripBridge } from '../lib/tripBridge'
+import type { TripScreenCaptureTarget } from '../lib/tripUpload'
 
 interface EquipmentListTableProps {
   state: EquipmentListState
   onChange: (next: EquipmentListState) => void
   onRefreshFromRouting: () => void
   tripBridge?: TripBridge | null
+  screens?: TripScreenCaptureTarget[]
+  activeScreenId?: string
+  onActivateScreen?: (id: string) => void
 }
 
 function MetaField({
@@ -44,6 +48,9 @@ export default function EquipmentListTable({
   onChange,
   onRefreshFromRouting,
   tripBridge = null,
+  screens = [],
+  activeScreenId = '',
+  onActivateScreen,
 }: EquipmentListTableProps) {
   const updateMeta = useCallback(
     (patch: Partial<EquipmentListMeta>) => {
@@ -151,7 +158,14 @@ export default function EquipmentListTable({
           >
             Сохранить Excel (.xlsx)
           </button>
-          <EventPackExportButtons state={state} compact tripBridge={tripBridge} />
+          <EventPackExportButtons
+            state={state}
+            compact
+            tripBridge={tripBridge}
+            screens={screens}
+            activeScreenId={activeScreenId}
+            onActivateScreen={onActivateScreen}
+          />
         </div>
 
         <div className="overflow-x-auto">

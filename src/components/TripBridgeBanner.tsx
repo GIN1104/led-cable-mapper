@@ -7,12 +7,12 @@ import {
   resolveReturnTripCardUrl,
 } from '../lib/tripBridge'
 import {
-  chunkFiles,
   collectTripPackFiles,
   diagnoseTripUpload,
   downloadSchemeFilesLocally,
-  prepareSchemeBridge,
-  uploadSchemeImagesToTrip,
+  flattenTripPackFiles,
+  uploadTripPackToTrip,
+  type TripScreenCaptureTarget,
 } from '../lib/tripUpload'
 
 interface TripBridgeBannerProps {
@@ -20,6 +20,10 @@ interface TripBridgeBannerProps {
   eventName?: string
   /** Список оборудования — нужен для отправки Excel вместе со схемами */
   equipmentList?: EquipmentListState | null
+  /** Все экраны проекта — снимаем схемы с каждого */
+  screens?: TripScreenCaptureTarget[]
+  activeScreenId?: string
+  onActivateScreen?: (id: string) => void
   onDetach: () => void
 }
 
@@ -27,6 +31,9 @@ export default function TripBridgeBanner({
   bridge,
   eventName,
   equipmentList = null,
+  screens = [],
+  activeScreenId = '',
+  onActivateScreen,
   onDetach,
 }: TripBridgeBannerProps) {
   const [busy, setBusy] = useState<'send' | 'diag' | 'local' | null>(null)
@@ -36,6 +43,16 @@ export default function TripBridgeBanner({
   const tripShort =
     bridge.tripId.length > 12 ? `${bridge.tripId.slice(0, 8)}…` : bridge.tripId
   const cardUrl = resolveReturnTripCardUrl(bridge)
+
+  const screenCapture =
+    screens.length > 0 && activeScreenId && onActivateScreen
+      ? {
+          screens,
+          activeScreenId,
+          activateScreen: onActivateScreen,
+          onProgress: setStatus,
+        }
+      : undefined
 
   const openCard = () => {
     if (!openReturnTripCard(bridge)) {
@@ -48,8 +65,12 @@ export default function TripBridgeBanner({
     setBusy('local')
     setStatus(equipmentList ? 'Сборка Excel и PNG…' : 'Скачивание PNG…')
     try {
-      const files = await collectTripPackFiles(equipmentList, eventName || bridge.title)
-      const n = await downloadSchemeFilesLocally(files)
+      const pack = await collectTripPackFiles(
+        equipmentList,
+        eventName || bridge.title,
+        screenCapture,
+      )
+      const n = await downloadSchemeFilesLocally(flattenTripPackFiles(pack))
       setStatus(`Скачано локально: ${n} файл/ов`)
       window.alert(
         `Сохранено на диск: ${n} файл/ов.\n(В карточку выезда это не попадает — только локально.)`,
@@ -85,51 +106,40 @@ export default function TripBridgeBanner({
 
   const sendSchemes = async () => {
     if (busy) return
-    const bridgeHandle = prepareSchemeBridge()
     setBusy('send')
     setStatus(null)
     try {
-      const withExcel = Boolean(equipmentList)
-      setStatus(withExcel ? 'Сборка Excel и схем…' : 'Снимки схем…')
-      const files = await collectTripPackFiles(equipmentList, eventName || bridge.title)
-      const batches = chunkFiles(files, 5)
-      let uploaded = 0
-      for (let i = 0; i < batches.length; i++) {
-        setStatus(
-          batches.length > 1
-            ? `Отправка ${i + 1}/${batches.length}…`
-            : withExcel
-              ? 'Отправка Excel и схем…'
-              : 'Отправка схем…',
-        )
-        const handle = i === 0 ? bridgeHandle : prepareSchemeBridge()
-        const result = await uploadSchemeImagesToTrip(bridge, batches[i]!, handle)
-        if (!result.ok) {
-          throw new Error(result.error || 'Ошибка загрузки')
-        }
-        uploaded += result.uploaded ?? batches[i]!.length
-      }
-      setStatus(`Готово: загружено файлов ${uploaded}`)
+      setStatus('Сборка файлов…')
+      const pack = await collectTripPackFiles(
+        equipmentList,
+        eventName || bridge.title,
+        screenCapture,
+      )
+      const result = await uploadTripPackToTrip(bridge, pack, setStatus)
+      setStatus(`Готово: загружено файлов ${result.uploaded}`)
       const open = window.confirm(
-        `${withExcel ? 'Excel и схемы' : 'Схемы'} отправлены в выезд (${uploaded} файл/ов).\nОткрыть карточку выезда?`,
+        `В выезд отправлено файлов: ${result.uploaded}` +
+          (result.excelUploaded ? ' (включая список оборудования PNG).' : '.') +
+          `\nОткрыть карточку выезда?`,
       )
       if (open) {
         openReturnTripCard(bridge)
       }
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Не удалось отправить Excel и схемы'
+        error instanceof Error ? error.message : 'Не удалось отправить файлы'
       setStatus(message)
       const save = window.confirm(
-        `${message}\n\nОбойти отказ токена GAS с клиента нельзя.\nСкачать Excel и PNG на этот компьютер сейчас?`,
+        `${message}\n\nСкачать Excel и PNG на этот компьютер сейчас?`,
       )
       if (save) {
         try {
-          const files = await collectTripPackFiles(
+          const pack = await collectTripPackFiles(
             equipmentList,
             eventName || bridge.title,
+            screenCapture,
           )
-          const n = await downloadSchemeFilesLocally(files)
+          const n = await downloadSchemeFilesLocally(flattenTripPackFiles(pack))
           setStatus(`${message} · скачано локально ${n} файл/ов`)
           window.alert(`Скачано локально: ${n} файл/ов`)
         } catch (saveError) {
@@ -166,7 +176,7 @@ export default function TripBridgeBanner({
             type="button"
             disabled={busy != null}
             onClick={() => void sendSchemes()}
-            title="Excel (список + схемы) и PNG Data/Power → карточка выезда"
+            title="PNG схем всех экранов (+ Excel, если сервер принимает) → карточка выезда"
             className="touch-manipulation rounded-lg border border-violet-400 bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-800 disabled:opacity-60"
           >
             {busy === 'send' ? 'Отправка…' : 'Отправить все схемы'}
