@@ -294,9 +294,8 @@ export default function App() {
   const showInitialSpinner = isRouting || result == null
   const showRecalcOverlay = isMeterPending && result != null
 
-  const prevGridSize = useRef(
-    `${activeScreen.id}:${activeScreen.cabinetsWide}x${activeScreen.cabinetsHigh}`,
-  )
+  /** Размер сетки отдельно по каждому экрану. Смена Screen 1 → Screen 2 не сбрасывает ручную схему. */
+  const prevGridSizeByScreen = useRef<Record<string, string>>({})
 
   const globalTotals = useMemo(() => {
     if (screens.length <= 1) {
@@ -478,10 +477,12 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const gridKey = `${activeScreen.id}:${activeScreen.cabinetsWide}x${activeScreen.cabinetsHigh}`
-    if (gridKey === prevGridSize.current) return
-
-    prevGridSize.current = gridKey
+    const sizeKey = `${activeScreen.cabinetsWide}x${activeScreen.cabinetsHigh}`
+    const previous = prevGridSizeByScreen.current[activeScreen.id]
+    if (previous === sizeKey) return
+    prevGridSizeByScreen.current[activeScreen.id] = sizeKey
+    // Первый заход на экран: схема уже сохранена под текущий размер, не пересобираем.
+    if (previous === undefined) return
 
     const applyGridChange = () => {
       setRoutingByScreen((prev) => {
@@ -1790,6 +1791,7 @@ export default function App() {
                 }`}
               >
                 <GridVisualization
+                  key={`${activeScreen.id}:data`}
                   result={result!}
                   wide={config.cabinetsWide}
                   high={config.cabinetsHigh}
@@ -1854,6 +1856,7 @@ export default function App() {
                   )}
                 />
                 <GridVisualization
+                  key={`${activeScreen.id}:power`}
                   result={result!}
                   wide={config.cabinetsWide}
                   high={config.cabinetsHigh}

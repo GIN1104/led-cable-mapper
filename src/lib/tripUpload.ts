@@ -5,6 +5,7 @@ import {
 } from './panelExport'
 import {
   buildFullEventWorkbook,
+  getEquipmentListExportRows,
   getFullEventXlsxFilename,
   type EquipmentListState,
 } from './equipmentList'
@@ -265,113 +266,190 @@ export async function buildEventWorkbookUploadFile(
   }
 }
 
+function wrapCanvasLine(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string[] {
+  const source = String(text ?? '').replace(/\r/g, '')
+  if (!source) return ['']
+  const lines: string[] = []
+  for (const paragraph of source.split('\n')) {
+    if (!paragraph) {
+      lines.push('')
+      continue
+    }
+    let line = ''
+    for (const ch of paragraph) {
+      const next = line + ch
+      if (line && ctx.measureText(next).width > maxWidth) {
+        lines.push(line)
+        line = ch.trim() ? ch : ''
+      } else {
+        line = next
+      }
+    }
+    lines.push(line)
+  }
+  return lines.length > 0 ? lines : ['']
+}
+
 /**
- * Список оборудования → PNG (вместо xlsx: uploadSchemeImages принимает только image/*).
+ * Список оборудования из того же набора строк, что и Excel, рисуется в PNG.
+ * html-to-image за экраном давал пустой файл; canvas всегда содержит таблицу.
+ * GAS не принимает .xlsx (unsupported_mime) — в выезд уходит этот PNG вместе со схемами.
  */
 export async function buildEquipmentListPngUploadFile(
   state: EquipmentListState,
 ): Promise<SchemeUploadFile> {
-  const { toPng } = await import('html-to-image')
   const filename = getFullEventXlsxFilename(state.meta).replace(/\.xlsx$/i, '.png')
+  const rows = getEquipmentListExportRows(state)
   const meta = state.meta
-  const rows = [
-    ...state.rows.map((r) => ({
-      hebrew: r.hebrew,
-      russian: r.russian,
-      quantity: r.quantity,
-      footprint: r.footprint,
-    })),
-    ...state.customRows.map((r) => ({
-      hebrew: r.hebrew,
-      russian: r.russian,
-      quantity: r.quantity,
-      footprint: r.footprint,
-    })),
-  ]
+  const metaLines = [
+    meta.eventDate ? `תאריך: ${meta.eventDate}` : '',
+    meta.eventName ? `שם האירוע: ${meta.eventName}` : '',
+    meta.location ? `מיקום: ${meta.location}` : '',
+    meta.hours ? `שעות: ${meta.hours}` : '',
+    meta.contact ? `איש קשר: ${meta.contact}` : '',
+    meta.car ? `רכב: ${meta.car}` : '',
+    meta.types ? `סוג: ${meta.types}` : '',
+  ].filter(Boolean)
 
-  const esc = (value: string) =>
-    value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
+  const scale = 2
+  const pad = 28
+  const tableW = 1320
+  const colW = [300, 520, 260, 240]
+  const lineH = 22
+  const cellPadX = 10
+  const cellPadY = 8
+  const font = '16px Arial, "Segoe UI", sans-serif'
+  const fontBold = 'bold 16px Arial, "Segoe UI", sans-serif'
+  const fontTitle = 'bold 26px Arial, "Segoe UI", sans-serif'
 
-  const metaLine = [
-    meta.eventName && `שם: ${meta.eventName}`,
-    meta.eventDate && `תאריך: ${meta.eventDate}`,
-    meta.hours && `שעות: ${meta.hours}`,
-    meta.location && `מיקום: ${meta.location}`,
-    meta.contact && `איש קשר: ${meta.contact}`,
-    meta.car && `רכב: ${meta.car}`,
-    meta.types && `סוג: ${meta.types}`,
-  ]
-    .filter(Boolean)
-    .map((line) => `<div>${esc(line!)}</div>`)
-    .join('')
+  const measure = document.createElement('canvas').getContext('2d')
+  if (!measure) throw new Error('Canvas недоступен')
 
-  const bodyRows = rows
-    .map(
-      (r) => `<tr>
-      <td>${esc(r.hebrew)}</td>
-      <td style="text-align:left;direction:ltr">${esc(r.russian)}</td>
-      <td>${esc(r.quantity)}</td>
-      <td>${esc(r.footprint)}</td>
-    </tr>`,
+  const cellLines = (
+    text: string,
+    width: number,
+    bold: boolean,
+  ): string[] => {
+    measure.font = bold ? fontBold : font
+    return wrapCanvasLine(measure, text, Math.max(20, width - cellPadX * 2))
+  }
+
+  const headers = ['ציוד', 'Оборудование', 'כמויות', 'תופסות']
+  const headerHeights = headers.map((title, i) => {
+    const lines = cellLines(title, colW[i]!, true)
+    return Math.max(36, lines.length * lineH + cellPadY * 2)
+  })
+  const headerH = Math.max(...headerHeights)
+
+  const body = rows.map((row) => {
+    const values = [row.hebrew, row.russian, row.quantity, row.footprint]
+    const wrapped = values.map((value, i) => cellLines(value, colW[i]!, false))
+    const height = Math.max(
+      34,
+      ...wrapped.map((lines) => lines.length * lineH + cellPadY * 2),
     )
-    .join('')
-
-  const host = document.createElement('div')
-  host.setAttribute('data-trip-excel-png', '1')
-  host.style.cssText =
-    'position:fixed;left:-10000px;top:0;width:900px;background:#fff;padding:24px;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;z-index:-1;'
-  host.innerHTML = `
-    <div style="direction:rtl;text-align:right">
-      <h1 style="margin:0 0 8px;font-size:22px">רשימת ציוד לאירוע</h1>
-      <div style="margin-bottom:16px;font-size:13px;line-height:1.45;color:#334155">${metaLine || '—'}</div>
-      <table style="width:100%;border-collapse:collapse;font-size:12px">
-        <thead>
-          <tr style="background:#e2e8f0">
-            <th style="border:1px solid #94a3b8;padding:6px 8px">ציוד</th>
-            <th style="border:1px solid #94a3b8;padding:6px 8px;text-align:left;direction:ltr">Оборудование</th>
-            <th style="border:1px solid #94a3b8;padding:6px 8px">כמויות</th>
-            <th style="border:1px solid #94a3b8;padding:6px 8px">תופסות</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${bodyRows || '<tr><td colspan="4" style="border:1px solid #94a3b8;padding:8px">אין שורות</td></tr>'}
-        </tbody>
-      </table>
-      <p style="margin:12px 0 0;font-size:11px;color:#64748b">LED Cable Mapper · список как PNG (xlsx на GAS не принимается)</p>
-    </div>
-  `
-  // Стили ячеек
-  host.querySelectorAll('td').forEach((td) => {
-    ;(td as HTMLElement).style.cssText +=
-      'border:1px solid #94a3b8;padding:6px 8px;vertical-align:top;'
+    return { wrapped, height }
   })
 
-  document.body.appendChild(host)
-  try {
-    await waitTwoAnimationFrames()
-    const dataUrl = await toPng(host, {
-      backgroundColor: '#ffffff',
-      pixelRatio: 2,
-      cacheBust: true,
-      width: Math.ceil(host.scrollWidth),
-      height: Math.ceil(host.scrollHeight),
+  measure.font = font
+  const metaBlockH = metaLines.length * 24
+  const titleH = 40
+  const tableH = headerH + body.reduce((n, row) => n + row.height, 0)
+  const logicalW = pad * 2 + tableW
+  const logicalH = pad + titleH + metaBlockH + 16 + tableH + pad
+
+  const canvas = document.createElement('canvas')
+  canvas.width = logicalW * scale
+  canvas.height = logicalH * scale
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas недоступен')
+  ctx.scale(scale, scale)
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, logicalW, logicalH)
+
+  ctx.fillStyle = '#0f172a'
+  ctx.font = fontTitle
+  ctx.direction = 'rtl'
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'top'
+  ctx.fillText('רשימת ציוד לאירוע', logicalW - pad, pad)
+
+  ctx.font = font
+  ctx.fillStyle = '#334155'
+  metaLines.forEach((line, i) => {
+    ctx.fillText(line, logicalW - pad, pad + titleH + i * 24)
+  })
+
+  const tableX = pad
+  const tableY = pad + titleH + metaBlockH + 16
+
+  const paintCell = (
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    lines: string[],
+    opts: { bold?: boolean; rtl?: boolean; fill?: string },
+  ) => {
+    ctx.fillStyle = opts.fill ?? '#ffffff'
+    ctx.fillRect(x, y, w, h)
+    ctx.strokeStyle = '#64748b'
+    ctx.lineWidth = 1
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1)
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(x + cellPadX, y + cellPadY, w - cellPadX * 2, h - cellPadY * 2)
+    ctx.clip()
+    ctx.font = opts.bold ? fontBold : font
+    ctx.fillStyle = '#0f172a'
+    ctx.direction = opts.rtl ? 'rtl' : 'ltr'
+    ctx.textAlign = opts.rtl ? 'right' : 'left'
+    ctx.textBaseline = 'top'
+    const tx = opts.rtl ? x + w - cellPadX : x + cellPadX
+    lines.forEach((line, i) => {
+      ctx.fillText(line, tx, y + cellPadY + i * lineH)
     })
-    if (!dataUrl.startsWith('data:image/png')) {
-      throw new Error('Не удалось собрать PNG списка оборудования')
-    }
-    const blob = await dataUrlToPngBlob(dataUrl)
-    return {
-      filename,
-      blob: blob.type === 'image/png' ? blob : new Blob([blob], { type: 'image/png' }),
-      mimeType: 'image/png',
-      base64: stripPngDataUrlPrefix(dataUrl),
-    }
-  } finally {
-    host.remove()
+    ctx.restore()
+  }
+
+  let x = tableX
+  headers.forEach((title, i) => {
+    const rtl = i !== 1
+    paintCell(x, tableY, colW[i]!, headerH, cellLines(title, colW[i]!, true), {
+      bold: true,
+      rtl,
+      fill: '#e2e8f0',
+    })
+    x += colW[i]!
+  })
+
+  let y = tableY + headerH
+  for (const row of body) {
+    x = tableX
+    row.wrapped.forEach((lines, i) => {
+      paintCell(x, y, colW[i]!, row.height, lines, { rtl: i !== 1 })
+      x += colW[i]!
+    })
+    y += row.height
+  }
+
+  const dataUrl = canvas.toDataURL('image/png')
+  if (!dataUrl.startsWith('data:image/png') || dataUrl.length < 800) {
+    throw new Error('PNG списка оборудования получился пустым')
+  }
+  const blob = await dataUrlToPngBlob(dataUrl)
+  if (blob.size < 1500) {
+    throw new Error('PNG списка оборудования получился пустым')
+  }
+  return {
+    filename,
+    blob: blob.type === 'image/png' ? blob : new Blob([blob], { type: 'image/png' }),
+    mimeType: 'image/png',
+    base64: stripPngDataUrlPrefix(dataUrl),
   }
 }
 
