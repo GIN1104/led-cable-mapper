@@ -1,5 +1,11 @@
 const CLIENT_ID_KEY = 'led-cable-mapper:google-oauth-client-id'
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
+const XLSX_MIME =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
+
+/** Токен на время вкладки, чтобы попап Google не открывался второй раз за одну отправку. */
+let cachedToken: string | null = null
 
 interface GoogleTokenResponse {
   access_token?: string
@@ -51,10 +57,11 @@ function readClientId(): string {
 
 function askClientId(): string {
   const entered = window.prompt(
-    'Чтобы сохранить файл в Google Drive, вставьте OAuth Client ID\n' +
+    'Чтобы положить Excel на Google Drive и получить ссылку для правки, вставьте OAuth Client ID\n' +
       '(Google Cloud → Google Drive API → OAuth client, тип Web).\n\n' +
       'Authorized JavaScript origins:\n' +
       'http://localhost:5173\n' +
+      'http://localhost:5174\n' +
       'https://gin1104.github.io\n\n' +
       'ID сохранится только в этом браузере.',
   )
@@ -105,37 +112,87 @@ function requestAccessToken(clientId: string): Promise<string> {
   })
 }
 
-/** Загружает файл в «Мой диск». Возвращает ссылку на файл. */
-export async function uploadBlobToGoogleDrive(blob: Blob, filename: string): Promise<string> {
+/** Вход в Google Drive. Вызывать в начале клика, пока браузер ещё разрешает окно входа. */
+export async function ensureDriveAccess(): Promise<void> {
+  await driveToken()
+}
+
+async function driveToken(): Promise<string> {
   await loadGis()
   const clientId = readClientId() || askClientId()
+  if (cachedToken) return cachedToken
   const token = await requestAccessToken(clientId)
+  cachedToken = token
+  return token
+}
 
-  const metadata = {
-    name: filename,
-    mimeType:
-      blob.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  }
+function editLink(fileId: string): string {
+  return `https://docs.google.com/spreadsheets/d/${fileId}/edit`
+}
+
+/** Любой, у кого есть ссылка, может править файл. */
+async function shareAnyoneCanEdit(token: string, fileId: string): Promise<void> {
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/permissions`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        role: 'writer',
+        type: 'anyone',
+        allowFileDiscovery: false,
+      }),
+    },
+  )
+  if (response.ok) return
+  const text = await response.text()
+  throw new Error(
+    text || 'Файл создан, но право «править по ссылке» Google Drive не выдал',
+  )
+}
+
+/**
+ * Кладёт .xlsx на Диск как Google Таблицу.
+ * Наружу возвращается только ссылка с правом править.
+ */
+export async function uploadSpreadsheetEditLink(
+  blob: Blob,
+  filename: string,
+): Promise<string> {
+  const token = await driveToken()
+  const sheetName = filename.replace(/\.xlsx$/i, '') || filename
+  const metadata = { name: sheetName, mimeType: SHEET_MIME }
   const form = new FormData()
   form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }))
-  form.append('file', blob, filename)
+  form.append('file', new Blob([await blob.arrayBuffer()], { type: XLSX_MIME }), filename)
 
   const response = await fetch(
-    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink',
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: form,
     },
   )
+  if (response.status === 401) {
+    cachedToken = null
+  }
   if (!response.ok) {
     const text = await response.text()
     throw new Error(text || `Google Drive: ${response.status}`)
   }
-  const data = (await response.json()) as { id?: string; webViewLink?: string }
-  if (data.webViewLink) return data.webViewLink
-  if (data.id) return `https://drive.google.com/file/d/${data.id}/view`
-  return 'https://drive.google.com/drive/my-drive'
+  const data = (await response.json()) as { id?: string }
+  if (!data.id) throw new Error('Google Drive не вернул файл')
+  await shareAnyoneCanEdit(token, data.id)
+  return editLink(data.id)
+}
+
+/** Загружает Excel на Диск и возвращает только ссылку для правки. */
+export async function uploadBlobToGoogleDrive(blob: Blob, filename: string): Promise<string> {
+  return uploadSpreadsheetEditLink(blob, filename)
 }
 
 declare global {

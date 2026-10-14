@@ -1,16 +1,13 @@
 import { useState } from 'react'
 import {
   downloadFullEventWorkbook,
-  getFullEventXlsxFilename,
-  buildFullEventWorkbook,
   type EquipmentListState,
 } from '../lib/equipmentList'
-import { uploadBlobToGoogleDrive } from '../lib/googleDrive'
 import type { TripBridge } from '../lib/tripBridge'
 import { openReturnTripCard } from '../lib/tripBridge'
 import {
-  collectTripPackFiles,
-  uploadTripPackToTrip,
+  publishEventWorkbookEditLink,
+  sendAllSchemes,
   type TripScreenCaptureTarget,
 } from '../lib/tripUpload'
 
@@ -45,9 +42,8 @@ export default function EventPackExportButtons({
         await downloadFullEventWorkbook(state)
         return
       }
-      const blob = await buildFullEventWorkbook(state)
-      const link = await uploadBlobToGoogleDrive(blob, getFullEventXlsxFilename(state.meta))
-      window.alert(`Файл сохранён в Google Drive.\n${link}`)
+      const link = await publishEventWorkbookEditLink(state)
+      window.alert(`Excel на Google Drive. Ссылка для правки:\n${link}`)
     } catch (error) {
       if (error instanceof Error && error.message === 'cancelled') return
       window.alert(
@@ -70,21 +66,24 @@ export default function EventPackExportButtons({
               activateScreen: onActivateScreen,
             }
           : undefined
-      const pack = await collectTripPackFiles(
+      const result = await sendAllSchemes(
+        tripBridge,
         state,
         state.meta.eventName || tripBridge.title,
         screenCapture,
       )
-      const result = await uploadTripPackToTrip(tripBridge, pack)
       const open = window.confirm(
         `В выезд отправлено файлов: ${result.uploaded}` +
-          (result.excelUploaded ? ' (включая список оборудования PNG).' : '.') +
-          `\nОткрыть карточку выезда?`,
+          (result.editLink
+            ? ` (схемы PNG и ссылка на Excel).\n${result.editLink}\n\n`
+            : ' (схемы PNG).\n\n') +
+          `Открыть карточку выезда?`,
       )
       if (open) {
         openReturnTripCard(tripBridge)
       }
     } catch (error) {
+      if (error instanceof Error && error.message === 'cancelled') return
       window.alert(
         error instanceof Error ? error.message : 'Не удалось отправить файлы в выезд',
       )
@@ -116,7 +115,7 @@ export default function EventPackExportButtons({
         type="button"
         disabled={busy != null}
         className={driveClass}
-        title="Сохранить тот же файл (список + схемы) в Google Drive"
+        title="Excel на Google Drive: обратно только ссылка с правом править"
         onClick={(event) => {
           if (stopPropagation) event.stopPropagation()
           void run('drive')
@@ -129,7 +128,7 @@ export default function EventPackExportButtons({
           type="button"
           disabled={busy != null}
           className={tripClass}
-          title="PNG схем всех экранов (+ Excel при поддержке GAS) → карточка выезда"
+          title="В выезд: PNG схем и ссылка на Excel в Google Drive (править по ссылке)"
           onClick={(event) => {
             if (stopPropagation) event.stopPropagation()
             void sendToTrip()

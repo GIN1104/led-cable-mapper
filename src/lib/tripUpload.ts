@@ -9,6 +9,7 @@ import {
   getFullEventXlsxFilename,
   type EquipmentListState,
 } from './equipmentList'
+import { ensureDriveAccess, uploadSpreadsheetEditLink } from './googleDrive'
 import { postSchemeForm } from './mapperUpload.js'
 import type { TripBridge } from './tripBridge'
 
@@ -472,6 +473,7 @@ export async function collectTripPackFiles(
     activateScreen: (id: string) => void
     onProgress?: (message: string) => void
   },
+  options?: { includeEquipmentPng?: boolean },
 ): Promise<TripPackFiles> {
   const name = eventName || state?.meta.eventName
   const pngs = screenCapture
@@ -484,11 +486,120 @@ export async function collectTripPackFiles(
       )
     : await collectSchemePngFiles(name)
   let excel: SchemeUploadFile | null = null
-  if (state) {
+  const includeEquipmentPng = options?.includeEquipmentPng !== false
+  if (state && includeEquipmentPng) {
     screenCapture?.onProgress?.('Сборка списка оборудования (PNG)…')
     excel = await buildEquipmentListPngUploadFile(state)
   }
   return { pngs, excel }
+}
+
+/**
+ * Excel списка и схем → Google Таблица.
+ * Возвращает только ссылку: файл по ней можно править.
+ */
+export async function publishEventWorkbookEditLink(
+  state: EquipmentListState,
+): Promise<string> {
+  await ensureDriveAccess()
+  const blob = await buildFullEventWorkbook(state)
+  return uploadSpreadsheetEditLink(blob, getFullEventXlsxFilename(state.meta))
+}
+
+/**
+ * PNG для карточки выезда: GAS принимает только image/png,
+ * поэтому ссылка на таблицу уходит картинкой с адресом.
+ */
+export async function buildDriveEditLinkPng(editLink: string): Promise<SchemeUploadFile> {
+  const scale = 2
+  const width = 1400
+  const pad = 48
+  const font = '28px Arial, "Segoe UI", sans-serif'
+  const fontTitle = 'bold 36px Arial, "Segoe UI", sans-serif'
+  const measure = document.createElement('canvas').getContext('2d')
+  if (!measure) throw new Error('Canvas недоступен')
+  measure.font = font
+  const urlLines = wrapCanvasLine(measure, editLink, width - pad * 2)
+  const lineH = 40
+  const height = pad + 52 + 36 + urlLines.length * lineH + 48 + pad
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width * scale
+  canvas.height = height * scale
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas недоступен')
+  ctx.scale(scale, scale)
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, width, height)
+  ctx.fillStyle = '#0f172a'
+  ctx.textBaseline = 'top'
+  ctx.textAlign = 'left'
+  ctx.direction = 'ltr'
+  ctx.font = fontTitle
+  ctx.fillText('Excel — ссылка для правки', pad, pad)
+  ctx.font = '22px Arial, "Segoe UI", sans-serif'
+  ctx.fillStyle = '#334155'
+  ctx.fillText('Google Таблица. По ссылке можно править.', pad, pad + 52)
+  ctx.font = font
+  ctx.fillStyle = '#1d4ed8'
+  urlLines.forEach((line, i) => {
+    ctx.fillText(line, pad, pad + 52 + 36 + i * lineH)
+  })
+
+  const dataUrl = canvas.toDataURL('image/png')
+  if (!dataUrl.startsWith('data:image/png') || dataUrl.length < 800) {
+    throw new Error('PNG ссылки на Excel получился пустым')
+  }
+  const blob = await dataUrlToPngBlob(dataUrl)
+  return {
+    filename: 'excel-edit-link.png',
+    blob: blob.type === 'image/png' ? blob : new Blob([blob], { type: 'image/png' }),
+    mimeType: 'image/png',
+    base64: stripPngDataUrlPrefix(dataUrl),
+  }
+}
+
+/**
+ * В выезд: PNG схем и ссылка на Excel (Google Таблица, править по ссылке).
+ */
+export async function sendAllSchemes(
+  bridge: TripBridge,
+  state: EquipmentListState | null | undefined,
+  eventName?: string,
+  screenCapture?: {
+    screens: TripScreenCaptureTarget[]
+    activeScreenId: string
+    activateScreen: (id: string) => void
+    onProgress?: (message: string) => void
+  },
+  onStatus?: (message: string) => void,
+): Promise<{ uploaded: number; editLink: string | null }> {
+  if (state) {
+    onStatus?.('Вход в Google Drive…')
+    await ensureDriveAccess()
+  }
+  onStatus?.('Сборка схем…')
+  const pack = await collectTripPackFiles(
+    state,
+    eventName || state?.meta.eventName,
+    screenCapture,
+    { includeEquipmentPng: false },
+  )
+  let editLink: string | null = null
+  const pngs = [...pack.pngs]
+  if (state) {
+    onStatus?.('Excel на Google Drive…')
+    editLink = await publishEventWorkbookEditLink(state)
+    pngs.push(await buildDriveEditLinkPng(editLink))
+  }
+  try {
+    const result = await uploadTripPackToTrip(bridge, { pngs, excel: null }, onStatus)
+    return { uploaded: result.uploaded, editLink }
+  } catch (error) {
+    if (!editLink) throw error
+    const message = error instanceof Error ? error.message : 'Не удалось отправить файлы'
+    throw new Error(`${message}\nСсылка на Excel:\n${editLink}`)
+  }
 }
 
 /** Плоский список для локального скачивания / upload */

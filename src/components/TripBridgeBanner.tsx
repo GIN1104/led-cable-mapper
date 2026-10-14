@@ -11,7 +11,7 @@ import {
   diagnoseTripUpload,
   downloadSchemeFilesLocally,
   flattenTripPackFiles,
-  uploadTripPackToTrip,
+  sendAllSchemes,
   type TripScreenCaptureTarget,
 } from '../lib/tripUpload'
 
@@ -38,6 +38,7 @@ export default function TripBridgeBanner({
 }: TripBridgeBannerProps) {
   const [busy, setBusy] = useState<'send' | 'diag' | 'local' | null>(null)
   const [status, setStatus] = useState<string | null>(null)
+  const [editLink, setEditLink] = useState<string | null>(null)
 
   const dateLabel = formatTripDateForMeta(bridge.date) || bridge.date
   const tripShort =
@@ -108,24 +109,36 @@ export default function TripBridgeBanner({
     if (busy) return
     setBusy('send')
     setStatus(null)
+    setEditLink(null)
     try {
-      setStatus('Сборка файлов…')
-      const pack = await collectTripPackFiles(
+      const result = await sendAllSchemes(
+        bridge,
         equipmentList,
         eventName || bridge.title,
         screenCapture,
+        setStatus,
       )
-      const result = await uploadTripPackToTrip(bridge, pack, setStatus)
-      setStatus(`Готово: загружено файлов ${result.uploaded}`)
+      setEditLink(result.editLink)
+      setStatus(
+        result.editLink
+          ? `В выезде схемы и ссылка на Excel (${result.uploaded}).`
+          : `В выезде схемы: ${result.uploaded}`,
+      )
       const open = window.confirm(
         `В выезд отправлено файлов: ${result.uploaded}` +
-          (result.excelUploaded ? ' (включая список оборудования PNG).' : '.') +
-          `\nОткрыть карточку выезда?`,
+          (result.editLink
+            ? ` (схемы PNG и ссылка на Excel).\n${result.editLink}\n\n`
+            : ' (схемы PNG).\n\n') +
+          `Открыть карточку выезда?`,
       )
       if (open) {
         openReturnTripCard(bridge)
       }
     } catch (error) {
+      if (error instanceof Error && error.message === 'cancelled') {
+        setStatus(null)
+        return
+      }
       const message =
         error instanceof Error ? error.message : 'Не удалось отправить файлы'
       setStatus(message)
@@ -176,7 +189,7 @@ export default function TripBridgeBanner({
             type="button"
             disabled={busy != null}
             onClick={() => void sendSchemes()}
-            title="PNG схем всех экранов (+ Excel, если сервер принимает) → карточка выезда"
+            title="В выезд: PNG схем и ссылка на Excel в Google Drive (править по ссылке)"
             className="touch-manipulation rounded-lg border border-violet-400 bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-800 disabled:opacity-60"
           >
             {busy === 'send' ? 'Отправка…' : 'Отправить все схемы'}
@@ -217,6 +230,18 @@ export default function TripBridgeBanner({
         </div>
       </div>
       {status && <p className="mt-1 text-xs text-violet-800">{status}</p>}
+      {editLink && (
+        <p className="mt-1 break-all text-xs">
+          <a
+            href={editLink}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-violet-950 underline"
+          >
+            {editLink}
+          </a>
+        </p>
+      )}
     </div>
   )
 }
