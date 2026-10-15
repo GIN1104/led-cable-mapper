@@ -121,14 +121,18 @@ export default function TripBridgeBanner({
       setEditLink(result.editLink)
       setStatus(
         result.editLink
-          ? `В выезде схемы и ссылка на Excel (${result.uploaded}).`
+          ? result.linkInTrip
+            ? `В выезде схемы и файл Excel.html со ссылкой (${result.uploaded}).`
+            : `В выезде схемы. Ссылку карточка приняла только картинкой.`
           : `В выезде схемы: ${result.uploaded}`,
       )
       const open = window.confirm(
-        `В выезд отправлено файлов: ${result.uploaded}` +
+        `В выезд отправлено файлов: ${result.uploaded}.\n` +
           (result.editLink
-            ? ` (схемы PNG и ссылка на Excel).\n${result.editLink}\n\n`
-            : ' (схемы PNG).\n\n') +
+            ? result.linkInTrip
+              ? `Ссылка на Excel (открыть Excel.html и нажать):\n${result.editLink}\n\n`
+              : `Карточка не приняла кликабельный файл. Адрес на картинке и здесь:\n${result.editLink}\n\n`
+            : '\n') +
           `Открыть карточку выезда?`,
       )
       if (open) {
@@ -189,7 +193,7 @@ export default function TripBridgeBanner({
             type="button"
             disabled={busy != null}
             onClick={() => void sendSchemes()}
-            title="В выезд: PNG схем и ссылка на Excel в Google Drive (править по ссылке)"
+            title="В выезд: PNG схем и кликабельная ссылка на Excel в LED Warehouse / Excel"
             className="touch-manipulation rounded-lg border border-violet-400 bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-800 disabled:opacity-60"
           >
             {busy === 'send' ? 'Отправка…' : 'Отправить все схемы'}

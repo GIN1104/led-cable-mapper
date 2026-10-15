@@ -770,6 +770,28 @@ function formatQty(value: string | number | undefined): string {
   return value === 0 ? '' : String(value)
 }
 
+/**
+ * Новая ссылка Telegram: убрать ручные значения прошлой работы.
+ * Количество и תופסות из шаблона (Laptop, «+» и т.п.) остаются.
+ */
+export function resetEquipmentRowsForNewTrip(rows: EquipmentListRow[]): EquipmentListRow[] {
+  const byId = new Map(LED_EQUIPMENT_TEMPLATE.map((template) => [template.id, template]))
+  return rows.map((row) => {
+    const template = byId.get(row.id)
+    return {
+      ...row,
+      hebrew: template?.hebrew ?? row.hebrew,
+      russian: template?.russian ?? row.russian,
+      quantity: template?.defaultQuantity ?? '',
+      footprint: template?.defaultFootprint ?? '',
+      quantityManual: false,
+      footprintManual: false,
+      hebrewManual: false,
+      russianManual: false,
+    }
+  })
+}
+
 /** Создаёт начальное состояние таблицы с автозаполнением */
 export function buildEquipmentListState(
   screens: ScreenConfig[],
@@ -904,6 +926,33 @@ function downloadBlob(blob: Blob, filename: string): void {
 /** Имя полного файла: список + схемы */
 export function getFullEventXlsxFilename(meta: EquipmentListMeta): string {
   return getEquipmentListXlsxFilename(meta).replace(/\.xlsx$/, '-full.xlsx')
+}
+
+/** Дата в начале, чтобы на Диске список сортировался по времени */
+function sortableEventDate(eventDate: string): string {
+  const trimmed = eventDate.trim()
+  const dmy = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(trimmed)
+  if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmed)
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
+  return trimmed
+}
+
+/**
+ * Имя таблицы на Google Drive: YYYY-MM-DD, затем название работы и остальные поля.
+ */
+export function getDriveSheetFilename(meta: EquipmentListMeta): string {
+  const date = sortableEventDate(meta.eventDate) || new Date().toISOString().slice(0, 10)
+  const rest = [meta.eventName, meta.location, meta.hours, meta.car, meta.types]
+    .map((value) => (value ?? '').trim())
+    .filter(Boolean)
+  const name = [date, ...rest]
+    .join(' ')
+    .replace(/[<>:"/\\|?*]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 140)
+  return `${name}.xlsx`
 }
 
 /** Один Excel: список и под ним тикшорет, затем хашмаль */

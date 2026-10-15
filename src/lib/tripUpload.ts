@@ -6,6 +6,7 @@ import {
 import {
   buildFullEventWorkbook,
   getEquipmentListExportRows,
+  getDriveSheetFilename,
   getFullEventXlsxFilename,
   type EquipmentListState,
 } from './equipmentList'
@@ -503,7 +504,44 @@ export async function publishEventWorkbookEditLink(
 ): Promise<string> {
   await ensureDriveAccess()
   const blob = await buildFullEventWorkbook(state)
-  return uploadSpreadsheetEditLink(blob, getFullEventXlsxFilename(state.meta))
+  return uploadSpreadsheetEditLink(blob, getDriveSheetFilename(state.meta))
+}
+
+function utf8ToBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/**
+ * Файл, который в карточке выезда можно открыть и нажать ссылку.
+ * Сервер может отклонить не-PNG — тогда вызывающий код кладёт PNG с адресом.
+ */
+export async function uploadClickableExcelLink(
+  bridge: TripBridge,
+  editLink: string,
+): Promise<boolean> {
+  const html =
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    `<meta http-equiv="refresh" content="0;url=${escapeHtml(editLink)}">` +
+    `</head><body><p><a href="${escapeHtml(editLink)}">Excel — править</a></p></body></html>`
+  const file: SchemeUploadFile = {
+    filename: 'Excel.html',
+    blob: new Blob([html], { type: 'text/html' }),
+    mimeType: 'text/html',
+    base64: utf8ToBase64(html),
+  }
+  const result = await uploadSchemeImagesToTrip(bridge, [file], null, editLink)
+  return result.ok
 }
 
 /**
@@ -573,7 +611,7 @@ export async function sendAllSchemes(
     onProgress?: (message: string) => void
   },
   onStatus?: (message: string) => void,
-): Promise<{ uploaded: number; editLink: string | null }> {
+): Promise<{ uploaded: number; editLink: string | null; linkInTrip: boolean }> {
   if (state) {
     onStatus?.('Вход в Google Drive…')
     await ensureDriveAccess()
@@ -586,15 +624,36 @@ export async function sendAllSchemes(
     { includeEquipmentPng: false },
   )
   let editLink: string | null = null
-  const pngs = [...pack.pngs]
   if (state) {
     onStatus?.('Excel на Google Drive…')
     editLink = await publishEventWorkbookEditLink(state)
-    pngs.push(await buildDriveEditLinkPng(editLink))
   }
   try {
-    const result = await uploadTripPackToTrip(bridge, { pngs, excel: null }, onStatus)
-    return { uploaded: result.uploaded, editLink }
+    const result = await uploadTripPackToTrip(
+      bridge,
+      { pngs: pack.pngs, excel: null },
+      onStatus,
+      editLink ?? undefined,
+    )
+    let uploaded = result.uploaded
+    let linkInTrip = false
+    if (editLink) {
+      onStatus?.('Ссылка на Excel в выезд…')
+      linkInTrip = await uploadClickableExcelLink(bridge, editLink)
+      if (linkInTrip) {
+        uploaded += 1
+      } else {
+        onStatus?.('Карточка не приняла файл ссылки, кладу адрес картинкой…')
+        const png = await uploadTripPackToTrip(
+          bridge,
+          { pngs: [await buildDriveEditLinkPng(editLink)], excel: null },
+          onStatus,
+          editLink,
+        )
+        uploaded += png.uploaded
+      }
+    }
+    return { uploaded, editLink, linkInTrip }
   } catch (error) {
     if (!editLink) throw error
     const message = error instanceof Error ? error.message : 'Не удалось отправить файлы'
@@ -621,6 +680,7 @@ export async function uploadSchemeImagesToTrip(
   bridge: TripBridge,
   files: SchemeUploadFile[],
   _bridgeHandle?: SchemeBridgeHandle | null,
+  excelUrl?: string,
 ): Promise<TripUploadResult> {
   if (!bridge.uploadUrl || !bridge.uploadToken || !bridge.tripId) {
     return { ok: false, error: 'Нет данных выезда (upload_url / token / trip_id)' }
@@ -653,6 +713,7 @@ export async function uploadSchemeImagesToTrip(
         source: 'led-cable-mapper',
         title: bridge.title || undefined,
         types: bridge.types || undefined,
+        excelUrl: excelUrl || undefined,
       },
     })
 
@@ -688,6 +749,7 @@ export async function uploadTripPackToTrip(
   bridge: TripBridge,
   pack: TripPackFiles,
   onStatus?: (message: string) => void,
+  excelUrl?: string,
 ): Promise<UploadTripPackResult> {
   const allFiles = flattenTripPackFiles(pack)
   if (allFiles.length === 0) {
@@ -704,7 +766,7 @@ export async function uploadTripPackToTrip(
           ? 'Отправка списка и схем…'
           : 'Отправка схем…',
     )
-    const result = await uploadSchemeImagesToTrip(bridge, batch)
+    const result = await uploadSchemeImagesToTrip(bridge, batch, null, excelUrl)
     if (!result.ok) {
       throw new Error(result.error || 'Ошибка загрузки')
     }

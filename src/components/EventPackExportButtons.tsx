@@ -73,10 +73,12 @@ export default function EventPackExportButtons({
         screenCapture,
       )
       const open = window.confirm(
-        `В выезд отправлено файлов: ${result.uploaded}` +
+        `В выезд отправлено файлов: ${result.uploaded}.\n` +
           (result.editLink
-            ? ` (схемы PNG и ссылка на Excel).\n${result.editLink}\n\n`
-            : ' (схемы PNG).\n\n') +
+            ? result.linkInTrip
+              ? `Ссылка на Excel (открыть Excel.html и нажать):\n${result.editLink}\n\n`
+              : `Карточка не приняла кликабельный файл. Адрес на картинке и здесь:\n${result.editLink}\n\n`
+            : '\n') +
           `Открыть карточку выезда?`,
       )
       if (open) {
@@ -128,7 +130,7 @@ export default function EventPackExportButtons({
           type="button"
           disabled={busy != null}
           className={tripClass}
-          title="В выезд: PNG схем и ссылка на Excel в Google Drive (править по ссылке)"
+          title="В выезд: PNG схем и кликабельная ссылка на Excel в LED Warehouse / Excel"
           onClick={(event) => {
             if (stopPropagation) event.stopPropagation()
             void sendToTrip()

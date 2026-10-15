@@ -43,6 +43,7 @@ import TripBridgeBanner from './components/TripBridgeBanner'
 import RoutingSpinner from './components/RoutingSpinner'
 import {
   buildEquipmentListState,
+  resetEquipmentRowsForNewTrip,
   downloadEquipmentListXlsx,
   EMPTY_EQUIPMENT_META,
   resolveEquipmentScreenResults,
@@ -397,11 +398,16 @@ export default function App() {
   ])
 
   const equipmentBuildKeyRef = useRef('')
+  const appliedTripFillRef = useRef(0)
+  /** Новая ссылка Telegram: один пересчёт после очистки строк прошлой работы */
+  const [tripFillId, setTripFillId] = useState(0)
 
   useEffect(() => {
     if (!result || !equipmentBuildKey) return
-    if (equipmentBuildKeyRef.current === equipmentBuildKey) return
+    const tripChanged = appliedTripFillRef.current !== tripFillId
+    if (!tripChanged && equipmentBuildKeyRef.current === equipmentBuildKey) return
     equipmentBuildKeyRef.current = equipmentBuildKey
+    appliedTripFillRef.current = tripFillId
     setEquipmentList((prev) =>
       buildEquipmentListState(
         screens,
@@ -418,6 +424,7 @@ export default function App() {
     equipmentScreenResults,
     equipmentCableSchedule,
     equipmentPackingList,
+    tripFillId,
   ])
 
   const handleRefreshEquipmentList = useCallback(() => {
@@ -438,14 +445,16 @@ export default function App() {
   const applyTripMeta = useCallback((bridge: TripBridge) => {
     const patch = tripBridgeToMetaPatch(bridge)
     setEquipmentList((prev) => {
+      const meta = { ...EMPTY_EQUIPMENT_META, ...patch }
       if (!prev) {
-        return {
-          meta: { ...EMPTY_EQUIPMENT_META, ...patch },
-          rows: [],
-          customRows: [],
-        }
+        return { meta, rows: [], customRows: [] }
       }
-      return { ...prev, meta: { ...prev.meta, ...patch } }
+      // Шапка — только из ссылки. В строках шаблона остаются значения по умолчанию.
+      return {
+        meta,
+        customRows: [],
+        rows: resetEquipmentRowsForNewTrip(prev.rows),
+      }
     })
   }, [])
 
@@ -458,6 +467,7 @@ export default function App() {
         setTripBridge(fromUrl)
         // Meta из ссылки всегда перекрывает шапку события — так задумано deep-link из бота
         applyTripMeta(fromUrl)
+        setTripFillId((n) => n + 1)
         stripTripQueryFromUrl()
         return
       }

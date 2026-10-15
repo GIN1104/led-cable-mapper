@@ -15,6 +15,8 @@ export interface MapperSchemePayload {
     source?: string
     title?: string
     types?: string
+    /** Ссылка на Google Таблицу — если сервер выезда её покажет */
+    excelUrl?: string
   }
 }
 

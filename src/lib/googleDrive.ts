@@ -1,5 +1,6 @@
 const CLIENT_ID_KEY = 'led-cable-mapper:google-oauth-client-id'
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive'
+const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const XLSX_MIME =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
@@ -130,6 +131,74 @@ function editLink(fileId: string): string {
   return `https://docs.google.com/spreadsheets/d/${fileId}/edit`
 }
 
+async function driveJson<T>(token: string, url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(init?.headers ?? {}),
+    },
+  })
+  if (response.status === 401) cachedToken = null
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(text || `Google Drive: ${response.status}`)
+  }
+  return (await response.json()) as T
+}
+
+async function findFolder(
+  token: string,
+  name: string,
+  parentId?: string,
+): Promise<string | null> {
+  const clauses = [
+    `name = '${name.replace(/'/g, "\\'")}'`,
+    `mimeType = '${FOLDER_MIME}'`,
+    'trashed = false',
+  ]
+  if (parentId) clauses.push(`'${parentId}' in parents`)
+  const url =
+    'https://www.googleapis.com/drive/v3/files?q=' +
+    encodeURIComponent(clauses.join(' and ')) +
+    '&fields=files(id)&pageSize=1&spaces=drive'
+  const data = await driveJson<{ files?: { id: string }[] }>(token, url)
+  return data.files?.[0]?.id ?? null
+}
+
+async function createFolder(
+  token: string,
+  name: string,
+  parentId?: string,
+): Promise<string> {
+  const data = await driveJson<{ id?: string }>(
+    token,
+    'https://www.googleapis.com/drive/v3/files?fields=id',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        mimeType: FOLDER_MIME,
+        ...(parentId ? { parents: [parentId] } : {}),
+      }),
+    },
+  )
+  if (!data.id) throw new Error(`Не удалось создать папку «${name}» на Google Drive`)
+  return data.id
+}
+
+/** Папка LED Warehouse / Excel. Создаёт недостающие уровни. */
+async function excelFolderId(token: string): Promise<string> {
+  const warehouse =
+    (await findFolder(token, 'LED Warehouse')) ??
+    (await createFolder(token, 'LED Warehouse'))
+  return (
+    (await findFolder(token, 'Excel', warehouse)) ??
+    (await createFolder(token, 'Excel', warehouse))
+  )
+}
+
 /** Любой, у кого есть ссылка, может править файл. */
 async function shareAnyoneCanEdit(token: string, fileId: string): Promise<void> {
   const response = await fetch(
@@ -163,8 +232,13 @@ export async function uploadSpreadsheetEditLink(
   filename: string,
 ): Promise<string> {
   const token = await driveToken()
+  const folderId = await excelFolderId(token)
   const sheetName = filename.replace(/\.xlsx$/i, '') || filename
-  const metadata = { name: sheetName, mimeType: SHEET_MIME }
+  const metadata = {
+    name: sheetName,
+    mimeType: SHEET_MIME,
+    parents: [folderId],
+  }
   const form = new FormData()
   form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }))
   form.append('file', new Blob([await blob.arrayBuffer()], { type: XLSX_MIME }), filename)

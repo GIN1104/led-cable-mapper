@@ -10,6 +10,8 @@ export interface TripBridge {
   time: string
   car: string
   types: string
+  /** Контакт и прочие текстовые поля из ссылки бота */
+  contact: string
   uploadUrl: string
   uploadToken: string
   uploadTransport: 'form' | string
@@ -19,11 +21,27 @@ export interface TripBridge {
 const QUERY_KEYS = [
   'trip_id',
   'title',
+  'event',
+  'event_name',
+  'name',
   'address',
+  'location',
+  'place',
   'date',
+  'event_date',
   'time',
+  'hours',
   'car',
+  'vehicle',
   'types',
+  'type',
+  'work_types',
+  'contact',
+  'phone',
+  'manager',
+  'notes',
+  'comment',
+  'description',
   'upload_url',
   'upload_token',
   'upload_transport',
@@ -38,6 +56,14 @@ function pick(params: URLSearchParams, key: string): string {
   } catch {
     return String(raw).trim()
   }
+}
+
+function pickFirst(params: URLSearchParams, keys: string[]): string {
+  for (const key of keys) {
+    const value = pick(params, key)
+    if (value) return value
+  }
+  return ''
 }
 
 /** YYYY-MM-DD → DD.MM.YYYY (как удобнее для шапки Excel); иначе как пришло */
@@ -76,14 +102,19 @@ export function parseTripBridgeFromUrl(
   const uploadToken = pick(params, 'upload_token')
   if (!tripId || !uploadUrl || !uploadToken) return null
 
+  const contact = [pickFirst(params, ['contact', 'phone', 'manager']), pickFirst(params, ['notes', 'comment', 'description'])]
+    .filter(Boolean)
+    .join(' · ')
+
   return {
     tripId,
-    title: pick(params, 'title'),
-    address: pick(params, 'address'),
-    date: pick(params, 'date'),
-    time: pick(params, 'time'),
-    car: pick(params, 'car'),
-    types: pick(params, 'types'),
+    title: pickFirst(params, ['title', 'event', 'event_name', 'name']),
+    address: pickFirst(params, ['address', 'location', 'place']),
+    date: pickFirst(params, ['date', 'event_date']),
+    time: pickFirst(params, ['time', 'hours']),
+    car: pickFirst(params, ['car', 'vehicle']),
+    types: pickFirst(params, ['types', 'type', 'work_types']),
+    contact,
     uploadUrl,
     uploadToken,
     uploadTransport: pick(params, 'upload_transport') || 'form',
@@ -115,6 +146,7 @@ export function loadTripBridge(): TripBridge | null {
       time: String(parsed.time ?? ''),
       car: String(parsed.car ?? ''),
       types: String(parsed.types ?? ''),
+      contact: String(parsed.contact ?? ''),
       uploadUrl: String(parsed.uploadUrl),
       uploadToken: String(parsed.uploadToken),
       uploadTransport: String(parsed.uploadTransport ?? 'form'),
@@ -155,17 +187,19 @@ export function tripBridgeToMetaPatch(bridge: TripBridge): {
   location: string
   eventDate: string
   hours: string
+  contact: string
   car: string
   types: string
   tripId: string
 } {
   return {
-    eventName: bridge.title,
-    location: bridge.address,
+    eventName: bridge.title.trim(),
+    location: bridge.address.trim(),
     eventDate: formatTripDateForMeta(bridge.date),
-    hours: bridge.time,
-    car: bridge.car,
-    types: bridge.types,
+    hours: bridge.time.trim(),
+    contact: bridge.contact.trim(),
+    car: bridge.car.trim(),
+    types: bridge.types.trim(),
     tripId: bridge.tripId,
   }
 }
