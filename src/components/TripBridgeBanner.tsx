@@ -11,6 +11,7 @@ import {
   diagnoseTripUpload,
   downloadSchemeFilesLocally,
   flattenTripPackFiles,
+  describeTripSendResult,
   sendAllSchemes,
   type TripScreenCaptureTarget,
 } from '../lib/tripUpload'
@@ -119,22 +120,9 @@ export default function TripBridgeBanner({
         setStatus,
       )
       setEditLink(result.editLink)
-      setStatus(
-        result.editLink
-          ? result.linkInTrip
-            ? `В выезде схемы и файл Excel.html со ссылкой (${result.uploaded}).`
-            : `В выезде схемы. Ссылку карточка приняла только картинкой.`
-          : `В выезде схемы: ${result.uploaded}`,
-      )
-      const open = window.confirm(
-        `В выезд отправлено файлов: ${result.uploaded}.\n` +
-          (result.editLink
-            ? result.linkInTrip
-              ? `Ссылка на Excel (открыть Excel.html и нажать):\n${result.editLink}\n\n`
-              : `Карточка не приняла кликабельный файл. Адрес на картинке и здесь:\n${result.editLink}\n\n`
-            : '\n') +
-          `Открыть карточку выезда?`,
-      )
+      const summary = describeTripSendResult(result)
+      setStatus(summary.status)
+      const open = window.confirm(summary.confirm)
       if (open) {
         openReturnTripCard(bridge)
       }

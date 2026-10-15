@@ -6,6 +6,7 @@ import {
 import type { TripBridge } from '../lib/tripBridge'
 import { openReturnTripCard } from '../lib/tripBridge'
 import {
+  describeTripSendResult,
   publishEventWorkbookEditLink,
   sendAllSchemes,
   type TripScreenCaptureTarget,
@@ -72,15 +73,7 @@ export default function EventPackExportButtons({
         state.meta.eventName || tripBridge.title,
         screenCapture,
       )
-      const open = window.confirm(
-        `В выезд отправлено файлов: ${result.uploaded}.\n` +
-          (result.editLink
-            ? result.linkInTrip
-              ? `Ссылка на Excel (открыть Excel.html и нажать):\n${result.editLink}\n\n`
-              : `Карточка не приняла кликабельный файл. Адрес на картинке и здесь:\n${result.editLink}\n\n`
-            : '\n') +
-          `Открыть карточку выезда?`,
-      )
+      const open = window.confirm(describeTripSendResult(result).confirm)
       if (open) {
         openReturnTripCard(tripBridge)
       }

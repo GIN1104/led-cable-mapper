@@ -11,12 +11,20 @@ export interface MapperSchemePayload {
   trip_id: string
   upload_token: string
   files: MapperSchemeFile[]
+  /**
+   * Карточка рисует кликабельные ссылки только из этого поля
+   * (блок «Ссылки на Google Таблицы»). Адрес должен начинаться
+   * с https://docs.google.com/spreadsheets/
+   */
+  schemeLinks?: string[] | string
   meta?: {
     source?: string
     title?: string
     types?: string
     /** Ссылка на Google Таблицу — если сервер выезда её покажет */
     excelUrl?: string
+    /** Тот же список строками, если сервер читает ссылки из meta */
+    schemeLinks?: string
   }
 }
 

@@ -507,40 +507,51 @@ export async function publishEventWorkbookEditLink(
   return uploadSpreadsheetEditLink(blob, getDriveSheetFilename(state.meta))
 }
 
-function utf8ToBase64(text: string): string {
-  const bytes = new TextEncoder().encode(text)
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary)
-}
+const SHEETS_LINK = /^https:\/\/docs\.google\.com\/spreadsheets\//
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+function sheetsLinks(urls: string[] | undefined): string[] {
+  return (urls ?? []).filter((url) => SHEETS_LINK.test(url))
 }
 
 /**
- * Файл, который в карточке выезда можно открыть и нажать ссылку.
- * Сервер может отклонить не-PNG — тогда вызывающий код кладёт PNG с адресом.
+ * Маленький Excel: ячейка A1 — гиперссылка, примечание к ячейке — тот же адрес.
+ * Карточка может отклонить не-PNG; тогда файл просто не попадёт в выезд.
  */
-export async function uploadClickableExcelLink(
+export async function buildExcelHyperlinkUploadFile(
+  editLink: string,
+): Promise<SchemeUploadFile> {
+  const ExcelJS = (await import('exceljs')).default
+  const workbook = new ExcelJS.Workbook()
+  const sheet = workbook.addWorksheet('Excel')
+  sheet.getColumn(1).width = 80
+  const cell = sheet.getCell('A1')
+  cell.value = { text: 'Открыть Excel', hyperlink: editLink }
+  cell.font = { name: 'Arial', size: 14, color: { argb: 'FF1D4ED8' }, underline: true }
+  cell.note = editLink
+  sheet.getCell('A2').value = editLink
+  const buffer = await workbook.xlsx.writeBuffer()
+  const blob = new Blob([buffer], { type: XLSX_MIME })
+  return {
+    filename: 'Excel.xlsx',
+    blob,
+    mimeType: XLSX_MIME,
+  }
+}
+
+/** Отдельный запрос: Excel со ссылкой внутри. Отказ сервера не роняет схемы. */
+export async function uploadExcelHyperlinkFile(
   bridge: TripBridge,
   editLink: string,
+  schemeLinks?: string[] | string,
 ): Promise<boolean> {
-  const html =
-    '<!doctype html><html><head><meta charset="utf-8">' +
-    `<meta http-equiv="refresh" content="0;url=${escapeHtml(editLink)}">` +
-    `</head><body><p><a href="${escapeHtml(editLink)}">Excel — править</a></p></body></html>`
-  const file: SchemeUploadFile = {
-    filename: 'Excel.html',
-    blob: new Blob([html], { type: 'text/html' }),
-    mimeType: 'text/html',
-    base64: utf8ToBase64(html),
-  }
-  const result = await uploadSchemeImagesToTrip(bridge, [file], null, editLink)
+  const file = await buildExcelHyperlinkUploadFile(editLink)
+  const result = await uploadSchemeImagesToTrip(
+    bridge,
+    [file],
+    null,
+    editLink,
+    schemeLinks,
+  )
   return result.ok
 }
 
@@ -611,7 +622,14 @@ export async function sendAllSchemes(
     onProgress?: (message: string) => void
   },
   onStatus?: (message: string) => void,
-): Promise<{ uploaded: number; editLink: string | null; linkInTrip: boolean }> {
+): Promise<{
+  uploaded: number
+  editLink: string | null
+  /** Запрос со schemeLinks принят — карточка показывает блок «Ссылки на Google Таблицы» */
+  linkInTrip: boolean
+  /** Карточка приняла Excel.xlsx со ссылкой в ячейке и в примечании */
+  excelInTrip: boolean
+}> {
   if (state) {
     onStatus?.('Вход в Google Drive…')
     await ensureDriveAccess()
@@ -628,37 +646,98 @@ export async function sendAllSchemes(
     onStatus?.('Excel на Google Drive…')
     editLink = await publishEventWorkbookEditLink(state)
   }
+  const links = sheetsLinks(editLink ? [editLink] : [])
   try {
-    const result = await uploadTripPackToTrip(
-      bridge,
-      { pngs: pack.pngs, excel: null },
-      onStatus,
-      editLink ?? undefined,
-    )
-    let uploaded = result.uploaded
+    let uploaded = 0
     let linkInTrip = false
-    if (editLink) {
-      onStatus?.('Ссылка на Excel в выезд…')
-      linkInTrip = await uploadClickableExcelLink(bridge, editLink)
-      if (linkInTrip) {
-        uploaded += 1
-      } else {
-        onStatus?.('Карточка не приняла файл ссылки, кладу адрес картинкой…')
-        const png = await uploadTripPackToTrip(
+    try {
+      onStatus?.(links.length ? 'Схемы и ссылка в карточку…' : 'Отправка схем…')
+      const result = await uploadTripPackToTrip(
+        bridge,
+        { pngs: pack.pngs, excel: null },
+        onStatus,
+        editLink ?? undefined,
+        links,
+      )
+      uploaded = result.uploaded
+      linkInTrip = links.length > 0
+    } catch (firstError) {
+      if (!links.length) throw firstError
+      try {
+        onStatus?.('Пробую ссылку в формате карточки…')
+        const result = await uploadTripPackToTrip(
           bridge,
-          { pngs: [await buildDriveEditLinkPng(editLink)], excel: null },
+          { pngs: pack.pngs, excel: null },
           onStatus,
-          editLink,
+          editLink ?? undefined,
+          editLink ?? undefined,
         )
-        uploaded += png.uploaded
+        uploaded = result.uploaded
+        linkInTrip = true
+      } catch {
+        onStatus?.('Отправляю только схемы…')
+        const result = await uploadTripPackToTrip(
+          bridge,
+          { pngs: pack.pngs, excel: null },
+          onStatus,
+          editLink ?? undefined,
+        )
+        uploaded = result.uploaded
       }
     }
-    return { uploaded, editLink, linkInTrip }
+    let excelInTrip = false
+    if (editLink) {
+      onStatus?.('Excel со ссылкой внутри…')
+      excelInTrip = await uploadExcelHyperlinkFile(
+        bridge,
+        editLink,
+        linkInTrip ? undefined : editLink,
+      )
+      if (excelInTrip) {
+        uploaded += 1
+        if (!linkInTrip) linkInTrip = true
+      }
+    }
+    return { uploaded, editLink, linkInTrip, excelInTrip }
   } catch (error) {
     if (!editLink) throw error
     const message = error instanceof Error ? error.message : 'Не удалось отправить файлы'
     throw new Error(`${message}\nСсылка на Excel:\n${editLink}`)
   }
+}
+
+/** Текст после отправки: что именно карточка могла принять */
+export function describeTripSendResult(result: {
+  uploaded: number
+  editLink: string | null
+  linkInTrip: boolean
+  excelInTrip: boolean
+}): { status: string; confirm: string } {
+  const lines = [`В выезд отправлено файлов: ${result.uploaded}.`]
+  if (result.linkInTrip) {
+    lines.push(
+      'В карточке блок «Ссылки на Google Таблицы» — по ссылке можно перейти.',
+    )
+  }
+  if (result.excelInTrip) {
+    lines.push(
+      'Файл Excel.xlsx: ячейка A1 — ссылка, в примечании к ячейке тот же адрес.',
+    )
+  }
+  if (result.editLink && !result.linkInTrip) {
+    lines.push(`Карточка не сохранила кликабельную ссылку. Адрес:\n${result.editLink}`)
+  } else if (result.editLink) {
+    lines.push(result.editLink)
+  }
+  lines.push('', 'Открыть карточку выезда?')
+  const status = !result.editLink
+    ? `В выезде схемы: ${result.uploaded}`
+    : result.linkInTrip && result.excelInTrip
+      ? `Схемы, ссылка в карточке и Excel.xlsx (${result.uploaded}).`
+      : result.linkInTrip
+        ? `Схемы и ссылка в блоке «Ссылки на Google Таблицы» (${result.uploaded}).`
+        : 'Схемы в выезде. Карточка не сохранила ссылку.'
+  return { status, confirm: lines.join('\n') }
 }
 
 /** Плоский список для локального скачивания / upload */
@@ -681,6 +760,7 @@ export async function uploadSchemeImagesToTrip(
   files: SchemeUploadFile[],
   _bridgeHandle?: SchemeBridgeHandle | null,
   excelUrl?: string,
+  schemeLinks?: string[] | string,
 ): Promise<TripUploadResult> {
   if (!bridge.uploadUrl || !bridge.uploadToken || !bridge.tripId) {
     return { ok: false, error: 'Нет данных выезда (upload_url / token / trip_id)' }
@@ -704,16 +784,29 @@ export async function uploadSchemeImagesToTrip(
     }
 
     const filePayloads = await Promise.all(files.map((file) => toSchemeFilePayload(file)))
+    const linkList = sheetsLinks(
+      typeof schemeLinks === 'string' ? schemeLinks.split(/\r?\n/) : schemeLinks,
+    )
+    // Форма карточки шлёт строку «по ссылке на строку», клиент хранит массив.
+    // Сохраняем ту форму, которую передал вызывающий код.
+    const schemeLinksField =
+      linkList.length === 0
+        ? undefined
+        : typeof schemeLinks === 'string'
+          ? linkList.join('\n')
+          : linkList
     const result = await postSchemeForm(bridge.uploadUrl, {
       action: 'uploadSchemeImages',
       trip_id: bridge.tripId,
       upload_token: bridge.uploadToken,
       files: filePayloads,
+      ...(schemeLinksField ? { schemeLinks: schemeLinksField } : {}),
       meta: {
         source: 'led-cable-mapper',
         title: bridge.title || undefined,
         types: bridge.types || undefined,
         excelUrl: excelUrl || undefined,
+        ...(linkList.length ? { schemeLinks: linkList.join('\n') } : {}),
       },
     })
 
@@ -750,6 +843,7 @@ export async function uploadTripPackToTrip(
   pack: TripPackFiles,
   onStatus?: (message: string) => void,
   excelUrl?: string,
+  schemeLinks?: string[] | string,
 ): Promise<UploadTripPackResult> {
   const allFiles = flattenTripPackFiles(pack)
   if (allFiles.length === 0) {
@@ -766,7 +860,13 @@ export async function uploadTripPackToTrip(
           ? 'Отправка списка и схем…'
           : 'Отправка схем…',
     )
-    const result = await uploadSchemeImagesToTrip(bridge, batch, null, excelUrl)
+    const result = await uploadSchemeImagesToTrip(
+      bridge,
+      batch,
+      null,
+      excelUrl,
+      i === 0 ? schemeLinks : undefined,
+    )
     if (!result.ok) {
       throw new Error(result.error || 'Ошибка загрузки')
     }
