@@ -23,8 +23,11 @@ export interface MapperSchemePayload {
     types?: string
     /** Ссылка на Google Таблицу — если сервер выезда её покажет */
     excelUrl?: string
-    /** Тот же список строками, если сервер читает ссылки из meta */
-    schemeLinks?: string
+    /**
+     * Массив адресов. Если сервер копирует meta на работу как есть,
+     * карточка рисует блок «Ссылки на Google Таблицы».
+     */
+    schemeLinks?: string[]
   }
 }
 

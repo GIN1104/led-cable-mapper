@@ -1,4 +1,7 @@
 const CLIENT_ID_KEY = 'led-cable-mapper:google-oauth-client-id'
+const TOKEN_KEY = 'led-cable-mapper:google-drive-token'
+/** Аккаунт Drive. hint пропускает выбор, если этот адрес уже вошёл в браузере. */
+const DRIVE_ACCOUNT_HINT = 'ledvision2026.il@gmail.com'
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive'
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const XLSX_MIME =
@@ -10,12 +13,13 @@ let cachedToken: string | null = null
 
 interface GoogleTokenResponse {
   access_token?: string
+  expires_in?: number
   error?: string
   error_description?: string
 }
 
 interface GoogleTokenClient {
-  requestAccessToken: (override?: { prompt?: string }) => void
+  requestAccessToken: (override?: { prompt?: '' | 'consent' }) => void
 }
 
 function gisReady(): boolean {
@@ -76,7 +80,47 @@ function askClientId(): string {
   return id
 }
 
-function requestAccessToken(clientId: string): Promise<string> {
+function rememberToken(token: string, expiresInSec?: number): void {
+  cachedToken = token
+  const ttlMs = Math.max(60, (expiresInSec ?? 3600) - 60) * 1000
+  try {
+    sessionStorage.setItem(
+      TOKEN_KEY,
+      JSON.stringify({ token, exp: Date.now() + ttlMs }),
+    )
+  } catch {
+    // сессия браузера недоступна — токен только в памяти вкладки
+  }
+}
+
+function readRememberedToken(): string | null {
+  try {
+    const raw = sessionStorage.getItem(TOKEN_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { token?: string; exp?: number }
+    if (!parsed.token || !parsed.exp || parsed.exp <= Date.now()) {
+      sessionStorage.removeItem(TOKEN_KEY)
+      return null
+    }
+    return parsed.token
+  } catch {
+    return null
+  }
+}
+
+function forgetToken(): void {
+  cachedToken = null
+  try {
+    sessionStorage.removeItem(TOKEN_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+function requestAccessToken(
+  clientId: string,
+  prompt: '' | 'consent',
+): Promise<{ token: string; expiresIn?: number }> {
   return new Promise((resolve, reject) => {
     const oauth = window.google?.accounts?.oauth2
     if (!oauth) {
@@ -86,9 +130,10 @@ function requestAccessToken(clientId: string): Promise<string> {
     const client: GoogleTokenClient = oauth.initTokenClient({
       client_id: clientId,
       scope: DRIVE_SCOPE,
+      hint: DRIVE_ACCOUNT_HINT,
       callback: (resp: GoogleTokenResponse) => {
         if (resp.access_token) {
-          resolve(resp.access_token)
+          resolve({ token: resp.access_token, expiresIn: resp.expires_in })
           return
         }
         const message = resp.error_description || resp.error || 'Google не выдал доступ'
@@ -106,10 +151,11 @@ function requestAccessToken(clientId: string): Promise<string> {
           reject(new Error('cancelled'))
           return
         }
-        reject(new Error(err.message || 'Ошибка окна Google'))
+        reject(new Error(err.message || err.type || 'Ошибка окна Google'))
       },
     })
-    client.requestAccessToken()
+    // Пустой prompt не открывает выбор аккаунта, если доступ уже выдан этому hint.
+    client.requestAccessToken({ prompt })
   })
 }
 
@@ -119,12 +165,25 @@ export async function ensureDriveAccess(): Promise<void> {
 }
 
 async function driveToken(): Promise<string> {
+  if (cachedToken) return cachedToken
+  const remembered = readRememberedToken()
+  if (remembered) {
+    cachedToken = remembered
+    return remembered
+  }
   await loadGis()
   const clientId = readClientId() || askClientId()
-  if (cachedToken) return cachedToken
-  const token = await requestAccessToken(clientId)
-  cachedToken = token
-  return token
+  try {
+    const first = await requestAccessToken(clientId, '')
+    rememberToken(first.token, first.expiresIn)
+    return first.token
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    if (message === 'cancelled' || /invalid_client|deleted_client/i.test(message)) throw error
+  }
+  const second = await requestAccessToken(clientId, 'consent')
+  rememberToken(second.token, second.expiresIn)
+  return second.token
 }
 
 function editLink(fileId: string): string {
@@ -139,7 +198,7 @@ async function driveJson<T>(token: string, url: string, init?: RequestInit): Pro
       ...(init?.headers ?? {}),
     },
   })
-  if (response.status === 401) cachedToken = null
+  if (response.status === 401) forgetToken()
   if (!response.ok) {
     const text = await response.text()
     throw new Error(text || `Google Drive: ${response.status}`)
@@ -251,9 +310,7 @@ export async function uploadSpreadsheetEditLink(
       body: form,
     },
   )
-  if (response.status === 401) {
-    cachedToken = null
-  }
+  if (response.status === 401) forgetToken()
   if (!response.ok) {
     const text = await response.text()
     throw new Error(text || `Google Drive: ${response.status}`)
@@ -277,6 +334,7 @@ declare global {
           initTokenClient: (config: {
             client_id: string
             scope: string
+            hint?: string
             callback: (resp: GoogleTokenResponse) => void
             error_callback?: (err: { type?: string; message?: string }) => void
           }) => GoogleTokenClient

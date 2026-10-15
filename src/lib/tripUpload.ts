@@ -787,26 +787,20 @@ export async function uploadSchemeImagesToTrip(
     const linkList = sheetsLinks(
       typeof schemeLinks === 'string' ? schemeLinks.split(/\r?\n/) : schemeLinks,
     )
-    // Форма карточки шлёт строку «по ссылке на строку», клиент хранит массив.
-    // Сохраняем ту форму, которую передал вызывающий код.
-    const schemeLinksField =
-      linkList.length === 0
-        ? undefined
-        : typeof schemeLinks === 'string'
-          ? linkList.join('\n')
-          : linkList
+    // Форма «Добавить файлы» шлёт одну строку на ссылку, карточка хранит массив.
+    // Строка наверху — как в форме. Массив в meta — если сервер копирует meta на работу.
     const result = await postSchemeForm(bridge.uploadUrl, {
       action: 'uploadSchemeImages',
       trip_id: bridge.tripId,
       upload_token: bridge.uploadToken,
       files: filePayloads,
-      ...(schemeLinksField ? { schemeLinks: schemeLinksField } : {}),
+      ...(linkList.length ? { schemeLinks: linkList.join('\n') } : {}),
       meta: {
         source: 'led-cable-mapper',
         title: bridge.title || undefined,
         types: bridge.types || undefined,
         excelUrl: excelUrl || undefined,
-        ...(linkList.length ? { schemeLinks: linkList.join('\n') } : {}),
+        ...(linkList.length ? { schemeLinks: linkList } : {}),
       },
     })
 
