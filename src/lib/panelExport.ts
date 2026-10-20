@@ -177,6 +177,7 @@ export async function captureSchemePanels(): Promise<{
 /** Рендер всей карточки панели (заголовок, легенда, zoom, SVG) в PNG data URL */
 export async function capturePanelPng(element: HTMLElement, pixelRatio = 2): Promise<string> {
   const restoreOverflow = expandOverflowForCapture(element)
+  element.classList.add('scheme-capture')
   try {
     await waitTwoFrames()
     const width = Math.ceil(Math.max(element.scrollWidth, element.offsetWidth))
@@ -197,6 +198,7 @@ export async function capturePanelPng(element: HTMLElement, pixelRatio = 2): Pro
       },
     })
   } finally {
+    element.classList.remove('scheme-capture')
     restoreOverflow()
   }
 }

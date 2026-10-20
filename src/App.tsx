@@ -1549,7 +1549,7 @@ export default function App() {
   }, [])
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-svh max-h-svh flex-col">
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {sidebarOpen && (
           <button
@@ -1615,7 +1615,7 @@ export default function App() {
                 <p className="mt-2 text-xs text-slate-400">Расчёт маршрутизации…</p>
               ) : (
                 result && (
-                  <div className="mt-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold tabular-nums text-slate-800 sm:text-sm">
+                  <div className={`mt-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold tabular-nums text-slate-800 sm:text-sm ${tripBridge ? 'max-sm:hidden' : ''}`}>
                     <span className="text-slate-900">
                       {screenPixelsWide.toLocaleString()}×{screenPixelsHigh.toLocaleString()} px
                     </span>
@@ -1630,7 +1630,7 @@ export default function App() {
                   </div>
                 )
               )}
-              <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
+              <p className={`mt-1.5 text-xs leading-relaxed text-slate-500 ${tripBridge ? 'max-sm:hidden' : ''}`}>
                 {manualModeData && (
                   <span className="mr-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
                     Manual Data
@@ -1670,7 +1670,7 @@ export default function App() {
               )}
               </div>
             </div>
-            <div className="flex w-full shrink-0 flex-nowrap gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
+            <div className={`w-full shrink-0 flex-nowrap gap-2 overflow-x-auto pb-0.5 sm:flex sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0 ${tripBridge ? 'hidden' : 'flex'}`}>
               {equipmentList && (
                 <>
                   <button
@@ -1707,7 +1707,7 @@ export default function App() {
               config.controllerModel,
             ) && (
               <div
-                className="no-print shrink-0 border-b border-red-500 bg-red-100 px-4 py-2.5 text-sm font-medium text-red-800 sm:px-6"
+                className="no-print shrink-0 border-b border-red-500 bg-red-100 px-3 py-1.5 text-xs font-medium text-red-800 sm:px-6 sm:py-2.5 sm:text-sm"
                 role="alert"
               >
                 <strong className="font-bold text-red-900">
@@ -1741,7 +1741,8 @@ export default function App() {
           </div>
 
           <div className="flex-1 overflow-y-auto px-2 py-2 sm:px-6 sm:py-5">
-            {result && result.warnings.length > 0 && (              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+            {result && result.warnings.length > 0 && (
+              <div className={`mb-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 sm:mb-4 sm:px-4 sm:py-3 ${tripBridge ? 'max-sm:hidden' : ''}`}>
                 <p className="text-xs font-semibold text-amber-900">
                   Routing warnings / Предупреждения
                 </p>

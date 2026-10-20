@@ -5,8 +5,28 @@
 }
 
 @layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    /* Telegram WebView не должен забирать жест вниз как закрытие страницы */
+    overscroll-behavior-y: none;
+  }
+
   body {
     @apply bg-slate-50 text-slate-900 antialiased;
+  }
+}
+
+/* Узкое окно (Telegram): легенда и сводка не должны закрывать сетку.
+   При снимке схемы класс scheme-capture возвращает их в файл. */
+@media (max-width: 639px) {
+  .scheme-fold {
+    display: none;
+  }
+
+  .scheme-capture .scheme-fold {
+    display: revert !important;
   }
 }
 

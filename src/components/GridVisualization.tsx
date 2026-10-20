@@ -1999,6 +1999,17 @@ export default memo(function GridVisualization({
 
   const drawingTouch = isMobile && (manualMode || emptyPaintMode)
 
+  useEffect(() => {
+    const node = gridScrollRef.current
+    if (!node || !drawingTouch) return
+    // Встроенный браузер Telegram забирает вертикальный жест себе.
+    const blockScroll = (event: TouchEvent) => {
+      if (event.touches.length > 0) event.preventDefault()
+    }
+    node.addEventListener('touchmove', blockScroll, { passive: false })
+    return () => node.removeEventListener('touchmove', blockScroll)
+  }, [drawingTouch])
+
   const clientToSvg = useCallback(
     (clientX: number, clientY: number) => {
       const svg = svgRef.current
@@ -2294,7 +2305,7 @@ export default memo(function GridVisualization({
 
       {(headerStats || dualVxBreakdown) && (
         <div
-          className={`mb-3 mt-2 rounded-lg border px-3 py-2.5 text-xs font-semibold tabular-nums sm:text-sm ${
+          className={`scheme-fold mb-3 mt-2 rounded-lg border px-3 py-2.5 text-xs font-semibold tabular-nums sm:text-sm ${
             isData
               ? 'border-blue-200 bg-blue-50 text-blue-950'
               : 'border-amber-200 bg-amber-50 text-amber-950'
@@ -2330,13 +2341,13 @@ export default memo(function GridVisualization({
       )}
 
       {isMobile && (manualMode || emptyPaintMode) && (
-        <p className="mb-2 text-[11px] leading-snug text-slate-500">
+        <p className="scheme-fold mb-2 text-[11px] leading-snug text-slate-500">
           Ведите пальцем по кабинетам. Два пальца — сдвиг и масштаб.
         </p>
       )}
 
       {emptyPaintMode && (
-        <div className="mb-3 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">
+        <div className="scheme-fold mb-3 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">
           <strong>Empty / Пропущенный</strong> — клик по ячейке помечает или снимает пустую
           кабинетку (исключается из маршрутизации и подсчётов).
           {manualMode && editMode !== 'empty' && (
@@ -2353,9 +2364,9 @@ export default memo(function GridVisualization({
           tabIndex={-1}
           onMouseDown={() => onClaimKeyboard?.()}
           onFocus={() => onClaimKeyboard?.()}
-          className="sticky top-0 z-10 mb-3 space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-xs text-amber-900 shadow-sm outline-none"
+          className="z-10 mb-2 space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900 shadow-sm outline-none sm:sticky sm:top-0 sm:mb-3 sm:py-2"
         >
-          <p className="px-1 text-[11px] font-semibold text-amber-950">
+          <p className="scheme-fold px-1 text-[11px] font-semibold text-amber-950">
             {isData ? 'Data' : 'Power'} — ручная схема
           </p>
           <div className="flex flex-nowrap items-center gap-1 overflow-x-auto pb-0.5">
@@ -2515,7 +2526,7 @@ export default memo(function GridVisualization({
               </button>
             )}
           </div>
-          <p className="px-1 text-[10px] leading-snug text-amber-800/90">
+          <p className="scheme-fold px-1 text-[10px] leading-snug text-amber-800/90">
             Активно: <strong>{formatLineId(activeValue)}</strong>
             {canDualVxManual && autoControllerHint ? ` · ${autoControllerHint}` : ''}
             {isData && stripWidths.length > 1
@@ -2548,7 +2559,7 @@ export default memo(function GridVisualization({
         </div>
       )}
 
-      <div className="mb-3 space-y-1.5 text-xs text-slate-600">
+      <div className="scheme-fold mb-3 space-y-1.5 text-xs text-slate-600">
         {isData ? (
           <>
             <div className="flex flex-nowrap items-end gap-x-4 gap-y-3 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible">
@@ -2821,7 +2832,7 @@ export default memo(function GridVisualization({
         onPointerCancel={onGridPointerEnd}
         className={
           isMobile
-            ? 'relative h-[calc(100dvh-12.5rem)] min-h-[280px] overflow-auto overscroll-contain rounded-lg bg-slate-50'
+            ? 'relative h-[min(46svh,28rem)] min-h-[200px] overflow-auto overscroll-contain rounded-lg bg-slate-50'
             : '-mx-1 overflow-x-auto px-1 pb-1 touch-pan-x'
         }
         style={

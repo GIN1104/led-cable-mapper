@@ -160,45 +160,48 @@ export default function TripBridgeBanner({
     }
   }
 
+  const actionClass =
+    'touch-manipulation shrink-0 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition disabled:opacity-60'
+
   return (
     <div
-      className="no-print shrink-0 border-b border-violet-300 bg-violet-50 px-4 py-2.5 sm:px-6"
+      className="no-print shrink-0 border-b border-violet-300 bg-violet-50 px-2 py-1.5 sm:px-6 sm:py-2.5"
       role="status"
     >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm font-medium text-violet-950">
+      <div className="flex flex-col gap-1.5">
+        <p className="truncate text-xs font-medium text-violet-950 sm:text-sm">
           Выезд: {bridge.title || 'без названия'}
           {dateLabel ? ` · ${dateLabel}` : ''}
           {bridge.time ? ` ${bridge.time}` : ''}
           {bridge.car ? ` · רכב ${bridge.car}` : ''}
           {' · '}
-          <span className="font-mono text-xs text-violet-800" title={bridge.tripId}>
+          <span className="font-mono text-[11px] text-violet-800" title={bridge.tripId}>
             trip {tripShort}
           </span>
         </p>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-nowrap gap-1.5 overflow-x-auto pb-0.5">
           <button
             type="button"
             disabled={busy != null}
             onClick={() => void sendSchemes()}
             title="В выезд: PNG схем и кликабельная ссылка на Excel в LED Warehouse / Excel"
-            className="touch-manipulation rounded-lg border border-violet-400 bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-800 disabled:opacity-60"
+            className={`${actionClass} border-violet-400 bg-violet-700 text-white shadow-sm hover:bg-violet-800`}
           >
-            {busy === 'send' ? 'Отправка…' : 'Отправить все схемы'}
+            {busy === 'send' ? 'Отправка…' : 'Отправить схемы'}
           </button>
           <button
             type="button"
             disabled={busy != null}
             onClick={() => void runDiagnose()}
-            className="touch-manipulation rounded-lg border border-amber-400 bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-950 transition hover:bg-amber-200 disabled:opacity-60"
+            className={`${actionClass} border-amber-400 bg-amber-100 text-amber-950 hover:bg-amber-200`}
           >
-            {busy === 'diag' ? 'Диагностика…' : 'Диагностика GAS'}
+            {busy === 'diag' ? 'Диагностика…' : 'Диагностика'}
           </button>
           <button
             type="button"
             disabled={busy != null}
             onClick={() => void saveLocal()}
-            className="touch-manipulation rounded-lg border border-emerald-400 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-100 disabled:opacity-60"
+            className={`${actionClass} border-emerald-400 bg-emerald-50 text-emerald-900 hover:bg-emerald-100`}
           >
             {busy === 'local' ? 'Скачивание…' : 'Скачать PNG'}
           </button>
@@ -207,15 +210,15 @@ export default function TripBridgeBanner({
             disabled={!cardUrl || busy != null}
             onClick={openCard}
             title="Открыть карточку проекта текущего выезда (trip)"
-            className="touch-manipulation rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-medium text-violet-900 transition hover:bg-violet-100 disabled:opacity-50"
+            className={`${actionClass} border-violet-300 bg-white font-medium text-violet-900 hover:bg-violet-100 disabled:opacity-50`}
           >
-            Открыть карточку выезда
+            Карточка
           </button>
           <button
             type="button"
             disabled={busy != null}
             onClick={onDetach}
-            className="touch-manipulation rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+            className={`${actionClass} border-slate-300 bg-white font-medium text-slate-700 hover:bg-slate-50`}
           >
             Отвязать
           </button>
