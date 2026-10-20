@@ -719,6 +719,9 @@ export default memo(function GridVisualization({
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
   )
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches,
+  )
   const [exportBusy, setExportBusy] = useState(false)
   const [tripSendBusy, setTripSendBusy] = useState(false)
   const captureRef = useRef<HTMLDivElement>(null)
@@ -726,6 +729,13 @@ export default memo(function GridVisualization({
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 639px)')
     const onChange = (event: MediaQueryListEvent) => setIsMobile(event.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 1023px)')
+    const onChange = (event: MediaQueryListEvent) => setNarrow(event.matches)
     mq.addEventListener('change', onChange)
     return () => mq.removeEventListener('change', onChange)
   }, [])
@@ -1997,7 +2007,7 @@ export default memo(function GridVisualization({
     tripSendBusy,
   ])
 
-  const drawingTouch = isMobile && (manualMode || emptyPaintMode)
+  const drawingTouch = narrow && (manualMode || emptyPaintMode)
 
   useEffect(() => {
     const node = gridScrollRef.current
@@ -2095,7 +2105,7 @@ export default memo(function GridVisualization({
 
   const onGridPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!isMobile) return
+      if (!narrow) return
       if (event.pointerType === 'mouse' && event.button !== 0) return
       activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
       if (activePointers.current.size >= 2) {
@@ -2120,12 +2130,12 @@ export default memo(function GridVisualization({
       if (point) paintAlong(null, point)
       onClaimKeyboard?.()
     },
-    [isMobile, drawingTouch, zoomLevel, clientToSvg, paintAlong, onClaimKeyboard],
+    [narrow, drawingTouch, zoomLevel, clientToSvg, paintAlong, onClaimKeyboard],
   )
 
   const onGridPointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!isMobile || !activePointers.current.has(event.pointerId)) return
+      if (!narrow || !activePointers.current.has(event.pointerId)) return
       activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
       if (activePointers.current.size >= 2 && pinchRef.current) {
         const pts = [...activePointers.current.values()]
@@ -2155,7 +2165,7 @@ export default memo(function GridVisualization({
       if (event.clientX > box.right - edge) container.scrollLeft += 16
       else if (event.clientX < box.left + edge) container.scrollLeft -= 16
     },
-    [isMobile, drawingTouch, clampZoomFine, clientToSvg, paintAlong],
+    [narrow, drawingTouch, clampZoomFine, clientToSvg, paintAlong],
   )
 
   const onGridPointerEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -2216,7 +2226,7 @@ export default memo(function GridVisualization({
                   : 'bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50'
               }`}
             >
-              {isMobile
+              {narrow
                 ? `Ручная · ${isData ? 'Data' : 'Power'}`
                 : `Manual Routing / Ручная схема (${isData ? 'Data' : 'Power'})`}
             </button>
@@ -2228,7 +2238,7 @@ export default memo(function GridVisualization({
             aria-label="Print screen / Печать / צילום מסך"
             className={`${editBtnClass} bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60`}
           >
-            {isMobile ? 'Печать' : 'Print screen / Печать / צילום מסך'}
+            {narrow ? 'Печать' : 'Print screen / Печать / צילום מסך'}
           </button>
           <button
             type="button"
@@ -2237,7 +2247,7 @@ export default memo(function GridVisualization({
             aria-label="Save image / Сохранить картинку / שמור תמונה"
             className={`${editBtnClass} bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60`}
           >
-            {isMobile ? 'PNG' : 'Save image / Сохранить картинку / שמור תמונה'}
+            {narrow ? 'PNG' : 'Save image / Сохранить картинку / שמור תמונה'}
           </button>
           <button
             type="button"
@@ -2256,7 +2266,7 @@ export default memo(function GridVisualization({
               aria-label="Отправить эту схему в выезд"
               className={`${editBtnClass} bg-violet-700 text-white hover:bg-violet-800 disabled:cursor-wait disabled:opacity-60`}
             >
-              {tripSendBusy ? 'Отправка…' : isMobile ? 'В выезд' : 'Отправить в выезд'}
+              {tripSendBusy ? 'Отправка…' : narrow ? 'В выезд' : 'Отправить в выезд'}
             </button>
           )}
           <div
@@ -2831,12 +2841,12 @@ export default memo(function GridVisualization({
         onPointerUp={onGridPointerEnd}
         onPointerCancel={onGridPointerEnd}
         className={
-          isMobile
+          narrow
             ? 'relative h-[min(46svh,28rem)] min-h-[200px] overflow-auto overscroll-contain rounded-lg bg-slate-50'
             : '-mx-1 overflow-x-auto px-1 pb-1 touch-pan-x'
         }
         style={
-          isMobile
+          narrow
             ? { touchAction: drawingTouch ? 'none' : 'pan-x pan-y' }
             : undefined
         }

@@ -157,6 +157,7 @@ export default function App() {
   }, [])
   const [screens, setScreens] = useState<ScreenConfig[]>(initialProject.screens)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [headerToolsOpen, setHeaderToolsOpen] = useState(false)
   const [activeScreenId, setActiveScreenId] = useState(initialProject.activeScreenId)
   const [routingByScreen, setRoutingByScreen] = useState<Record<string, ScreenRoutingState>>(
     initialProject.routingByScreen,
@@ -1593,29 +1594,39 @@ export default function App() {
               onDetach={handleDetachTrip}
             />
           )}
-          <header className="no-print flex shrink-0 flex-col gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-6 sm:py-3">
-            <div className="flex min-w-0 items-start gap-2 sm:gap-3">
+          <header className="no-print flex shrink-0 flex-col gap-1.5 border-b border-slate-200 bg-white px-2 py-1.5 lg:flex-row lg:items-center lg:justify-between lg:gap-4 lg:px-6 lg:py-3">
+            <div className="flex min-w-0 flex-1 items-start gap-2 lg:gap-3">
               <button
                 type="button"
                 aria-label="Открыть настройки"
                 aria-expanded={sidebarOpen}
                 onClick={() => setSidebarOpen(true)}
-                className="touch-manipulation shrink-0 rounded-lg border border-slate-200 p-2.5 text-slate-700 transition hover:bg-slate-50 md:hidden"
+                className="touch-manipulation shrink-0 rounded-lg border border-slate-200 p-2 text-slate-700 transition hover:bg-slate-50 md:hidden"
               >
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                   <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
                 </svg>
               </button>
               <div className="min-w-0 flex-1">
-              <h2 className="truncate text-sm font-semibold leading-snug text-slate-900 sm:text-base">
+              <div className="flex min-w-0 items-center gap-2">
+              <h2 className="min-w-0 flex-1 truncate text-sm font-semibold leading-snug text-slate-900 lg:text-base">
                 {activeScreen.name} — {config.wallWidthM}×{config.wallHeightM} m (
                 {config.cabinetsWide}×{config.cabinetsHigh} cabs) · {config.controllerModel}
               </h2>
+              <button
+                type="button"
+                aria-expanded={headerToolsOpen}
+                onClick={() => setHeaderToolsOpen((open) => !open)}
+                className="touch-manipulation shrink-0 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 lg:hidden"
+              >
+                {headerToolsOpen ? 'Скрыть' : 'Файлы'}
+              </button>
+              </div>
               {showInitialSpinner ? (
-                <p className="mt-2 text-xs text-slate-400">Расчёт маршрутизации…</p>
+                <p className="mt-2 hidden text-xs text-slate-400 lg:block">Расчёт маршрутизации…</p>
               ) : (
                 result && (
-                  <div className={`mt-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold tabular-nums text-slate-800 sm:text-sm ${tripBridge ? 'max-sm:hidden' : ''}`}>
+                  <div className="mt-2.5 hidden rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold tabular-nums text-slate-800 lg:block lg:text-sm">
                     <span className="text-slate-900">
                       {screenPixelsWide.toLocaleString()}×{screenPixelsHigh.toLocaleString()} px
                     </span>
@@ -1630,7 +1641,7 @@ export default function App() {
                   </div>
                 )
               )}
-              <p className={`mt-1.5 text-xs leading-relaxed text-slate-500 ${tripBridge ? 'max-sm:hidden' : ''}`}>
+              <p className="mt-1.5 hidden text-xs leading-relaxed text-slate-500 lg:block">
                 {manualModeData && (
                   <span className="mr-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
                     Manual Data
@@ -1653,7 +1664,7 @@ export default function App() {
                 )}
               </p>
               {!showInitialSpinner && screenSummaries.length > 0 && (
-                <div className="mt-2.5 hidden flex-wrap gap-1.5 sm:flex">
+                <div className="mt-2.5 hidden flex-wrap gap-1.5 lg:flex">
                   {screenSummaries.map((s) => (
                     <span
                       key={s.id}
@@ -1670,19 +1681,20 @@ export default function App() {
               )}
               </div>
             </div>
-            <div className={`w-full shrink-0 flex-nowrap gap-2 overflow-x-auto pb-0.5 sm:flex sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0 ${tripBridge ? 'hidden' : 'flex'}`}>
+            <div className={`${headerToolsOpen ? 'flex' : 'hidden'} w-full shrink-0 flex-nowrap gap-1.5 overflow-x-auto pb-0.5 lg:flex lg:w-auto lg:flex-wrap lg:overflow-visible lg:pb-0`}>
               {equipmentList && (
                 <>
                   <button
                     type="button"
                     onClick={() => void downloadEquipmentListXlsx(equipmentList)}
-                    className="touch-manipulation shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 shadow-sm transition hover:bg-emerald-100 sm:px-4 sm:py-2.5"
+                    className="touch-manipulation shrink-0 whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-800 shadow-sm transition hover:bg-emerald-100"
                     title="Сохранить רשימת ציוד в Excel"
                   >
                     שמור xlsx
                   </button>
                   <EventPackExportButtons
                     state={equipmentList}
+                    compact
                     tripBridge={tripBridge}
                     screens={screens.map((s) => ({ id: s.id, name: s.name }))}
                     activeScreenId={activeScreenId}
@@ -1693,7 +1705,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="touch-manipulation shrink-0 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 sm:px-4 sm:py-2.5"
+                className="touch-manipulation shrink-0 whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-slate-800"
               >
                 Print Scheme
               </button>
@@ -1742,18 +1754,32 @@ export default function App() {
 
           <div className="flex-1 overflow-y-auto px-2 py-2 sm:px-6 sm:py-5">
             {result && result.warnings.length > 0 && (
-              <div className={`mb-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 sm:mb-4 sm:px-4 sm:py-3 ${tripBridge ? 'max-sm:hidden' : ''}`}>
-                <p className="text-xs font-semibold text-amber-900">
-                  Routing warnings / Предупреждения
-                </p>
-                <ul className="mt-1 space-y-0.5">
-                  {result.warnings.map((w, i) => (
-                    <li key={`${w.type}-${w.id}-${i}`} className="text-xs text-amber-800">
-                      {w.message}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              <>
+                <details className="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 lg:hidden">
+                  <summary className="cursor-pointer text-xs font-semibold text-amber-900">
+                    Предупреждения ({result.warnings.length})
+                  </summary>
+                  <ul className="mt-1 space-y-0.5">
+                    {result.warnings.map((w, i) => (
+                      <li key={`${w.type}-${w.id}-${i}`} className="text-xs text-amber-800">
+                        {w.message}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+                <div className="mb-4 hidden rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 lg:block">
+                  <p className="text-xs font-semibold text-amber-900">
+                    Routing warnings / Предупреждения
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {result.warnings.map((w, i) => (
+                      <li key={`wide-${w.type}-${w.id}-${i}`} className="text-xs text-amber-800">
+                        {w.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </>
             )}
 
             {showInitialSpinner ? (
@@ -1776,8 +1802,8 @@ export default function App() {
                   </div>
                 )}
               <>
-            <div className="flex flex-col gap-4 sm:block">
-            <div className="order-2 mb-0 grid grid-cols-2 gap-2 sm:order-none sm:mb-5 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-6">
+            <div className="flex flex-col gap-4 lg:block">
+            <div className="order-2 mb-0 grid grid-cols-2 gap-2 lg:order-none lg:mb-5 lg:grid-cols-3 lg:gap-3 xl:grid-cols-6">
               <SummaryCard label="Cabinets" value={result!.summary.totalCabinets} />              <SummaryCard
                 label="Pixels / Cabinet"
                 value={result!.summary.pixelsPerCabinet.toLocaleString()}
@@ -1796,7 +1822,7 @@ export default function App() {
               <SummaryCard label="Cables" value={result!.cableSchedule.length} sub="in schedule" />
             </div>
 
-            <div className="order-1 space-y-4 sm:order-none sm:space-y-6">
+            <div className="order-1 space-y-4 lg:order-none lg:space-y-6">
               <div
                 className={`grid gap-3 sm:gap-6 ${
                   gridLayout === 'side-by-side' ? 'xl:grid-cols-2' : 'grid-cols-1'

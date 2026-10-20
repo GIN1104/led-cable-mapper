@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { EquipmentListState } from '../lib/equipmentList'
 import type { TripBridge } from '../lib/tripBridge'
 import {
@@ -40,6 +40,7 @@ export default function TripBridgeBanner({
   const [busy, setBusy] = useState<'send' | 'diag' | 'local' | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [editLink, setEditLink] = useState<string | null>(null)
+  const [actionsOpen, setActionsOpen] = useState(false)
 
   const dateLabel = formatTripDateForMeta(bridge.date) || bridge.date
   const tripShort =
@@ -160,16 +161,20 @@ export default function TripBridgeBanner({
     }
   }
 
+  useEffect(() => {
+    if (status || editLink) setActionsOpen(true)
+  }, [status, editLink])
+
   const actionClass =
-    'touch-manipulation shrink-0 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition disabled:opacity-60'
+    'touch-manipulation shrink-0 whitespace-nowrap rounded-lg border px-2 py-1 text-[11px] font-semibold transition disabled:opacity-60'
 
   return (
     <div
-      className="no-print shrink-0 border-b border-violet-300 bg-violet-50 px-2 py-1.5 sm:px-6 sm:py-2.5"
+      className="no-print shrink-0 border-b border-violet-300 bg-violet-50 px-2 py-1 sm:px-6 sm:py-2"
       role="status"
     >
-      <div className="flex flex-col gap-1.5">
-        <p className="truncate text-xs font-medium text-violet-950 sm:text-sm">
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1 truncate text-xs font-medium text-violet-950 sm:text-sm">
           Выезд: {bridge.title || 'без названия'}
           {dateLabel ? ` · ${dateLabel}` : ''}
           {bridge.time ? ` ${bridge.time}` : ''}
@@ -179,7 +184,18 @@ export default function TripBridgeBanner({
             trip {tripShort}
           </span>
         </p>
-        <div className="flex flex-nowrap gap-1.5 overflow-x-auto pb-0.5">
+        <button
+          type="button"
+          aria-expanded={actionsOpen}
+          onClick={() => setActionsOpen((open) => !open)}
+          className="touch-manipulation shrink-0 rounded-lg border border-violet-300 bg-white px-2 py-1 text-[11px] font-semibold text-violet-900 lg:hidden"
+        >
+          {actionsOpen ? 'Скрыть' : 'Действия'}
+        </button>
+      </div>
+      <div
+        className={`${actionsOpen ? 'mt-1.5 flex' : 'hidden'} flex-nowrap gap-1.5 overflow-x-auto pb-0.5 lg:mt-1.5 lg:flex`}
+      >
           <button
             type="button"
             disabled={busy != null}
@@ -222,7 +238,6 @@ export default function TripBridgeBanner({
           >
             Отвязать
           </button>
-        </div>
       </div>
       {status && <p className="mt-1 text-xs text-violet-800">{status}</p>}
       {editLink && (
