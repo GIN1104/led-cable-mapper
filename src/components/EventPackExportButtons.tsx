@@ -87,7 +87,9 @@ export default function EventPackExportButtons({
     }
   }
 
-  const pad = compact ? 'px-3 py-1.5 text-xs' : 'px-4 py-2.5 text-sm'
+  const pad = compact
+    ? 'shrink-0 px-3 py-1.5 text-xs'
+    : 'shrink-0 px-3 py-2 text-sm sm:px-4 sm:py-2.5'
   const excelClass = `touch-manipulation rounded-lg border border-emerald-300 bg-white font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 disabled:opacity-60 ${pad}`
   const driveClass = `touch-manipulation rounded-lg border border-sky-300 bg-sky-50 font-medium text-sky-900 shadow-sm transition hover:bg-sky-100 disabled:opacity-60 ${pad}`
   const tripClass = `touch-manipulation rounded-lg border border-violet-400 bg-violet-700 font-semibold text-white shadow-sm transition hover:bg-violet-800 disabled:opacity-60 ${pad}`

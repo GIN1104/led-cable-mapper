@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type {
   ChainStartEdge,
   ControllerModel,
@@ -939,9 +939,9 @@ export default memo(function GridVisualization({
     [cabLeft, cabTop, cellWAt, cellHAt],
   )
   const editBtnClass =
-    'touch-manipulation min-h-[44px] rounded-md px-3 py-2 text-xs font-semibold transition active:scale-[0.98] sm:min-h-[36px] sm:px-2.5 sm:py-1'
+    'touch-manipulation shrink-0 min-h-[44px] rounded-md px-3 py-2 text-xs font-semibold transition active:scale-[0.98] sm:min-h-[36px] sm:px-2.5 sm:py-1'
   const manualBtnClass =
-    'touch-manipulation shrink-0 rounded px-2 py-1 text-[11px] font-semibold whitespace-nowrap transition active:scale-[0.98]'
+    'touch-manipulation shrink-0 rounded px-2 py-1 text-[11px] font-semibold whitespace-nowrap transition active:scale-[0.98] max-sm:min-h-10 max-sm:px-3 max-sm:text-xs'
   const legendBtnClass =
     'touch-manipulation flex min-h-[40px] items-center gap-1.5 rounded-md px-2.5 py-1.5 transition active:scale-[0.98] sm:min-h-0 sm:px-1 sm:py-0.5'
   const zoomBtnClass =
@@ -1358,8 +1358,22 @@ export default memo(function GridVisualization({
   const svgH = gridOriginY + wallContentHeight + PAD + 8
 
   const gridScrollRef = useRef<HTMLDivElement>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
   const [fitScale, setFitScale] = useState(1)
   const [zoomLevel, setZoomLevel] = useState(1)
+  /** Активные пальцы на схеме (телефон): один рисует, два масштабируют */
+  const activePointers = useRef(new Map<number, { x: number; y: number }>())
+  const pinchRef = useRef<{
+    dist: number
+    zoom: number
+    midX: number
+    midY: number
+    scrollLeft: number
+    scrollTop: number
+  } | null>(null)
+  const gesturePainted = useRef(new Set<string>())
+  const lastSvgPoint = useRef<{ x: number; y: number } | null>(null)
+  const suppressClickRef = useRef(false)
 
   const effectiveScale = fitScale * zoomLevel
   const zoomPercent = Math.round(zoomLevel * 100)
@@ -1368,6 +1382,10 @@ export default memo(function GridVisualization({
 
   const clampZoom = useCallback(
     (value: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 10) / 10)),
+    [],
+  )
+  const clampZoomFine = useCallback(
+    (value: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 20) / 20)),
     [],
   )
 
@@ -1979,6 +1997,168 @@ export default memo(function GridVisualization({
     tripSendBusy,
   ])
 
+  const drawingTouch = isMobile && (manualMode || emptyPaintMode)
+
+  const clientToSvg = useCallback(
+    (clientX: number, clientY: number) => {
+      const svg = svgRef.current
+      if (!svg) return null
+      const rect = svg.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return null
+      return {
+        x: ((clientX - rect.left) / rect.width) * svgW,
+        y: ((clientY - rect.top) / rect.height) * svgH,
+      }
+    },
+    [svgW, svgH],
+  )
+
+  const labelAtSvgPoint = useCallback(
+    (x: number, y: number) => {
+      for (const cab of cabinets) {
+        const left = cabLeft(cab.col)
+        const top = cabTop(cab.col, cab.row)
+        const w = cellWAt(cab.col)
+        const h = cellHAt(cab.col, cab.row)
+        if (x >= left && x < left + w && y >= top && y < top + h) return cab.label
+      }
+      return null
+    },
+    [cabinets, cabLeft, cabTop, cellWAt, cellHAt],
+  )
+
+  /** Палец ведёт линию: каждая ячейка за жест красится один раз */
+  const paintStrokeLabel = useCallback(
+    (label: string) => {
+      if (gesturePainted.current.has(label)) return
+      gesturePainted.current.add(label)
+      const sidebarEmptyOnly = emptyPaintMode && (!manualMode || editMode === 'empty')
+      if ((sidebarEmptyOnly || editMode === 'empty') && onToggleEmpty) {
+        onToggleEmpty(label)
+        return
+      }
+      if (!manualMode) return
+      if (editMode === 'start') {
+        onSetStartPoint?.(activeValue, label)
+        return
+      }
+      if (emptySet.has(label)) return
+      const chain = getChainForPort(activeValue)
+      if (chain.includes(label)) {
+        paintTipRef.current = label
+        return
+      }
+      paintTipRef.current = label
+      assignTo([label], activeValue)
+    },
+    [
+      emptyPaintMode,
+      manualMode,
+      editMode,
+      onToggleEmpty,
+      onSetStartPoint,
+      activeValue,
+      emptySet,
+      getChainForPort,
+      assignTo,
+    ],
+  )
+
+  const paintAlong = useCallback(
+    (from: { x: number; y: number } | null, to: { x: number; y: number }) => {
+      if (!from) {
+        const label = labelAtSvgPoint(to.x, to.y)
+        if (label) paintStrokeLabel(label)
+        return
+      }
+      const dx = to.x - from.x
+      const dy = to.y - from.y
+      const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 8))
+      for (let i = 1; i <= steps; i++) {
+        const label = labelAtSvgPoint(from.x + (dx * i) / steps, from.y + (dy * i) / steps)
+        if (label) paintStrokeLabel(label)
+      }
+    },
+    [labelAtSvgPoint, paintStrokeLabel],
+  )
+
+  const onGridPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!isMobile) return
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (activePointers.current.size >= 2) {
+        const pts = [...activePointers.current.values()]
+        const container = gridScrollRef.current
+        pinchRef.current = {
+          dist: Math.max(1, Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y)),
+          zoom: zoomLevel,
+          midX: (pts[0]!.x + pts[1]!.x) / 2,
+          midY: (pts[0]!.y + pts[1]!.y) / 2,
+          scrollLeft: container?.scrollLeft ?? 0,
+          scrollTop: container?.scrollTop ?? 0,
+        }
+        return
+      }
+      if (!drawingTouch) return
+      suppressClickRef.current = true
+      event.currentTarget.setPointerCapture(event.pointerId)
+      gesturePainted.current = new Set()
+      const point = clientToSvg(event.clientX, event.clientY)
+      lastSvgPoint.current = point
+      if (point) paintAlong(null, point)
+      onClaimKeyboard?.()
+    },
+    [isMobile, drawingTouch, zoomLevel, clientToSvg, paintAlong, onClaimKeyboard],
+  )
+
+  const onGridPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!isMobile || !activePointers.current.has(event.pointerId)) return
+      activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (activePointers.current.size >= 2 && pinchRef.current) {
+        const pts = [...activePointers.current.values()]
+        const dist = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y)
+        const midX = (pts[0]!.x + pts[1]!.x) / 2
+        const midY = (pts[0]!.y + pts[1]!.y) / 2
+        const pinch = pinchRef.current
+        setZoomLevel(clampZoomFine(pinch.zoom * (dist / pinch.dist)))
+        const container = gridScrollRef.current
+        if (container) {
+          container.scrollLeft = pinch.scrollLeft - (midX - pinch.midX)
+          container.scrollTop = pinch.scrollTop - (midY - pinch.midY)
+        }
+        return
+      }
+      if (!drawingTouch || activePointers.current.size !== 1) return
+      const point = clientToSvg(event.clientX, event.clientY)
+      if (!point) return
+      paintAlong(lastSvgPoint.current, point)
+      lastSvgPoint.current = point
+      const container = gridScrollRef.current
+      if (!container) return
+      const box = container.getBoundingClientRect()
+      const edge = 36
+      if (event.clientY > box.bottom - edge) container.scrollTop += 16
+      else if (event.clientY < box.top + edge) container.scrollTop -= 16
+      if (event.clientX > box.right - edge) container.scrollLeft += 16
+      else if (event.clientX < box.left + edge) container.scrollLeft -= 16
+    },
+    [isMobile, drawingTouch, clampZoomFine, clientToSvg, paintAlong],
+  )
+
+  const onGridPointerEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    activePointers.current.delete(event.pointerId)
+    if (activePointers.current.size < 2) pinchRef.current = null
+    if (activePointers.current.size === 0) {
+      lastSvgPoint.current = null
+      gesturePainted.current = new Set()
+      window.setTimeout(() => {
+        suppressClickRef.current = false
+      }, 0)
+    }
+  }, [])
+
   return (
     <div
       ref={captureRef}
@@ -1987,7 +2167,7 @@ export default memo(function GridVisualization({
       onMouseDown={() => {
         if (manualMode) onClaimKeyboard?.()
       }}
-      className={`overflow-x-auto rounded-xl border bg-white p-3 shadow-sm sm:p-4 ${
+      className={`overflow-x-auto rounded-xl border bg-white p-2 shadow-sm sm:p-4 ${
         manualMode || emptyPaintMode
           ? 'border-amber-300 ring-1 ring-amber-200'
           : 'border-slate-200'
@@ -2011,7 +2191,7 @@ export default memo(function GridVisualization({
             </span>
           )}
         </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="ml-auto flex w-full flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
           {onManualModeChange && (
             <button
               type="button"
@@ -2025,7 +2205,9 @@ export default memo(function GridVisualization({
                   : 'bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50'
               }`}
             >
-              Manual Routing / Ручная схема ({isData ? 'Data' : 'Power'})
+              {isMobile
+                ? `Ручная · ${isData ? 'Data' : 'Power'}`
+                : `Manual Routing / Ручная схема (${isData ? 'Data' : 'Power'})`}
             </button>
           )}
           <button
@@ -2035,7 +2217,7 @@ export default memo(function GridVisualization({
             aria-label="Print screen / Печать / צילום מסך"
             className={`${editBtnClass} bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60`}
           >
-            Print screen / Печать / צילום מסך
+            {isMobile ? 'Печать' : 'Print screen / Печать / צילום מסך'}
           </button>
           <button
             type="button"
@@ -2044,7 +2226,7 @@ export default memo(function GridVisualization({
             aria-label="Save image / Сохранить картинку / שמור תמונה"
             className={`${editBtnClass} bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60`}
           >
-            Save image / Сохранить картинку / שמור תמונה
+            {isMobile ? 'PNG' : 'Save image / Сохранить картинку / שמור תמונה'}
           </button>
           <button
             type="button"
@@ -2063,7 +2245,7 @@ export default memo(function GridVisualization({
               aria-label="Отправить эту схему в выезд"
               className={`${editBtnClass} bg-violet-700 text-white hover:bg-violet-800 disabled:cursor-wait disabled:opacity-60`}
             >
-              {tripSendBusy ? 'Отправка…' : 'Отправить в выезд'}
+              {tripSendBusy ? 'Отправка…' : isMobile ? 'В выезд' : 'Отправить в выезд'}
             </button>
           )}
           <div
@@ -2145,6 +2327,12 @@ export default memo(function GridVisualization({
             headerStats
           )}
         </div>
+      )}
+
+      {isMobile && (manualMode || emptyPaintMode) && (
+        <p className="mb-2 text-[11px] leading-snug text-slate-500">
+          Ведите пальцем по кабинетам. Два пальца — сдвиг и масштаб.
+        </p>
       )}
 
       {emptyPaintMode && (
@@ -2363,7 +2551,7 @@ export default memo(function GridVisualization({
       <div className="mb-3 space-y-1.5 text-xs text-slate-600">
         {isData ? (
           <>
-            <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+            <div className="flex flex-nowrap items-end gap-x-4 gap-y-3 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible">
               <div className="flex flex-col gap-0.5 pb-0.5 text-[10px] font-semibold leading-tight text-slate-700">
                 <span>{showCvt10Headers ? 'CVT10 - Main' : 'Data'}</span>
                 <span className="text-slate-400">↓</span>
@@ -2562,7 +2750,7 @@ export default memo(function GridVisualization({
           </>
         ) : (
           <>
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <div className="flex flex-nowrap items-center gap-x-5 gap-y-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible">
               <span className="font-medium text-slate-700">Power:</span>
               {usedLineNumbers.map((line) => {
                 const c = lineColorFor(line)
@@ -2627,7 +2815,20 @@ export default memo(function GridVisualization({
 
       <div
         ref={gridScrollRef}
-        className="-mx-1 overflow-x-auto px-1 pb-1 touch-pan-x"
+        onPointerDown={onGridPointerDown}
+        onPointerMove={onGridPointerMove}
+        onPointerUp={onGridPointerEnd}
+        onPointerCancel={onGridPointerEnd}
+        className={
+          isMobile
+            ? 'relative h-[calc(100dvh-12.5rem)] min-h-[280px] overflow-auto overscroll-contain rounded-lg bg-slate-50'
+            : '-mx-1 overflow-x-auto px-1 pb-1 touch-pan-x'
+        }
+        style={
+          isMobile
+            ? { touchAction: drawingTouch ? 'none' : 'pan-x pan-y' }
+            : undefined
+        }
       >
         <div
           className="mx-auto max-w-none bg-white"
@@ -2637,10 +2838,11 @@ export default memo(function GridVisualization({
           }}
         >
           <svg
+            ref={svgRef}
             width={svgW * effectiveScale}
             height={svgH * effectiveScale}
             viewBox={`0 0 ${svgW} ${svgH}`}
-            className="block max-w-none"
+            className="block max-w-none select-none"
             role="img"
             aria-label={isData ? 'Data port routing grid' : 'Power line routing grid'}
           >
@@ -2709,7 +2911,10 @@ export default memo(function GridVisualization({
             return (
               <g
                 key={cab.label}
-                onClick={(e) => handleCabinetClick(cab.label, e.shiftKey, e.altKey)}
+                onClick={(e) => {
+                  if (suppressClickRef.current) return
+                  handleCabinetClick(cab.label, e.shiftKey, e.altKey)
+                }}
                 style={{ cursor: isInteractive ? 'pointer' : 'default' }}
               >
                 {rowMixTag && !isEmpty && (
