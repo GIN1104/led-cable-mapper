@@ -5,9 +5,11 @@ import {
 } from './panelExport'
 import {
   buildFullEventWorkbook,
+  equipmentListToXlsxBlob,
   getEquipmentListExportRows,
   getDriveSheetFilename,
   getFullEventXlsxFilename,
+  type EmbeddedSchemeImage,
   type EquipmentListState,
 } from './equipmentList'
 import { ensureDriveAccess, uploadSpreadsheetEditLink } from './googleDrive'
@@ -499,11 +501,44 @@ export async function collectTripPackFiles(
  * Excel списка и схем → Google Таблица.
  * Возвращает только ссылку: файл по ней можно править.
  */
+function schemeFileTitle(filename: string): string {
+  const kind = filename.startsWith('power-lines')
+    ? 'חשמל / Хашмаль'
+    : filename.startsWith('data-ports')
+      ? 'תקשורת / Тикшорет'
+      : filename.replace(/\.png$/i, '')
+  const slug = filename
+    .replace(/^(data-ports|power-lines)-/, '')
+    .replace(/\.png$/i, '')
+    .trim()
+  return slug ? `${kind} — ${slug}` : kind
+}
+
+/** Те же PNG, что уходят в карточку, чтобы ссылка не снимала схему второй раз */
+export function schemeFilesToEmbedded(files: SchemeUploadFile[] | undefined): EmbeddedSchemeImage[] {
+  if (!files) return []
+  return files.flatMap((file) => {
+    if (!file.base64) return []
+    if (file.mimeType && file.mimeType !== 'image/png') return []
+    return [
+      {
+        title: schemeFileTitle(file.filename),
+        dataUrl: `data:image/png;base64,${file.base64}`,
+        captureRatio: CAPTURE_RATIO,
+      },
+    ]
+  })
+}
+
 export async function publishEventWorkbookEditLink(
   state: EquipmentListState,
+  schemeFiles?: SchemeUploadFile[],
 ): Promise<string> {
   await ensureDriveAccess()
-  const blob = await buildFullEventWorkbook(state)
+  const embedded = schemeFilesToEmbedded(schemeFiles)
+  const blob = embedded.length
+    ? await equipmentListToXlsxBlob(state, embedded)
+    : await buildFullEventWorkbook(state)
   return uploadSpreadsheetEditLink(blob, getDriveSheetFilename(state.meta))
 }
 
@@ -644,7 +679,7 @@ export async function sendAllSchemes(
   let editLink: string | null = null
   if (state) {
     onStatus?.('Excel на Google Drive…')
-    editLink = await publishEventWorkbookEditLink(state)
+    editLink = await publishEventWorkbookEditLink(state, pack.pngs)
   }
   const links = sheetsLinks(editLink ? [editLink] : [])
   try {

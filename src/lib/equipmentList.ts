@@ -11,6 +11,7 @@ import {
 import { resolveStripRowMixPitch } from './rowMix'
 import { resolveStripPitch } from './stripPitch'
 import { controllerForCol } from './dualVxRouting'
+import { SCHEME_ROW_PX, schemeDisplaySize, schemeImageSpan } from './schemeImageLayout'
 
 /** Ключи строк, для которых количество можно вывести из маршрутизации */
 export type EquipmentAutoKey =
@@ -985,11 +986,19 @@ function underlineOrValue(value: string, blanks: string): string {
   return trimmed || blanks
 }
 
-/** Снимок схем для Excel снимается в 3×; на листе картинка в размере экрана, пиксели не выбрасываются */
+/** Снимок схем для Excel снимается в 3×; на листе картинка в размере экрана */
 const SCHEME_CAPTURE_RATIO = 3
+
+export interface EmbeddedSchemeImage {
+  title: string
+  dataUrl: string
+  /** Во сколько раз PNG больше экранных пикселей */
+  captureRatio?: number
+}
 
 async function schemeImageForExcel(
   dataUrl: string,
+  captureRatio = SCHEME_CAPTURE_RATIO,
 ): Promise<{ base64: string; width: number; height: number }> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image()
@@ -998,27 +1007,12 @@ async function schemeImageForExcel(
     el.src = dataUrl
   })
   const comma = dataUrl.indexOf(',')
+  const size = schemeDisplaySize(img.naturalWidth, img.naturalHeight, captureRatio)
   return {
     base64: comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl,
-    width: Math.max(1, Math.round(img.naturalWidth / SCHEME_CAPTURE_RATIO)),
-    height: Math.max(1, Math.round(img.naturalHeight / SCHEME_CAPTURE_RATIO)),
+    width: size.width,
+    height: size.height,
   }
-}
-
-/** Резервирует строки под картинку, чтобы следующая схема не наложилась */
-function reserveImageRows(
-  worksheet: ExcelJS.Worksheet,
-  startRow: number,
-  heightPx: number,
-): number {
-  let remaining = heightPx * 0.75
-  let row = startRow
-  while (remaining > 0.5) {
-    worksheet.getRow(row).height = Math.max(15, Math.min(409, remaining))
-    remaining -= 409
-    row += 1
-  }
-  return row
 }
 
 async function appendSchemeImage(
@@ -1027,6 +1021,7 @@ async function appendSchemeImage(
   startRow: number,
   title: string,
   dataUrl: string,
+  captureRatio = SCHEME_CAPTURE_RATIO,
 ): Promise<number> {
   worksheet.mergeCells(startRow, 1, startRow, 4)
   const titleCell = worksheet.getCell(startRow, 1)
@@ -1035,20 +1030,42 @@ async function appendSchemeImage(
   titleCell.alignment = { horizontal: 'left', vertical: 'middle' }
   worksheet.getRow(startRow).height = 22
 
-  const { base64, width, height } = await schemeImageForExcel(dataUrl)
+  const { base64, width, height } = await schemeImageForExcel(dataUrl, captureRatio)
   const imageId = workbook.addImage({ base64, extension: 'png' })
-  const imageStart = startRow + 1
+  const { imageStart, rows } = schemeImageSpan(startRow, height)
+  for (let i = 0; i < rows; i++) {
+    worksheet.getRow(imageStart + i).height = SCHEME_ROW_PX * 0.75
+  }
+  const colWidth = Math.max(18, width / 4 / 7.5)
+  for (let c = 1; c <= 4; c++) {
+    const column = worksheet.getColumn(c)
+    if ((column.width ?? 0) < colWidth) column.width = colWidth
+  }
+  // Две ячейки якоря, а не ext: Google Таблицы иначе кладут вторую схему на первую.
+  // Типы exceljs требуют класс Anchor, рантайм принимает { col, row }.
   worksheet.addImage(imageId, {
     tl: { col: 0, row: imageStart - 1 },
-    ext: { width, height },
-  })
-  return reserveImageRows(worksheet, imageStart, height) + 1
+    br: { col: 4, row: imageStart - 1 + rows },
+    editAs: 'oneCell',
+  } as unknown as ExcelJS.ImageRange)
+  return imageStart + rows
 }
 
 /** Экспорт в .xlsx (лист «לדים») — оформление как в оригинальном шаблоне */
+function embeddedSchemeImages(
+  schemes?: SchemePngs | EmbeddedSchemeImage[],
+): EmbeddedSchemeImage[] {
+  if (!schemes) return []
+  if (Array.isArray(schemes)) return schemes.filter((image) => image.dataUrl.startsWith('data:image/'))
+  const images: EmbeddedSchemeImage[] = []
+  if (schemes.dataPng) images.push({ title: 'תקשורת / Тикшорет', dataUrl: schemes.dataPng })
+  if (schemes.powerPng) images.push({ title: 'חשמל / Хашмаль', dataUrl: schemes.powerPng })
+  return images
+}
+
 export async function equipmentListToXlsxBlob(
   state: EquipmentListState,
-  schemes?: SchemePngs,
+  schemes?: SchemePngs | EmbeddedSchemeImage[],
 ): Promise<Blob> {
   const ExcelJS = (await import('exceljs')).default
 
@@ -1221,14 +1238,23 @@ export async function equipmentListToXlsxBlob(
     footerRow = end + 1
   }
 
-  if (schemes?.dataPng && schemes?.powerPng) {
+  const embedded = embeddedSchemeImages(schemes)
+  if (embedded.length > 0) {
     worksheet.pageSetup.fitToPage = false
     worksheet.pageSetup.fitToWidth = 0
     worksheet.pageSetup.fitToHeight = 0
     worksheet.pageSetup.orientation = 'portrait'
     let row = footerRow + 1
-    row = await appendSchemeImage(workbook, worksheet, row, 'תקשורת / Тикшорет', schemes.dataPng)
-    await appendSchemeImage(workbook, worksheet, row, 'חשמל / Хашмаль', schemes.powerPng)
+    for (const image of embedded) {
+      row = await appendSchemeImage(
+        workbook,
+        worksheet,
+        row,
+        image.title,
+        image.dataUrl,
+        image.captureRatio,
+      )
+    }
   }
 
   const buffer = await workbook.xlsx.writeBuffer()

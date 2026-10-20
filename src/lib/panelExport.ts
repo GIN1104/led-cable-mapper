@@ -161,6 +161,44 @@ function waitTwoFrames(): Promise<void> {
   })
 }
 
+function isScrollable(style: CSSStyleDeclaration): boolean {
+  return /(auto|scroll)/.test(style.overflowY) || /(auto|scroll)/.test(style.overflowX)
+}
+
+/**
+ * Панель хашмаля на телефоне ниже экрана. Пока её не прокрутить в видимую
+ * область, снимок обрезается по окну и не совпадает с нарисованной схемой.
+ */
+async function revealPanelForCapture(element: HTMLElement): Promise<() => void> {
+  const saved: { el: HTMLElement; top: number; left: number }[] = []
+  let parent = element.parentElement
+  while (parent) {
+    if (isScrollable(getComputedStyle(parent))) {
+      saved.push({ el: parent, top: parent.scrollTop, left: parent.scrollLeft })
+    }
+    parent = parent.parentElement
+  }
+  const inner: { el: HTMLElement; top: number; left: number }[] = []
+  for (const el of element.querySelectorAll<HTMLElement>('*')) {
+    if (!isScrollable(getComputedStyle(el))) continue
+    inner.push({ el, top: el.scrollTop, left: el.scrollLeft })
+    el.scrollTop = 0
+    el.scrollLeft = 0
+  }
+  element.scrollIntoView({ block: 'start', inline: 'nearest' })
+  await waitTwoFrames()
+  return () => {
+    for (const item of inner) {
+      item.el.scrollTop = item.top
+      item.el.scrollLeft = item.left
+    }
+    for (const item of saved) {
+      item.el.scrollTop = item.top
+      item.el.scrollLeft = item.left
+    }
+  }
+}
+
 /** Снимки карточек тикшорет (data) и хашмаль (power) с текущей страницы */
 export async function captureSchemePanels(): Promise<{
   dataPng: string
@@ -176,6 +214,7 @@ export async function captureSchemePanels(): Promise<{
 
 /** Рендер всей карточки панели (заголовок, легенда, zoom, SVG) в PNG data URL */
 export async function capturePanelPng(element: HTMLElement, pixelRatio = 2): Promise<string> {
+  const restoreScroll = await revealPanelForCapture(element)
   const restoreOverflow = expandOverflowForCapture(element)
   element.classList.add('scheme-capture')
   try {
@@ -200,6 +239,7 @@ export async function capturePanelPng(element: HTMLElement, pixelRatio = 2): Pro
   } finally {
     element.classList.remove('scheme-capture')
     restoreOverflow()
+    restoreScroll()
   }
 }
 

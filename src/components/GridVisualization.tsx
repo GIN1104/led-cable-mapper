@@ -2868,7 +2868,7 @@ export default memo(function GridVisualization({
             aria-label={isData ? 'Data port routing grid' : 'Power line routing grid'}
           >
         {stripWidths.length > 1 && (
-          <g id="strip-labels" pointerEvents="none">
+          <g id={`${mode}-strip-labels`} pointerEvents="none">
             {stripColumnRanges(stripWidths).map(({ index, startCol, endCol }) => {
               const x1 = cabLeft(startCol)
               const x2 = cabLeft(endCol - 1) + cellWAt(endCol - 1)
@@ -2889,7 +2889,7 @@ export default memo(function GridVisualization({
             })}
           </g>
         )}
-        <g id="cabinets">
+        <g id={`${mode}-cabinets`}>
           {cabinets.map((cab) => {
             const x = cabLeft(cab.col)
             const y = cabTop(cab.col, cab.row)
@@ -3058,7 +3058,7 @@ export default memo(function GridVisualization({
           })}
         </g>
 
-        <g id="arrows">
+        <g id={`${mode}-arrows`}>
           {!isData &&
             powerLinks.map((link, i) => {
               const from = cabCenter(link.from.col, link.from.row)
@@ -3185,7 +3185,7 @@ export default memo(function GridVisualization({
 
         </g>
 
-        <g id="start-markers" pointerEvents="none">
+        <g id={`${mode}-start-markers`} pointerEvents="none">
           {cabinets.map((cab) => {
             if (emptySet.has(cab.label) || !startLabels.has(cab.label)) return null
             const x = cabLeft(cab.col)
@@ -3295,7 +3295,7 @@ export default memo(function GridVisualization({
           })}
         </g>
 
-        <g id="feed-markers" pointerEvents="none">
+        <g id={`${mode}-feed-markers`} pointerEvents="none">
           {!isData &&
             cabinets.map((cab) => {
               if (emptySet.has(cab.label) || !feedLabels.has(cab.label)) return null
@@ -3350,7 +3350,7 @@ export default memo(function GridVisualization({
             })}
         </g>
 
-        <g id="end-markers" pointerEvents="none">
+        <g id={`${mode}-end-markers`} pointerEvents="none">
           {cabinets.map((cab) => {
             if (emptySet.has(cab.label) || !endLabels.has(cab.label)) return null
             // На короткой линии Start/FEED уже показывают End в комбинированной подписи
