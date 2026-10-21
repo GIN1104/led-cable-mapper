@@ -1752,7 +1752,7 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-2 py-2 sm:px-6 sm:py-5">
+          <div className="flex-1 overflow-y-auto px-2 py-2 [overflow-anchor:none] sm:px-6 sm:py-5">
             {result && result.warnings.length > 0 && (
               <>
                 <details className="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 lg:hidden">

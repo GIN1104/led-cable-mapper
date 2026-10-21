@@ -662,6 +662,31 @@ function ArrowPath({
   )
 }
 
+function snapshotScroll(from: HTMLElement | null): { node: HTMLElement; top: number; left: number }[] {
+  const saved: { node: HTMLElement; top: number; left: number }[] = []
+  const root = document.scrollingElement
+  if (root instanceof HTMLElement) {
+    saved.push({ node: root, top: root.scrollTop, left: root.scrollLeft })
+  }
+  if (from) saved.push({ node: from, top: from.scrollTop, left: from.scrollLeft })
+  let parent = from?.parentElement ?? null
+  while (parent) {
+    const style = getComputedStyle(parent)
+    const scrolls =
+      /(auto|scroll)/.test(style.overflowY) || /(auto|scroll)/.test(style.overflowX)
+    if (scrolls) saved.push({ node: parent, top: parent.scrollTop, left: parent.scrollLeft })
+    parent = parent.parentElement
+  }
+  return saved
+}
+
+function restoreScroll(saved: { node: HTMLElement; top: number; left: number }[]) {
+  for (const item of saved) {
+    if (item.node.scrollTop !== item.top) item.node.scrollTop = item.top
+    if (item.node.scrollLeft !== item.left) item.node.scrollLeft = item.left
+  }
+}
+
 export default memo(function GridVisualization({
   result,
   wide,
@@ -1300,8 +1325,15 @@ export default memo(function GridVisualization({
 
   const focusManualKeyboard = useCallback(() => {
     onClaimKeyboard?.()
-    manualKeyboardRef.current?.focus({ preventScroll: true })
-  }, [onClaimKeyboard])
+    // На телефоне focus() прокручивает страницу к панели над сеткой — схема уезжает вверх.
+    if (narrow) return
+    const node = manualKeyboardRef.current
+    if (!node) return
+    const saved = snapshotScroll(node)
+    node.focus({ preventScroll: true })
+    restoreScroll(saved)
+    requestAnimationFrame(() => restoreScroll(saved))
+  }, [narrow, onClaimKeyboard])
 
   useEffect(() => {
     const chain = getChainForPort(activeValue)
@@ -1383,6 +1415,7 @@ export default memo(function GridVisualization({
   } | null>(null)
   const gesturePainted = useRef(new Set<string>())
   const lastSvgPoint = useRef<{ x: number; y: number } | null>(null)
+  const dragOrigin = useRef<{ x: number; y: number } | null>(null)
   const suppressClickRef = useRef(false)
 
   const effectiveScale = fitScale * zoomLevel
@@ -1790,11 +1823,17 @@ export default memo(function GridVisualization({
   ])
 
   useEffect(() => {
-    // Фокус только когда эта схема — владелец стрелок (не красть у Power/Data)
+    // Фокус только когда эта схема — владелец стрелок (не красть у Power/Data).
+    // На узком экране фокус сдвигает схему вверх, стрелки там не нужны.
+    if (narrow) return
     if (manualMode && editMode === 'assign' && keyboardActive) {
-      manualKeyboardRef.current?.focus({ preventScroll: true })
+      const node = manualKeyboardRef.current
+      if (!node) return
+      const saved = snapshotScroll(node)
+      node.focus({ preventScroll: true })
+      restoreScroll(saved)
     }
-  }, [manualMode, editMode, keyboardActive])
+  }, [manualMode, editMode, keyboardActive, narrow])
 
   const handleCabinetClick = useCallback(
     (label: string, shiftKey: boolean, altKey: boolean) => {
@@ -2016,8 +2055,12 @@ export default memo(function GridVisualization({
     const blockScroll = (event: TouchEvent) => {
       if (event.touches.length > 0) event.preventDefault()
     }
+    node.addEventListener('touchstart', blockScroll, { passive: false })
     node.addEventListener('touchmove', blockScroll, { passive: false })
-    return () => node.removeEventListener('touchmove', blockScroll)
+    return () => {
+      node.removeEventListener('touchstart', blockScroll)
+      node.removeEventListener('touchmove', blockScroll)
+    }
   }, [drawingTouch])
 
   const clientToSvg = useCallback(
@@ -2122,13 +2165,18 @@ export default memo(function GridVisualization({
         return
       }
       if (!drawingTouch) return
+      if (event.pointerType === 'touch') event.preventDefault()
       suppressClickRef.current = true
       event.currentTarget.setPointerCapture(event.pointerId)
       gesturePainted.current = new Set()
+      dragOrigin.current = { x: event.clientX, y: event.clientY }
+      const holdScroll = snapshotScroll(event.currentTarget)
       const point = clientToSvg(event.clientX, event.clientY)
       lastSvgPoint.current = point
       if (point) paintAlong(null, point)
       onClaimKeyboard?.()
+      restoreScroll(holdScroll)
+      requestAnimationFrame(() => restoreScroll(holdScroll))
     },
     [narrow, drawingTouch, zoomLevel, clientToSvg, paintAlong, onClaimKeyboard],
   )
@@ -2156,6 +2204,12 @@ export default memo(function GridVisualization({
       if (!point) return
       paintAlong(lastSvgPoint.current, point)
       lastSvgPoint.current = point
+      const origin = dragOrigin.current
+      const moved = origin
+        ? Math.hypot(event.clientX - origin.x, event.clientY - origin.y)
+        : 0
+      // Короткое касание первого кабинета не должно прокручивать сетку у верхней кромки.
+      if (moved < 24) return
       const container = gridScrollRef.current
       if (!container) return
       const box = container.getBoundingClientRect()
@@ -2173,6 +2227,7 @@ export default memo(function GridVisualization({
     if (activePointers.current.size < 2) pinchRef.current = null
     if (activePointers.current.size === 0) {
       lastSvgPoint.current = null
+      dragOrigin.current = null
       gesturePainted.current = new Set()
       window.setTimeout(() => {
         suppressClickRef.current = false
@@ -2842,7 +2897,7 @@ export default memo(function GridVisualization({
         onPointerCancel={onGridPointerEnd}
         className={
           narrow
-            ? 'relative h-[min(46svh,28rem)] min-h-[200px] overflow-auto overscroll-contain rounded-lg bg-slate-50'
+            ? 'relative h-[min(46svh,28rem)] min-h-[200px] overflow-auto overscroll-contain rounded-lg bg-slate-50 [overflow-anchor:none]'
             : '-mx-1 overflow-x-auto px-1 pb-1 touch-pan-x'
         }
         style={
