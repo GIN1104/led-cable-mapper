@@ -1416,6 +1416,7 @@ export default memo(function GridVisualization({
   const gesturePainted = useRef(new Set<string>())
   const lastSvgPoint = useRef<{ x: number; y: number } | null>(null)
   const dragOrigin = useRef<{ x: number; y: number } | null>(null)
+  const strokeDragged = useRef(false)
   const suppressClickRef = useRef(false)
 
   const effectiveScale = fitScale * zoomLevel
@@ -1447,8 +1448,12 @@ export default memo(function GridVisualization({
 
   useLayoutEffect(() => {
     setFitScale(calculateFitScale())
+  }, [calculateFitScale])
+
+  useLayoutEffect(() => {
+    // Сброс только при смене сетки. Иначе касание кабинета возвращает 100% и картинка прыгает.
     setZoomLevel(1)
-  }, [wide, high, isMobile, calculateFitScale])
+  }, [wide, high, isMobile])
 
   useEffect(() => {
     const container = gridScrollRef.current
@@ -2048,18 +2053,51 @@ export default memo(function GridVisualization({
 
   const drawingTouch = narrow && (manualMode || emptyPaintMode)
 
+  const scrollLockRef = useRef<{ node: HTMLElement; top: number; left: number }[] | null>(null)
+
   useEffect(() => {
     const node = gridScrollRef.current
     if (!node || !drawingTouch) return
-    // Встроенный браузер Telegram забирает вертикальный жест себе.
-    const blockScroll = (event: TouchEvent) => {
+    let locking = false
+    const onScroll = () => {
+      const saved = scrollLockRef.current
+      if (!saved || locking) return
+      locking = true
+      restoreScroll(saved)
+      locking = false
+    }
+    const onStart = () => {
+      scrollLockRef.current = snapshotScroll(node)
+    }
+    const onMove = (event: TouchEvent) => {
+      if (event.touches.length >= 2) {
+        const lock = scrollLockRef.current
+        if (lock) scrollLockRef.current = lock.filter((item) => item.node !== node)
+      }
       if (event.touches.length > 0) event.preventDefault()
     }
-    node.addEventListener('touchstart', blockScroll, { passive: false })
-    node.addEventListener('touchmove', blockScroll, { passive: false })
+    const onEnd = () => {
+      const snap = scrollLockRef.current
+      if (!snap) return
+      restoreScroll(snap)
+      requestAnimationFrame(() => restoreScroll(snap))
+      window.setTimeout(() => {
+        restoreScroll(snap)
+        if (scrollLockRef.current === snap) scrollLockRef.current = null
+      }, 80)
+    }
+    node.addEventListener('touchstart', onStart, { passive: true })
+    node.addEventListener('touchmove', onMove, { passive: false })
+    node.addEventListener('touchend', onEnd)
+    node.addEventListener('touchcancel', onEnd)
+    document.addEventListener('scroll', onScroll, true)
     return () => {
-      node.removeEventListener('touchstart', blockScroll)
-      node.removeEventListener('touchmove', blockScroll)
+      scrollLockRef.current = null
+      node.removeEventListener('touchstart', onStart)
+      node.removeEventListener('touchmove', onMove)
+      node.removeEventListener('touchend', onEnd)
+      node.removeEventListener('touchcancel', onEnd)
+      document.removeEventListener('scroll', onScroll, true)
     }
   }, [drawingTouch])
 
@@ -2165,18 +2203,12 @@ export default memo(function GridVisualization({
         return
       }
       if (!drawingTouch) return
-      if (event.pointerType === 'touch') event.preventDefault()
       suppressClickRef.current = true
-      event.currentTarget.setPointerCapture(event.pointerId)
       gesturePainted.current = new Set()
+      strokeDragged.current = false
       dragOrigin.current = { x: event.clientX, y: event.clientY }
-      const holdScroll = snapshotScroll(event.currentTarget)
-      const point = clientToSvg(event.clientX, event.clientY)
-      lastSvgPoint.current = point
-      if (point) paintAlong(null, point)
+      lastSvgPoint.current = clientToSvg(event.clientX, event.clientY)
       onClaimKeyboard?.()
-      restoreScroll(holdScroll)
-      requestAnimationFrame(() => restoreScroll(holdScroll))
     },
     [narrow, drawingTouch, zoomLevel, clientToSvg, paintAlong, onClaimKeyboard],
   )
@@ -2202,38 +2234,66 @@ export default memo(function GridVisualization({
       if (!drawingTouch || activePointers.current.size !== 1) return
       const point = clientToSvg(event.clientX, event.clientY)
       if (!point) return
-      paintAlong(lastSvgPoint.current, point)
-      lastSvgPoint.current = point
       const origin = dragOrigin.current
       const moved = origin
         ? Math.hypot(event.clientX - origin.x, event.clientY - origin.y)
         : 0
-      // Короткое касание первого кабинета не должно прокручивать сетку у верхней кромки.
-      if (moved < 24) return
+      // Короткое касание не двигает сетку. Линия начинается после сдвига пальца.
+      if (moved < 12) return
+      if (!strokeDragged.current) {
+        strokeDragged.current = true
+        const start = origin ? clientToSvg(origin.x, origin.y) : null
+        if (start) {
+          paintAlong(null, start)
+          lastSvgPoint.current = start
+        }
+      }
+      paintAlong(lastSvgPoint.current, point)
+      lastSvgPoint.current = point
       const container = gridScrollRef.current
       if (!container) return
       const box = container.getBoundingClientRect()
       const edge = 36
-      if (event.clientY > box.bottom - edge) container.scrollTop += 16
-      else if (event.clientY < box.top + edge) container.scrollTop -= 16
-      if (event.clientX > box.right - edge) container.scrollLeft += 16
-      else if (event.clientX < box.left + edge) container.scrollLeft -= 16
+      let nextTop = container.scrollTop
+      let nextLeft = container.scrollLeft
+      if (event.clientY > box.bottom - edge) nextTop += 16
+      else if (event.clientY < box.top + edge) nextTop -= 16
+      if (event.clientX > box.right - edge) nextLeft += 16
+      else if (event.clientX < box.left + edge) nextLeft -= 16
+      const lock = scrollLockRef.current
+      const lockedGrid = lock?.find((item) => item.node === container)
+      if (lockedGrid) {
+        lockedGrid.top = nextTop
+        lockedGrid.left = nextLeft
+      }
+      container.scrollTop = nextTop
+      container.scrollLeft = nextLeft
     },
     [narrow, drawingTouch, clampZoomFine, clientToSvg, paintAlong],
   )
 
-  const onGridPointerEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    activePointers.current.delete(event.pointerId)
-    if (activePointers.current.size < 2) pinchRef.current = null
-    if (activePointers.current.size === 0) {
-      lastSvgPoint.current = null
-      dragOrigin.current = null
-      gesturePainted.current = new Set()
-      window.setTimeout(() => {
-        suppressClickRef.current = false
-      }, 0)
-    }
-  }, [])
+  const onGridPointerEnd = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const point = lastSvgPoint.current
+      const dragged = strokeDragged.current
+      activePointers.current.delete(event.pointerId)
+      if (activePointers.current.size < 2) pinchRef.current = null
+      if (activePointers.current.size === 0) {
+        if (!dragged && point && drawingTouch) {
+          const label = labelAtSvgPoint(point.x, point.y)
+          if (label) handleCabinetClick(label, false, false)
+        }
+        lastSvgPoint.current = null
+        dragOrigin.current = null
+        strokeDragged.current = false
+        gesturePainted.current = new Set()
+        window.setTimeout(() => {
+          suppressClickRef.current = false
+        }, 0)
+      }
+    },
+    [drawingTouch, handleCabinetClick, labelAtSvgPoint],
+  )
 
   return (
     <div
@@ -2897,7 +2957,7 @@ export default memo(function GridVisualization({
         onPointerCancel={onGridPointerEnd}
         className={
           narrow
-            ? 'relative h-[min(46svh,28rem)] min-h-[200px] overflow-auto overscroll-contain rounded-lg bg-slate-50 [overflow-anchor:none]'
+            ? 'relative h-80 min-h-[16rem] overflow-auto overscroll-none rounded-lg bg-slate-50 [overflow-anchor:none]'
             : '-mx-1 overflow-x-auto px-1 pb-1 touch-pan-x'
         }
         style={
