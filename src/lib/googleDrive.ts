@@ -30,6 +30,8 @@ const SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 /** Токен на время вкладки, чтобы окно Google не открывалось второй раз за одну отправку. */
 let cachedToken: string | null = null
 let cachedEmail: string | null = null
+/** Адрес, который Google подтвердил для текущего токена. Запись в браузере сама по себе не считается. */
+let verifiedToken: string | null = null
 
 interface GoogleTokenResponse {
   access_token?: string
@@ -156,6 +158,7 @@ function readRememberedToken(): StoredToken | null {
 function forgetToken(): void {
   cachedToken = null
   cachedEmail = null
+  verifiedToken = null
   storageRemove(TOKEN_KEY)
 }
 
@@ -353,12 +356,16 @@ export function preloadGoogleSignIn(): void {
 }
 
 async function driveToken(): Promise<string> {
-  if (cachedToken && cachedEmail) return cachedToken
-  const remembered = readRememberedToken()
-  if (remembered?.token) {
-    cachedToken = remembered.token
-    cachedEmail = remembered.email ? normalizeEmail(remembered.email) : null
+  if (
+    cachedToken &&
+    verifiedToken === cachedToken &&
+    cachedEmail &&
+    isAllowedDriveEmail(cachedEmail)
+  ) {
+    return cachedToken
   }
+  const remembered = readRememberedToken()
+  if (!cachedToken && remembered?.token) cachedToken = remembered.token
   if (!cachedToken) {
     const clientId = readClientId()
     const first = await openAccountChooser(clientId)
@@ -366,14 +373,11 @@ async function driveToken(): Promise<string> {
   }
   const token = cachedToken
   if (!token) throw new Error('Google не выдал доступ')
-  if (!cachedEmail) {
-    const email = normalizeEmail(await fetchDriveEmail(token))
-    if (!isAllowedDriveEmail(email)) rejectUnknownAccount(email)
-    cachedEmail = email
-    rememberToken(token, undefined, email)
-  } else if (!isAllowedDriveEmail(cachedEmail)) {
-    rejectUnknownAccount(cachedEmail)
-  }
+  const email = normalizeEmail(await fetchDriveEmail(token))
+  if (!isAllowedDriveEmail(email)) rejectUnknownAccount(email)
+  cachedEmail = email
+  verifiedToken = token
+  rememberToken(token, undefined, email)
   return token
 }
 

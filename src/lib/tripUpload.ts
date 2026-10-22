@@ -665,10 +665,8 @@ export async function sendAllSchemes(
   /** Карточка приняла Excel.xlsx со ссылкой в ячейке и в примечании */
   excelInTrip: boolean
 }> {
-  if (state) {
-    onStatus?.('Вход в Google Drive…')
-    await ensureDriveAccess()
-  }
+  onStatus?.('Вход в Google Drive…')
+  await ensureDriveAccess()
   onStatus?.('Сборка схем…')
   const pack = await collectTripPackFiles(
     state,
@@ -806,6 +804,8 @@ export async function uploadSchemeImagesToTrip(
   if (files.length > 5) {
     return { ok: false, error: 'Можно отправить 1–5 файлов за один раз.' }
   }
+
+  await ensureDriveAccess()
 
   try {
     for (const file of files) {

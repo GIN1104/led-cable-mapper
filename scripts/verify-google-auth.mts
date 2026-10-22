@@ -13,10 +13,22 @@ import {
   usePageGoogleLogin,
 } from '../src/lib/googleAuth.ts'
 
-assert.equal(ALLOWED_DRIVE_EMAILS.length, 2)
+assert.deepEqual(
+  [...ALLOWED_DRIVE_EMAILS].sort(),
+  ['ledvision2026.il@gmail.com', 'starchenkogin@gmail.com'].sort(),
+)
 assert.equal(isAllowedDriveEmail('ledvision2026.il@gmail.com'), true)
 assert.equal(isAllowedDriveEmail(' StarchenkoGin@gmail.com '), true)
-assert.equal(isAllowedDriveEmail('other@gmail.com'), false)
+for (const blocked of [
+  '',
+  'other@gmail.com',
+  'ledvision2026@gmail.com',
+  'ledvision2026.il@gmail.com.evil.com',
+  'not-starchenkogin@gmail.com',
+  'starchenkogin@gmail.com.il',
+]) {
+  assert.equal(isAllowedDriveEmail(blocked), false, blocked)
+}
 assert.equal(DRIVE_OWNER_EMAIL, 'ledvision2026.il@gmail.com')
 assert.match(PUBLIC_GOOGLE_CLIENT_ID, /\.apps\.googleusercontent\.com$/)
 

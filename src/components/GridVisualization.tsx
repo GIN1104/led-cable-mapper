@@ -35,6 +35,7 @@ import {
   sharePanelViaWhatsApp,
 } from '../lib/panelExport'
 import type { TripBridge } from '../lib/tripBridge'
+import { beginDriveSignIn } from '../lib/googleDrive'
 import {
   buildSchemeFileFromElement,
   prepareSchemeBridge,
@@ -2032,6 +2033,9 @@ export default memo(function GridVisualization({
           : 'Схема Power отправлена в выезд.',
       )
     } catch (error) {
+      if (error instanceof Error && (error.message === 'cancelled' || error.message === 'redirecting')) {
+        return
+      }
       console.error('Trip single-scheme upload failed', error)
       window.alert(
         error instanceof Error
@@ -2376,7 +2380,10 @@ export default memo(function GridVisualization({
           {tripBridge && (
             <button
               type="button"
-              onClick={() => void handleSendToTrip()}
+              onClick={() => {
+                beginDriveSignIn()
+                void handleSendToTrip()
+              }}
               disabled={exportBusy || tripSendBusy}
               aria-label="Отправить эту схему в выезд"
               className={`${editBtnClass} bg-violet-700 text-white hover:bg-violet-800 disabled:cursor-wait disabled:opacity-60`}
