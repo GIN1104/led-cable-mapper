@@ -57,6 +57,7 @@ import {
   savePersistedProject,
 } from './lib/projectPersistence'
 import { clearRoutingCache } from './hooks/useRoutingResults'
+import { peekDriveSignInNotice } from './lib/googleDrive'
 import {
   clearTripBridge,
   loadTripBridge,
@@ -157,6 +158,13 @@ export default function App() {
   }, [])
   const [screens, setScreens] = useState<ScreenConfig[]>(initialProject.screens)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [driveNotice, setDriveNotice] = useState<string | null>(null)
+  useEffect(() => {
+    const sync = () => setDriveNotice(peekDriveSignInNotice())
+    sync()
+    window.addEventListener('led-drive-notice', sync)
+    return () => window.removeEventListener('led-drive-notice', sync)
+  }, [])
   const [headerToolsOpen, setHeaderToolsOpen] = useState(false)
   const [activeScreenId, setActiveScreenId] = useState(initialProject.activeScreenId)
   const [routingByScreen, setRoutingByScreen] = useState<Record<string, ScreenRoutingState>>(
@@ -1583,6 +1591,11 @@ export default function App() {
         />
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {driveNotice && (
+            <p className="shrink-0 border-b border-sky-200 bg-sky-50 px-3 py-1.5 text-xs leading-snug text-sky-950">
+              {driveNotice}
+            </p>
+          )}
           {tripBridge && (
             <TripBridgeBanner
               bridge={tripBridge}

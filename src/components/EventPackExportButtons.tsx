@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { beginDriveSignIn } from '../lib/googleDrive'
 import {
   downloadFullEventWorkbook,
   type EquipmentListState,
@@ -46,7 +47,7 @@ export default function EventPackExportButtons({
       const link = await publishEventWorkbookEditLink(state)
       window.alert(`Excel на Google Drive. Ссылка для правки:\n${link}`)
     } catch (error) {
-      if (error instanceof Error && error.message === 'cancelled') return
+      if (error instanceof Error && (error.message === 'cancelled' || error.message === 'redirecting')) return
       window.alert(
         error instanceof Error ? error.message : 'Не удалось сохранить файл',
       )
@@ -78,7 +79,7 @@ export default function EventPackExportButtons({
         openReturnTripCard(tripBridge)
       }
     } catch (error) {
-      if (error instanceof Error && error.message === 'cancelled') return
+      if (error instanceof Error && (error.message === 'cancelled' || error.message === 'redirecting')) return
       window.alert(
         error instanceof Error ? error.message : 'Не удалось отправить файлы в выезд',
       )
@@ -115,6 +116,7 @@ export default function EventPackExportButtons({
         title="Excel на Google Drive: обратно только ссылка с правом править"
         onClick={(event) => {
           if (stopPropagation) event.stopPropagation()
+          beginDriveSignIn()
           void run('drive')
         }}
       >
@@ -128,6 +130,7 @@ export default function EventPackExportButtons({
           title="В выезд: PNG схем и кликабельная ссылка на Excel в LED Warehouse / Excel"
           onClick={(event) => {
             if (stopPropagation) event.stopPropagation()
+            beginDriveSignIn()
             void sendToTrip()
           }}
         >

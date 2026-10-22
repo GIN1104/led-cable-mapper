@@ -15,6 +15,7 @@ import {
   sendAllSchemes,
   type TripScreenCaptureTarget,
 } from '../lib/tripUpload'
+import { beginDriveSignIn } from '../lib/googleDrive'
 
 interface TripBridgeBannerProps {
   bridge: TripBridge
@@ -128,7 +129,7 @@ export default function TripBridgeBanner({
         openReturnTripCard(bridge)
       }
     } catch (error) {
-      if (error instanceof Error && error.message === 'cancelled') {
+      if (error instanceof Error && (error.message === 'cancelled' || error.message === 'redirecting')) {
         setStatus(null)
         return
       }
@@ -199,7 +200,10 @@ export default function TripBridgeBanner({
           <button
             type="button"
             disabled={busy != null}
-            onClick={() => void sendSchemes()}
+            onClick={() => {
+              beginDriveSignIn()
+              void sendSchemes()
+            }}
             title="В выезд: PNG схем и кликабельная ссылка на Excel в LED Warehouse / Excel"
             className={`${actionClass} border-violet-400 bg-violet-700 text-white shadow-sm hover:bg-violet-800`}
           >

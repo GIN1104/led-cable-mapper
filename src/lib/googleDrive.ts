@@ -1,15 +1,33 @@
+import {
+  ALLOWED_DRIVE_EMAILS,
+  DRIVE_CANCELLED,
+  DRIVE_OWNER_EMAIL,
+  DRIVE_REDIRECTING,
+  DRIVE_SCOPE,
+  PUBLIC_GOOGLE_CLIENT_ID,
+  allowedDriveEmailsLabel,
+  googleAccountChooserUrl,
+  isAllowedDriveEmail,
+  normalizeEmail,
+  oauthRedirectUri,
+  pickLedExcelFolder,
+  readOAuthRedirectResult,
+  usePageGoogleLogin,
+  type DriveFolderRef,
+} from './googleAuth'
+
 const CLIENT_ID_KEY = 'led-cable-mapper:google-oauth-client-id'
 const TOKEN_KEY = 'led-cable-mapper:google-drive-token'
-/** Аккаунт Drive. hint пропускает выбор, если этот адрес уже вошёл в браузере. */
-const DRIVE_ACCOUNT_HINT = 'ledvision2026.il@gmail.com'
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive'
+const OAUTH_STATE_KEY = 'led-cable-mapper:google-oauth-state'
+const SIGN_IN_NOTICE_KEY = 'led-cable-mapper:google-sign-in-notice'
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const XLSX_MIME =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 
-/** Токен на время вкладки, чтобы попап Google не открывался второй раз за одну отправку. */
+/** Токен на время вкладки, чтобы окно Google не открывалось второй раз за одну отправку. */
 let cachedToken: string | null = null
+let cachedEmail: string | null = null
 
 interface GoogleTokenResponse {
   access_token?: string
@@ -20,6 +38,12 @@ interface GoogleTokenResponse {
 
 interface GoogleTokenClient {
   requestAccessToken: (override?: { prompt?: '' | 'consent' }) => void
+}
+
+interface StoredToken {
+  token?: string
+  exp?: number
+  email?: string
 }
 
 function gisReady(): boolean {
@@ -54,55 +78,74 @@ function readClientId(): string {
   const fromEnv = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim()
   if (fromEnv) return fromEnv
   try {
-    return localStorage.getItem(CLIENT_ID_KEY)?.trim() ?? ''
+    const stored = localStorage.getItem(CLIENT_ID_KEY)?.trim()
+    if (stored) return stored
   } catch {
-    return ''
+    // браузер запретил storage
   }
+  return PUBLIC_GOOGLE_CLIENT_ID
 }
 
-function askClientId(): string {
-  const entered = window.prompt(
-    'Чтобы положить Excel на Google Drive и получить ссылку для правки, вставьте OAuth Client ID\n' +
-      '(Google Cloud → Google Drive API → OAuth client, тип Web).\n\n' +
-      'Authorized JavaScript origins:\n' +
-      'http://localhost:5173\n' +
-      'http://localhost:5174\n' +
-      'https://gin1104.github.io\n\n' +
-      'ID сохранится только в этом браузере.',
-  )
-  const id = entered?.trim() ?? ''
-  if (!id) throw new Error('cancelled')
+function storageSet(key: string, value: string): void {
   try {
-    localStorage.setItem(CLIENT_ID_KEY, id)
+    sessionStorage.setItem(key, value)
   } catch {
-    // браузер запретил storage — используем ID только на этот раз
+    // сессия недоступна
   }
-  return id
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // постоянное хранилище недоступно
+  }
 }
 
-function rememberToken(token: string, expiresInSec?: number): void {
+function storageGet(key: string): string | null {
+  try {
+    const fromSession = sessionStorage.getItem(key)
+    if (fromSession) return fromSession
+  } catch {
+    // ignore
+  }
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function storageRemove(key: string): void {
+  try {
+    sessionStorage.removeItem(key)
+  } catch {
+    // ignore
+  }
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // ignore
+  }
+}
+
+function rememberToken(token: string, expiresInSec?: number, email?: string): void {
   cachedToken = token
+  if (email) cachedEmail = normalizeEmail(email)
   const ttlMs = Math.max(60, (expiresInSec ?? 3600) - 60) * 1000
-  try {
-    sessionStorage.setItem(
-      TOKEN_KEY,
-      JSON.stringify({ token, exp: Date.now() + ttlMs }),
-    )
-  } catch {
-    // сессия браузера недоступна — токен только в памяти вкладки
-  }
+  storageSet(
+    TOKEN_KEY,
+    JSON.stringify({ token, exp: Date.now() + ttlMs, email: cachedEmail ?? undefined }),
+  )
 }
 
-function readRememberedToken(): string | null {
+function readRememberedToken(): StoredToken | null {
   try {
-    const raw = sessionStorage.getItem(TOKEN_KEY)
+    const raw = storageGet(TOKEN_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as { token?: string; exp?: number }
+    const parsed = JSON.parse(raw) as StoredToken
     if (!parsed.token || !parsed.exp || parsed.exp <= Date.now()) {
-      sessionStorage.removeItem(TOKEN_KEY)
+      storageRemove(TOKEN_KEY)
       return null
     }
-    return parsed.token
+    return parsed
   } catch {
     return null
   }
@@ -110,17 +153,88 @@ function readRememberedToken(): string | null {
 
 function forgetToken(): void {
   cachedToken = null
-  try {
-    sessionStorage.removeItem(TOKEN_KEY)
-  } catch {
-    // ignore
-  }
+  cachedEmail = null
+  storageRemove(TOKEN_KEY)
 }
 
-function requestAccessToken(
-  clientId: string,
-  prompt: '' | 'consent',
-): Promise<{ token: string; expiresIn?: number }> {
+function pageLoginNeeded(): boolean {
+  const telegram = Boolean(
+    (window as Window & { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp
+      ?.initData,
+  )
+  return usePageGoogleLogin({
+    userAgent: navigator.userAgent,
+    telegram,
+  })
+}
+
+function currentRedirectUri(): string {
+  return oauthRedirectUri(window.location.origin, import.meta.env.BASE_URL || '/')
+}
+
+/**
+ * Полная страница Google вместо всплывающего окна.
+ * Сейчас в клиенте зарегистрирован только http://localhost:3000/
+ * Адрес сайта (https://gin1104.github.io/led-cable-mapper/) даёт redirect_uri_mismatch,
+ * поэтому телефон на сайте открывает обычное окно выбора почты.
+ */
+function canUsePageLogin(): boolean {
+  return currentRedirectUri() === 'http://localhost:3000/'
+}
+
+function redirectToAccountChooser(clientId: string): void {
+  const state = Math.random().toString(36).slice(2)
+  storageSet(OAUTH_STATE_KEY, state)
+  const url = googleAccountChooserUrl({
+    clientId,
+    redirectUri: currentRedirectUri(),
+    state,
+  })
+  window.location.assign(url)
+}
+
+function consumeGoogleRedirect(): void {
+  if (typeof window === 'undefined') return
+  const result = readOAuthRedirectResult(window.location.hash)
+  if (!result) return
+  const next = window.location.pathname + window.location.search
+  window.history.replaceState(window.history.state, '', next)
+  if (result.error) {
+    storageSet(
+      SIGN_IN_NOTICE_KEY,
+      result.error === 'access_denied'
+        ? 'Вход Google отменён. Выберите ledvision2026.il@gmail.com или starchenkogin@gmail.com.'
+        : `Google: ${result.error}`,
+    )
+    return
+  }
+  if (!result.token) return
+  const expected = storageGet(OAUTH_STATE_KEY)
+  storageRemove(OAUTH_STATE_KEY)
+  if (expected && result.state && expected !== result.state) {
+    storageSet(SIGN_IN_NOTICE_KEY, 'Вход Google не совпал с этим окном. Нажмите кнопку ещё раз.')
+    return
+  }
+  rememberToken(result.token, result.expiresIn ?? undefined)
+  storageSet(
+    SIGN_IN_NOTICE_KEY,
+    'Вход Google выполнен. Нажмите сохранение ещё раз — файл ляжет на Диск ledvision2026.il@gmail.com.',
+  )
+}
+
+consumeGoogleRedirect()
+
+/** Текст после возврата из окна Google. Гаснет, когда сохранение начинается. */
+export function peekDriveSignInNotice(): string | null {
+  return storageGet(SIGN_IN_NOTICE_KEY)
+}
+
+function clearDriveSignInNotice(): void {
+  storageRemove(SIGN_IN_NOTICE_KEY)
+  window.dispatchEvent(new Event('led-drive-notice'))
+}
+
+function requestAccountChooser(clientId: string): Promise<{ token: string; expiresIn?: number }> {
   return new Promise((resolve, reject) => {
     const oauth = window.google?.accounts?.oauth2
     if (!oauth) {
@@ -130,13 +244,22 @@ function requestAccessToken(
     const client: GoogleTokenClient = oauth.initTokenClient({
       client_id: clientId,
       scope: DRIVE_SCOPE,
-      hint: DRIVE_ACCOUNT_HINT,
+      // select_account показывает список почт. hint здесь нельзя: он пропускает выбор.
+      prompt: 'select_account',
       callback: (resp: GoogleTokenResponse) => {
         if (resp.access_token) {
           resolve({ token: resp.access_token, expiresIn: resp.expires_in })
           return
         }
         const message = resp.error_description || resp.error || 'Google не выдал доступ'
+        if (/origin_mismatch/i.test(message)) {
+          reject(
+            new Error(
+              'Google не пускает этот сайт. В Google Cloud у OAuth client в Authorized JavaScript origins добавьте https://gin1104.github.io',
+            ),
+          )
+          return
+        }
         if (/invalid_client|deleted_client/i.test(message)) {
           try {
             localStorage.removeItem(CLIENT_ID_KEY)
@@ -147,43 +270,109 @@ function requestAccessToken(
         reject(new Error(message))
       },
       error_callback: (err: { type?: string; message?: string }) => {
-        if (err.type === 'popup_closed' || err.type === 'popup_failed_to_open') {
-          reject(new Error('cancelled'))
+        if (err.type === 'popup_failed_to_open') {
+          if (canUsePageLogin()) {
+            redirectToAccountChooser(clientId)
+            reject(new Error(DRIVE_REDIRECTING))
+            return
+          }
+          reject(
+            new Error(
+              'Браузер заблокировал окно Google. Откройте сайт в Chrome и нажмите ещё раз — появится выбор почты.',
+            ),
+          )
+          return
+        }
+        if (err.type === 'popup_closed') {
+          reject(new Error(DRIVE_CANCELLED))
           return
         }
         reject(new Error(err.message || err.type || 'Ошибка окна Google'))
       },
     })
-    // Пустой prompt не открывает выбор аккаунта, если доступ уже выдан этому hint.
-    client.requestAccessToken({ prompt })
+    // Без override.prompt: пустой prompt снова спрятал бы список почт.
+    client.requestAccessToken()
   })
 }
 
-/** Вход в Google Drive. Вызывать в начале клика, пока браузер ещё разрешает окно входа. */
+function openAccountChooser(clientId: string): Promise<{ token: string; expiresIn?: number }> {
+  if (pageLoginNeeded() && canUsePageLogin()) {
+    redirectToAccountChooser(clientId)
+    return new Promise(() => {})
+  }
+  if (!gisReady()) {
+    return loadGis().then(
+      () => requestAccountChooser(clientId),
+      () => {
+        redirectToAccountChooser(clientId)
+        return new Promise<{ token: string; expiresIn?: number }>(() => {})
+      },
+    )
+  }
+  return requestAccountChooser(clientId)
+}
+
+async function fetchDriveEmail(token: string): Promise<string> {
+  const data = await driveJson<{ user?: { emailAddress?: string } }>(
+    token,
+    'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)',
+  )
+  const email = data.user?.emailAddress?.trim() ?? ''
+  if (!email) throw new Error('Google не сообщил адрес аккаунта')
+  return email
+}
+
+function rejectUnknownAccount(email: string): never {
+  forgetToken()
+  throw new Error(
+    `Аккаунт ${email} не подключён. В окне Google выберите ${allowedDriveEmailsLabel()}.`,
+  )
+}
+
+let signInFlight: Promise<string> | null = null
+
+/** Открыть окно Google в том же нажатии, до любых await. */
+export function beginDriveSignIn(): void {
+  if (signInFlight) return
+  signInFlight = driveToken().finally(() => {
+    signInFlight = null
+  })
+}
+
+/** Вход в Google Drive. Первый вызов открывает окно выбора почты. */
 export async function ensureDriveAccess(): Promise<void> {
-  await driveToken()
+  if (!signInFlight) beginDriveSignIn()
+  await signInFlight
+}
+
+/** Подгрузить скрипт Google до клика, чтобы окно выбора открылось сразу. */
+export function preloadGoogleSignIn(): void {
+  void loadGis().catch(() => undefined)
 }
 
 async function driveToken(): Promise<string> {
-  if (cachedToken) return cachedToken
+  if (cachedToken && cachedEmail) return cachedToken
   const remembered = readRememberedToken()
-  if (remembered) {
-    cachedToken = remembered
-    return remembered
+  if (remembered?.token) {
+    cachedToken = remembered.token
+    cachedEmail = remembered.email ? normalizeEmail(remembered.email) : null
   }
-  await loadGis()
-  const clientId = readClientId() || askClientId()
-  try {
-    const first = await requestAccessToken(clientId, '')
+  if (!cachedToken) {
+    const clientId = readClientId()
+    const first = await openAccountChooser(clientId)
     rememberToken(first.token, first.expiresIn)
-    return first.token
-  } catch (error) {
-    const message = error instanceof Error ? error.message : ''
-    if (message === 'cancelled' || /invalid_client|deleted_client/i.test(message)) throw error
   }
-  const second = await requestAccessToken(clientId, 'consent')
-  rememberToken(second.token, second.expiresIn)
-  return second.token
+  const token = cachedToken
+  if (!token) throw new Error('Google не выдал доступ')
+  if (!cachedEmail) {
+    const email = normalizeEmail(await fetchDriveEmail(token))
+    if (!isAllowedDriveEmail(email)) rejectUnknownAccount(email)
+    cachedEmail = email
+    rememberToken(token, undefined, email)
+  } else if (!isAllowedDriveEmail(cachedEmail)) {
+    rejectUnknownAccount(cachedEmail)
+  }
+  return token
 }
 
 function editLink(fileId: string): string {
@@ -204,25 +393,6 @@ async function driveJson<T>(token: string, url: string, init?: RequestInit): Pro
     throw new Error(text || `Google Drive: ${response.status}`)
   }
   return (await response.json()) as T
-}
-
-async function findFolder(
-  token: string,
-  name: string,
-  parentId?: string,
-): Promise<string | null> {
-  const clauses = [
-    `name = '${name.replace(/'/g, "\\'")}'`,
-    `mimeType = '${FOLDER_MIME}'`,
-    'trashed = false',
-  ]
-  if (parentId) clauses.push(`'${parentId}' in parents`)
-  const url =
-    'https://www.googleapis.com/drive/v3/files?q=' +
-    encodeURIComponent(clauses.join(' and ')) +
-    '&fields=files(id)&pageSize=1&spaces=drive'
-  const data = await driveJson<{ files?: { id: string }[] }>(token, url)
-  return data.files?.[0]?.id ?? null
 }
 
 async function createFolder(
@@ -247,15 +417,109 @@ async function createFolder(
   return data.id
 }
 
-/** Папка LED Warehouse / Excel. Создаёт недостающие уровни. */
-async function excelFolderId(token: string): Promise<string> {
-  const warehouse =
-    (await findFolder(token, 'LED Warehouse')) ??
-    (await createFolder(token, 'LED Warehouse'))
-  return (
-    (await findFolder(token, 'Excel', warehouse)) ??
-    (await createFolder(token, 'Excel', warehouse))
+async function ownFolder(token: string, name: string, parentId?: string): Promise<string> {
+  const listed = await listNamedFolders(token, name)
+  const mine = listed.find((folder) => {
+    const ownerOk = normalizeEmail(folder.ownerEmail ?? '') === normalizeEmail(DRIVE_OWNER_EMAIL)
+    return ownerOk && (parentId ? folder.parentId === parentId : true)
+  })
+  if (mine) return mine.id
+  return createFolder(token, name, parentId)
+}
+
+async function shareFolderWith(token: string, folderId: string, email: string): Promise<void> {
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}/permissions`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        role: 'writer',
+        type: 'user',
+        emailAddress: email,
+      }),
+    },
   )
+  if (response.ok || response.status === 409) return
+  const text = await response.text()
+  if (/already exists|duplicate/i.test(text)) return
+}
+
+async function listNamedFolders(
+  token: string,
+  name: string,
+): Promise<{ id: string; name: string; parentId?: string; ownerEmail?: string }[]> {
+  const clauses = [
+    `name = '${name.replace(/'/g, "\\'")}'`,
+    `mimeType = '${FOLDER_MIME}'`,
+    'trashed = false',
+  ]
+  const url =
+    'https://www.googleapis.com/drive/v3/files?q=' +
+    encodeURIComponent(clauses.join(' and ')) +
+    '&fields=files(id,name,parents,owners(emailAddress))&pageSize=50&spaces=drive'
+  const data = await driveJson<{
+    files?: { id?: string; name?: string; parents?: string[]; owners?: { emailAddress?: string }[] }[]
+  }>(token, url)
+  return (data.files ?? []).flatMap((file) => {
+    if (!file.id) return []
+    return [
+      {
+        id: file.id,
+        name: file.name ?? name,
+        parentId: file.parents?.[0],
+        ownerEmail: file.owners?.[0]?.emailAddress,
+      },
+    ]
+  })
+}
+
+/** Папка LED Warehouse / Excel на Диске ledvision2026, даже если вошёл второй адрес. */
+async function excelFolderId(token: string): Promise<string> {
+  const email = cachedEmail ?? ''
+  if (normalizeEmail(email) === normalizeEmail(DRIVE_OWNER_EMAIL)) {
+    const warehouse = await ownFolder(token, 'LED Warehouse')
+    const excel = await ownFolder(token, 'Excel', warehouse)
+    for (const allowed of ALLOWED_DRIVE_EMAILS) {
+      if (normalizeEmail(allowed) === normalizeEmail(DRIVE_OWNER_EMAIL)) continue
+      await shareFolderWith(token, warehouse, allowed)
+      await shareFolderWith(token, excel, allowed)
+    }
+    return excel
+  }
+
+  const listed = await listNamedFolders(token, 'Excel')
+  const refs: DriveFolderRef[] = []
+  for (const folder of listed) {
+    let parentName = ''
+    if (folder.parentId) {
+      try {
+        const parent = await driveJson<{ name?: string }>(
+          token,
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folder.parentId)}?fields=name`,
+        )
+        parentName = parent.name ?? ''
+      } catch {
+        parentName = ''
+      }
+    }
+    refs.push({
+      id: folder.id,
+      name: folder.name,
+      ownerEmail: folder.ownerEmail,
+      parentName,
+    })
+  }
+  const existing = pickLedExcelFolder(refs)
+  if (!existing) {
+    throw new Error(
+      'Папка Excel на Диске ledvision2026.il@gmail.com ещё не открыта для этого аккаунта. Один раз сохраните файл, выбрав ledvision2026.il@gmail.com.',
+    )
+  }
+  return existing
 }
 
 /** Любой, у кого есть ссылка, может править файл. */
@@ -291,6 +555,7 @@ export async function uploadSpreadsheetEditLink(
   filename: string,
 ): Promise<string> {
   const token = await driveToken()
+  clearDriveSignInNotice()
   const folderId = await excelFolderId(token)
   const sheetName = filename.replace(/\.xlsx$/i, '') || filename
   const metadata = {
@@ -335,6 +600,7 @@ declare global {
             client_id: string
             scope: string
             hint?: string
+            prompt?: '' | 'consent' | 'select_account'
             callback: (resp: GoogleTokenResponse) => void
             error_callback?: (err: { type?: string; message?: string }) => void
           }) => GoogleTokenClient
