@@ -108,3 +108,25 @@ export function usePageGoogleLogin(input: {
   if (input.telegram) return true
   return /Telegram|Instagram|FBAN|FBAV|Line\//i.test(input.userAgent)
 }
+
+/** Доступ человеку без письма. Иначе Google пишет «вам открыли папку» при каждой отправке. */
+export function driveUserPermissionUrl(fileId: string): string {
+  return (
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}` +
+    '/permissions?sendNotificationEmail=false&fields=id'
+  )
+}
+
+export function permissionAlreadyGranted(
+  permissions: { emailAddress?: string; role?: string }[] | undefined,
+  email: string,
+): boolean {
+  const want = normalizeEmail(email)
+  return (permissions ?? []).some((item) => {
+    const role = item.role ?? ''
+    return (
+      normalizeEmail(item.emailAddress ?? '') === want &&
+      (role === 'writer' || role === 'fileOrganizer' || role === 'owner')
+    )
+  })
+}

@@ -10,6 +10,8 @@ import {
   isAllowedDriveEmail,
   normalizeEmail,
   oauthRedirectUri,
+  driveUserPermissionUrl,
+  permissionAlreadyGranted,
   pickLedExcelFolder,
   readOAuthRedirectResult,
   usePageGoogleLogin,
@@ -427,25 +429,43 @@ async function ownFolder(token: string, name: string, parentId?: string): Promis
   return createFolder(token, name, parentId)
 }
 
+const quietShares = new Set<string>()
+
 async function shareFolderWith(token: string, folderId: string, email: string): Promise<void> {
-  const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}/permissions`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        role: 'writer',
-        type: 'user',
-        emailAddress: email,
-      }),
+  const key = `${folderId}:${normalizeEmail(email)}`
+  if (quietShares.has(key)) return
+  try {
+    const listed = await driveJson<{
+      permissions?: { emailAddress?: string; role?: string }[]
+    }>(
+      token,
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}/permissions?fields=permissions(emailAddress,role)&pageSize=100`,
+    )
+    if (permissionAlreadyGranted(listed.permissions, email)) {
+      quietShares.add(key)
+      return
+    }
+  } catch {
+    // Список прав недоступен — попробуем выдать доступ без письма.
+  }
+  const response = await fetch(driveUserPermissionUrl(folderId), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
     },
-  )
-  if (response.ok || response.status === 409) return
+    body: JSON.stringify({
+      role: 'writer',
+      type: 'user',
+      emailAddress: email,
+    }),
+  })
+  if (response.ok || response.status === 409) {
+    quietShares.add(key)
+    return
+  }
   const text = await response.text()
-  if (/already exists|duplicate/i.test(text)) return
+  if (/already exists|duplicate/i.test(text)) quietShares.add(key)
 }
 
 async function listNamedFolders(

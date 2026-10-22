@@ -6,6 +6,8 @@ import {
   googleAccountChooserUrl,
   isAllowedDriveEmail,
   oauthRedirectUri,
+  driveUserPermissionUrl,
+  permissionAlreadyGranted,
   pickLedExcelFolder,
   readOAuthRedirectResult,
   usePageGoogleLogin,
@@ -55,6 +57,20 @@ assert.equal(
     userAgent: 'Mozilla/5.0 (Linux; Android 14) Chrome/120 Mobile',
     telegram: false,
   }),
+  false,
+)
+
+const shareUrl = new URL(driveUserPermissionUrl('folder id'))
+assert.equal(shareUrl.searchParams.get('sendNotificationEmail'), 'false')
+assert.equal(
+  permissionAlreadyGranted(
+    [{ emailAddress: 'StarchenkoGin@gmail.com', role: 'writer' }],
+    'starchenkogin@gmail.com',
+  ),
+  true,
+)
+assert.equal(
+  permissionAlreadyGranted([{ emailAddress: 'starchenkogin@gmail.com', role: 'reader' }], 'starchenkogin@gmail.com'),
   false,
 )
 
