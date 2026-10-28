@@ -64,9 +64,10 @@ export function getMaxCabinetsPerPowerLine(config: ScreenConfig): number {
   switch (config.pitchPreset) {
     case '3.9-big':
     case '3.9-reshet':
+    case '2.9-outdoor-big':
       return 12
     case '3.9-small':
-    case '2-outdoor':
+    case '2.9-outdoor-small':
       return 24
     case '2.9':
       return 40
@@ -82,9 +83,10 @@ export function getPreferredCabinetsPerPowerLine(config: ScreenConfig): number {
   switch (config.pitchPreset) {
     case '3.9-big':
     case '3.9-reshet':
+    case '2.9-outdoor-big':
       return 10
     case '3.9-small':
-    case '2-outdoor':
+    case '2.9-outdoor-small':
       return 20
     case '2.9':
       return 40

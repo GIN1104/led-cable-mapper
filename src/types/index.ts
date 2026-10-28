@@ -81,7 +81,9 @@ export type PitchPresetId =
 
   | '2.9'
 
-  | '2-outdoor'
+  | '2.9-outdoor-big'
+
+  | '2.9-outdoor-small'
 
   | 'custom'
 
@@ -240,7 +242,7 @@ export interface ScreenConfig {
 
 /** Полоса микса рядов (линии Big или Small) */
 export interface RowMixBand {
-  /** Пресет кубика полосы (Big, Small, 2 outdoor и остальные из списка) */
+  /** Пресет кубика полосы (Big, Small, 2.9 outdoor и остальные из списка) */
   size: Exclude<PitchPresetId, 'custom'>
   /** Число горизонтальных линий (рядов) */
   rows: number

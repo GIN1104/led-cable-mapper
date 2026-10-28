@@ -51,13 +51,22 @@ export const PITCH_PRESETS: PitchPreset[] = [
     pixelPitchMm: 2.9,
   },
   {
-    id: '2-outdoor',
-    label: '2 outdoor',
+    id: '2.9-outdoor-big',
+    label: '2.9 outdoor Big',
+    cabinetWidthMm: 500,
+    cabinetHeightMm: 1000,
+    pixelsWide: 168,
+    pixelsHigh: 336,
+    pixelPitchMm: 2.9,
+  },
+  {
+    id: '2.9-outdoor-small',
+    label: '2.9 outdoor small',
     cabinetWidthMm: 500,
     cabinetHeightMm: 500,
-    pixelsWide: 250,
-    pixelsHigh: 250,
-    pixelPitchMm: 2,
+    pixelsWide: 168,
+    pixelsHigh: 168,
+    pixelPitchMm: 2.9,
   },
 ]
 

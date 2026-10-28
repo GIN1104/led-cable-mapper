@@ -1125,7 +1125,7 @@ export default function Sidebar({
               </p>
               <p className="text-[10px] leading-snug text-slate-600">
                 При нескольких полосах — модель кубика на каждый блок (Big / Small
-                / Reshet / 2.9 / 2 outdoor) или с другого экрана. Блоки сверху и
+                / Reshet / 2.9 / 2.9 outdoor Big и small) или с другого экрана. Блоки сверху и
                 снизу — на каждой полосе ниже.
               </p>
               {otherScreens.length > 0 && (

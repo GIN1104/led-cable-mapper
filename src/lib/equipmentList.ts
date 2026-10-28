@@ -220,7 +220,14 @@ export interface CabinetTypeBucket {
   perCase: number
 }
 
-const CABINET_TYPE_ORDER = ['3.9-big', '3.9-small', '3.9-reshet', '2.9', '2-outdoor'] as const
+const CABINET_TYPE_ORDER = [
+  '3.9-big',
+  '3.9-small',
+  '3.9-reshet',
+  '2.9',
+  '2.9-outdoor-big',
+  '2.9-outdoor-small',
+] as const
 
 /** Подпись типа кубика для листа оборудования */
 export function cabinetTypeMetaFromGeo(geo: {
@@ -239,8 +246,10 @@ export function cabinetTypeMetaFromGeo(geo: {
       return { key: '3.9-reshet', label: 'питч 3.9 Reshet', perCase }
     case '2.9':
       return { key: '2.9', label: 'питч 2.9', perCase }
-    case '2-outdoor':
-      return { key: '2-outdoor', label: 'питч 2 outdoor', perCase }
+    case '2.9-outdoor-big':
+      return { key: '2.9-outdoor-big', label: 'питч 2.9 outdoor большие', perCase }
+    case '2.9-outdoor-small':
+      return { key: '2.9-outdoor-small', label: 'питч 2.9 outdoor маленькие', perCase }
     default:
       return {
         key: `custom-${geo.cabinetWidthMm}x${geo.cabinetHeightMm}@${geo.pixelPitchMm}`,

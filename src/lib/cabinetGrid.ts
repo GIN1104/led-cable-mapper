@@ -1244,7 +1244,8 @@ export function orderPowerRegionByPreset(
   switch (preset) {
     case '3.9-reshet':
       return orderRegionVerticalUp(cabinets, colStart, rowStart, width, height, direction)
-    case '2-outdoor':
+    case '2.9-outdoor-big':
+    case '2.9-outdoor-small':
     case '3.9-big':
     case '3.9-small':
     case 'custom':
@@ -1432,7 +1433,8 @@ export function orderPowerCabinetsFromStart(
   if (
     preset === '3.9-big' ||
     preset === '3.9-small' ||
-    preset === '2-outdoor' ||
+    preset === '2.9-outdoor-big' ||
+    preset === '2.9-outdoor-small' ||
     preset === 'custom'
   ) {
     return orderCabinetsFromStart(cabinets, startLabel, startEdge)

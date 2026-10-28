@@ -2,7 +2,7 @@ import type { PitchPresetId, RowMixBand, ScreenConfig } from '../types'
 import { getPitchPreset, PITCH_PRESETS } from './pitchPresets'
 import type { ResolvedStripPitch } from './stripPitch'
 
-/** Допустимые кубики для блоков сверху и снизу — весь список пресетов, включая Big / Small / 2 outdoor */
+/** Допустимые кубики для блоков сверху и снизу — весь список пресетов */
 export const ROW_MIX_SIZES = PITCH_PRESETS.map((p) => p.id)
 export type RowMixSize = Exclude<PitchPresetId, 'custom'>
 
@@ -16,8 +16,10 @@ export function mixTagForPreset(id: string): string {
       return 'Big'
     case '3.9-small':
       return 'Small'
-    case '2-outdoor':
-      return '2 out'
+    case '2.9-outdoor-big':
+      return '2.9B'
+    case '2.9-outdoor-small':
+      return '2.9S'
     case '2.9':
       return '2.9'
     case '3.9-reshet':
