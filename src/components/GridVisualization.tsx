@@ -130,7 +130,7 @@ interface GridVisualizationProps {
    * null на полосе = микс выкл.; length = высота полосы при активном миксе.
    */
   rowCabinetPixelsPerStrip?: Array<
-    Array<{ pixelsWide: number; pixelsHigh: number }> | null
+    Array<{ pixelsWide: number; pixelsHigh: number; tag?: string }> | null
   >
   /** V-Backup включён — вторая строка легенды Data Backup */
   signalBackup?: boolean
@@ -900,7 +900,10 @@ export default memo(function GridVisualization({
       const sh = stripHeightsNorm[si] ?? high
       const rowInStrip = row - (high - sh)
       if (rowInStrip < 0 || rowInStrip >= rows.length) return null
-      return rows[rowInStrip].pixelsHigh >= 200 ? 'Big' : 'Small'
+      return (
+        rows[rowInStrip].tag ||
+        (rows[rowInStrip].pixelsHigh >= 200 ? 'Big' : 'Small')
+      )
     },
     [stripIndexByCol, rowCabinetPixelsPerStrip, stripHeightsNorm, high],
   )

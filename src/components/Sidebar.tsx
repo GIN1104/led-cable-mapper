@@ -66,15 +66,18 @@ import {
 import {
   applyStripRowMixBands,
   bandsFromBigSmallCounts,
-  countsFromRowMixBands,
+  addEdgeBlock,
   isRowMixActive,
+  isRowMixSize,
   isStripRowMixActive,
   needsRowMixHint,
   normalizeStripRowMixBands,
+  removeRowMixBand,
   stripRowMixBandsFor,
   stripRowsForWallHeight,
   summarizeRowMix,
   suggestBigSmallMixForHeight,
+  updateRowMixBand,
 } from '../lib/rowMix'
 
 const METER_INPUT_DEBOUNCE_MS = 400
@@ -351,7 +354,7 @@ function ValidatedStripNumberInput({
 
 
 
-/** Микс Big/Small для одной полосы */
+/** Блоки сверху и снизу полосы: свой кубик и число рядов */
 function StripRowMixPanel({
   stripIndex,
   stripLabel,
@@ -359,6 +362,8 @@ function StripRowMixPanel({
   config,
   onChange,
   wallHeightM,
+  bodySize,
+  bodyRows,
 }: {
   stripIndex: number
   stripLabel: string
@@ -366,12 +371,12 @@ function StripRowMixPanel({
   config: ScreenConfig
   onChange: (config: ScreenConfig) => void
   wallHeightM: number
+  bodySize: import('../lib/rowMix').RowMixSize
+  bodyRows: number
 }) {
-  const counts = countsFromRowMixBands(bands)
   const mixOn = isStripRowMixActive(bands)
 
-  const commit = (bigRows: number, smallRows: number) => {
-    const nextBands = bandsFromBigSmallCounts(bigRows, smallRows, false)
+  const commitBands = (nextBands: import('../types').RowMixBand[]) => {
     const all = stripRowMixBandsFor(config)
     all[stripIndex] = nextBands
     if (nextBands.length === 0) {
@@ -384,36 +389,37 @@ function StripRowMixPanel({
   const enableFromWall = () => {
     const suggestion = suggestBigSmallMixForHeight(wallHeightM)
     if (suggestion && suggestion.bigRows + suggestion.smallRows > 0) {
-      commit(suggestion.bigRows, suggestion.smallRows)
+      commitBands(bandsFromBigSmallCounts(suggestion.bigRows, suggestion.smallRows, false))
       return
     }
-    commit(4, 3)
+    commitBands(bandsFromBigSmallCounts(4, 3, false))
   }
+
+  const addEdge = (edge: 'top' | 'bottom') => {
+    commitBands(addEdgeBlock(bands, { size: bodySize, rows: bodyRows }, edge))
+  }
+
+  const sum = mixOn ? summarizeRowMix(bands) : null
 
   return (
     <div className="space-y-2 rounded border border-amber-200 bg-amber-50/60 p-2">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[10px] font-semibold text-slate-800">
-            Микс Big / Small — {stripLabel}
+            Блоки сверху и снизу — {stripLabel}
           </p>
           <p className="mt-0.5 text-[10px] leading-snug text-slate-600">
-            Нижние ряды Big (1 м), верхние Small (0.5 м). Пример: 4+3 → 5.5 м.
+            Как боковые блоки, но ряд сверху или снизу. У каждого свой кубик и питч.
           </p>
         </div>
         <button
           type="button"
           role="switch"
           aria-checked={mixOn}
-          aria-label={`Микс Big/Small — ${stripLabel}`}
+          aria-label={`Блоки сверху и снизу — ${stripLabel}`}
           onClick={() => {
-            if (mixOn) {
-              const all = stripRowMixBandsFor(config)
-              all[stripIndex] = []
-              onChange(syncCabinetGridFromMeters({ ...config, stripRowMixBands: all }))
-            } else {
-              enableFromWall()
-            }
+            if (mixOn) commitBands([])
+            else enableFromWall()
           }}
           className={`relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition ${
             mixOn ? 'bg-amber-600' : 'bg-slate-300'
@@ -426,47 +432,89 @@ function StripRowMixPanel({
           />
         </button>
       </div>
+      <div className="flex gap-1.5">
+        <button
+          type="button"
+          className="flex-1 rounded border border-amber-400 bg-white px-2 py-1 text-[10px] font-semibold text-slate-800 hover:bg-amber-100"
+          onClick={() => addEdge('top')}
+        >
+          Добавить сверху
+        </button>
+        <button
+          type="button"
+          className="flex-1 rounded border border-amber-400 bg-white px-2 py-1 text-[10px] font-semibold text-slate-800 hover:bg-amber-100"
+          onClick={() => addEdge('bottom')}
+        >
+          Добавить снизу
+        </button>
+      </div>
       {mixOn && (
-        <div className="space-y-2 rounded border border-amber-200 bg-white p-2">
-          <label className="block text-[10px] font-medium text-slate-600">
-            Нижние линии 3.9 Big (по 1 м)
-            <input
-              type="number"
-              min={0}
-              max={40}
-              className={`${inputClass} mt-0.5`}
-              value={counts.bigRows}
-              onChange={(e) => {
-                const big = Math.max(0, parseInt(e.target.value, 10) || 0)
-                commit(big, counts.smallRows)
-              }}
-            />
-          </label>
-          <label className="block text-[10px] font-medium text-slate-600">
-            Верхние линии 3.9 Small (по 0.5 м)
-            <input
-              type="number"
-              min={0}
-              max={40}
-              className={`${inputClass} mt-0.5`}
-              value={counts.smallRows}
-              onChange={(e) => {
-                const small = Math.max(0, parseInt(e.target.value, 10) || 0)
-                commit(counts.bigRows, small)
-              }}
-            />
-          </label>
-          {(() => {
-            const sum = summarizeRowMix(
-              bandsFromBigSmallCounts(counts.bigRows, counts.smallRows, false),
-            )
+        <div className="space-y-2">
+          {bands.map((band, index) => {
+            const preset = PITCH_PRESETS.find((p) => p.id === band.size)
+            const place =
+              index === 0 ? 'верх' : index === bands.length - 1 ? 'низ' : 'середина'
             return (
-              <p className="text-[10px] text-slate-600">
-                {sum.cabinetsHigh} ряд. · {sum.wallHeightM.toFixed(1)} м ·{' '}
-                {sum.pixelsHigh} px по вертикали на этой полосе.
-              </p>
+              <div key={`${band.size}-${index}`} className="rounded border border-amber-200 bg-white p-2 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-semibold text-slate-700">
+                    Блок {index + 1} · {place}
+                  </p>
+                  <button
+                    type="button"
+                    className="text-[10px] font-medium text-rose-700"
+                    onClick={() => commitBands(removeRowMixBand(bands, index))}
+                  >
+                    Убрать
+                  </button>
+                </div>
+                <label className="block text-[10px] font-medium text-slate-600">
+                  Кубик и питч
+                  <select
+                    className={`${inputClass} mt-0.5`}
+                    value={band.size}
+                    onChange={(e) => {
+                      const size = e.target.value
+                      if (!isRowMixSize(size)) return
+                      commitBands(updateRowMixBand(bands, index, { size }))
+                    }}
+                  >
+                    {PITCH_PRESETS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label} — {p.cabinetWidthMm}×{p.cabinetHeightMm} mm · {p.pixelPitchMm} mm
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-[10px] font-medium text-slate-600">
+                  Ряды
+                  <input
+                    type="number"
+                    min={1}
+                    max={40}
+                    className={`${inputClass} mt-0.5`}
+                    value={band.rows}
+                    onChange={(e) => {
+                      const rows = Math.max(1, parseInt(e.target.value, 10) || 1)
+                      commitBands(updateRowMixBand(bands, index, { rows }))
+                    }}
+                  />
+                </label>
+                {preset && (
+                  <p className="text-[10px] text-slate-500">
+                    {preset.cabinetWidthMm}×{preset.cabinetHeightMm} mm · {preset.pixelsWide}×
+                    {preset.pixelsHigh} px · питч {preset.pixelPitchMm}
+                  </p>
+                )}
+              </div>
             )
-          })()}
+          })}
+          {sum && (
+            <p className="text-[10px] text-slate-600">
+              {sum.cabinetsHigh} ряд. · {sum.wallHeightM.toFixed(1)} м · {sum.pixelsHigh} px по
+              вертикали на этой полосе.
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -1077,8 +1125,8 @@ export default function Sidebar({
               </p>
               <p className="text-[10px] leading-snug text-slate-600">
                 При нескольких полосах — модель кубика на каждый блок (Big / Small
-                / Reshet / 2.9) или с другого экрана. Микс Big/Small — отдельно
-                на каждой полосе ниже.
+                / Reshet / 2.9 / 2 outdoor) или с другого экрана. Блоки сверху и
+                снизу — на каждой полосе ниже.
               </p>
               {otherScreens.length > 0 && (
                 <button
@@ -1101,7 +1149,7 @@ export default function Sidebar({
               <p className="text-[10px] text-slate-500">
                 {stripCount > 1
                   ? `Каждый стрип — отдельный блок. Ширина в колонках (сумма = ${config.cabinetsWide}).`
-                  : 'Один экран — настройки полосы и микс Big/Small ниже.'}
+                  : 'Один экран — кубик полосы и блоки сверху или снизу ниже.'}
                 {' '}
                 Высота стены {config.cabinetsHigh} ряд. (max по полосам).
               </p>
@@ -1214,6 +1262,12 @@ export default function Sidebar({
                           config={config}
                           onChange={onChange}
                           wallHeightM={config.wallHeightM}
+                          bodySize={
+                            isRowMixSize(resolved.pitchPreset)
+                              ? resolved.pitchPreset
+                              : '3.9-small'
+                          }
+                          bodyRows={stripHigh}
                         />
                         <label className="block text-[10px] font-medium text-slate-600">
                           Размер стрипа (высота)

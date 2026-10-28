@@ -50,6 +50,15 @@ export const PITCH_PRESETS: PitchPreset[] = [
     pixelsHigh: 168,
     pixelPitchMm: 2.9,
   },
+  {
+    id: '2-outdoor',
+    label: '2 outdoor',
+    cabinetWidthMm: 500,
+    cabinetHeightMm: 500,
+    pixelsWide: 250,
+    pixelsHigh: 250,
+    pixelPitchMm: 2,
+  },
 ]
 
 export const CUSTOM_PRESET_LABEL = 'Custom / Другой...'

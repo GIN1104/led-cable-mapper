@@ -1,13 +1,80 @@
-import type { RowMixBand, ScreenConfig } from '../types'
-import { getPitchPreset } from './pitchPresets'
+import type { PitchPresetId, RowMixBand, ScreenConfig } from '../types'
+import { getPitchPreset, PITCH_PRESETS } from './pitchPresets'
 import type { ResolvedStripPitch } from './stripPitch'
 
-/** Допустимые размеры для микса рядов в одном экране */
-export const ROW_MIX_SIZES = ['3.9-big', '3.9-small'] as const
-export type RowMixSize = (typeof ROW_MIX_SIZES)[number]
+/** Допустимые кубики для блоков сверху и снизу — весь список пресетов, включая Big / Small / 2 outdoor */
+export const ROW_MIX_SIZES = PITCH_PRESETS.map((p) => p.id)
+export type RowMixSize = Exclude<PitchPresetId, 'custom'>
 
 export function isRowMixSize(id: string): id is RowMixSize {
-  return id === '3.9-big' || id === '3.9-small'
+  return id !== 'custom' && getPitchPreset(id as PitchPresetId) != null
+}
+
+export function mixTagForPreset(id: string): string {
+  switch (id) {
+    case '3.9-big':
+      return 'Big'
+    case '3.9-small':
+      return 'Small'
+    case '2-outdoor':
+      return '2 out'
+    case '2.9':
+      return '2.9'
+    case '3.9-reshet':
+      return 'Reshet'
+    default:
+      return ''
+  }
+}
+
+/**
+ * Добавить блок сверху или снизу.
+ * Если полоса ещё без блоков, текущие ряды экрана остаются посередине.
+ */
+export function addEdgeBlock(
+  existing: RowMixBand[] | undefined,
+  body: { size: RowMixSize; rows: number },
+  edge: 'top' | 'bottom',
+): RowMixBand[] {
+  if (isStripRowMixActive(existing)) return insertRowMixBand(existing, edge)
+  const rows = Math.max(1, Math.floor(body.rows) || 1)
+  const size = isRowMixSize(body.size) ? body.size : '3.9-small'
+  return insertRowMixBand([{ size, rows }], edge)
+}
+
+/** Вставить блок в начало (сверху) или в конец (снизу) полосы */
+export function insertRowMixBand(
+  bands: RowMixBand[] | undefined,
+  edge: 'top' | 'bottom',
+  size: RowMixSize = edge === 'top' ? '3.9-small' : '3.9-big',
+  rows = 1,
+): RowMixBand[] {
+  const band: RowMixBand = { size, rows: Math.max(1, Math.floor(rows) || 1) }
+  const next = [...normalizeRowMixBands(bands)]
+  if (edge === 'top') next.unshift(band)
+  else next.push(band)
+  return next
+}
+
+export function updateRowMixBand(
+  bands: RowMixBand[] | undefined,
+  index: number,
+  patch: Partial<RowMixBand>,
+): RowMixBand[] {
+  const next = [...normalizeRowMixBands(bands)]
+  const current = next[index]
+  if (!current) return next
+  const size = patch.size && isRowMixSize(patch.size) ? patch.size : current.size
+  const rows = Math.max(1, Math.floor(patch.rows ?? current.rows) || 1)
+  next[index] = { size, rows }
+  return next
+}
+
+export function removeRowMixBand(
+  bands: RowMixBand[] | undefined,
+  index: number,
+): RowMixBand[] {
+  return normalizeRowMixBands(bands).filter((_, i) => i !== index)
 }
 
 /** Нормализация полос микса одного стрипа (сверху вниз) */
@@ -137,6 +204,7 @@ export function rowMixPixelsPerStrip(
     return rowGeos.map((g) => ({
       pixelsWide: g.pixelsWide,
       pixelsHigh: g.pixelsHigh,
+      tag: mixTagForPreset(g.pitchPreset),
     }))
   })
 }

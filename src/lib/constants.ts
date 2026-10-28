@@ -66,6 +66,7 @@ export function getMaxCabinetsPerPowerLine(config: ScreenConfig): number {
     case '3.9-reshet':
       return 12
     case '3.9-small':
+    case '2-outdoor':
       return 24
     case '2.9':
       return 40
@@ -83,6 +84,7 @@ export function getPreferredCabinetsPerPowerLine(config: ScreenConfig): number {
     case '3.9-reshet':
       return 10
     case '3.9-small':
+    case '2-outdoor':
       return 20
     case '2.9':
       return 40

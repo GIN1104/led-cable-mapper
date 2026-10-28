@@ -1244,17 +1244,7 @@ export function orderPowerRegionByPreset(
   switch (preset) {
     case '3.9-reshet':
       return orderRegionVerticalUp(cabinets, colStart, rowStart, width, height, direction)
-    case '2.9':
-      return orderRegionVerticalFlexible(
-        cabinets,
-        colStart,
-        rowStart,
-        width,
-        height,
-        direction,
-        cabinetWidthMm,
-        cabinetHeightMm,
-      )
+    case '2-outdoor':
     case '3.9-big':
     case '3.9-small':
     case 'custom':
@@ -1265,6 +1255,17 @@ export function orderPowerRegionByPreset(
         width,
         height,
         direction === 'rtl' ? 'right' : 'left',
+        cabinetWidthMm,
+        cabinetHeightMm,
+      )
+    case '2.9':
+      return orderRegionVerticalFlexible(
+        cabinets,
+        colStart,
+        rowStart,
+        width,
+        height,
+        direction,
         cabinetWidthMm,
         cabinetHeightMm,
       )
@@ -1428,7 +1429,12 @@ export function orderPowerCabinetsFromStart(
     )
   }
   // 3.9 / custom: обход от START без змейки; Reshet/2.9 — направленный обход
-  if (preset === '3.9-big' || preset === '3.9-small' || preset === 'custom') {
+  if (
+    preset === '3.9-big' ||
+    preset === '3.9-small' ||
+    preset === '2-outdoor' ||
+    preset === 'custom'
+  ) {
     return orderCabinetsFromStart(cabinets, startLabel, startEdge)
   }
   return orderCabinetsFromStart(cabinets, startLabel, startEdge)

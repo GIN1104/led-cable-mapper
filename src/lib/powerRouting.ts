@@ -109,6 +109,7 @@ function sortNeighborsForPowerGrowth(
         if (vertA) return a.row - b.row
         return ltr ? a.col - b.col : b.col - a.col
       }
+      case '2-outdoor':
       case '3.9-big':
       case '3.9-small':
       default: {
@@ -230,6 +231,7 @@ function orderPackedVerticalLine(
   const horizontalPrefer =
     config.pitchPreset === '3.9-big' ||
     config.pitchPreset === '3.9-small' ||
+    config.pitchPreset === '2-outdoor' ||
     config.pitchPreset === 'custom'
   if (horizontalPrefer) {
     const straight = orderPowerRegionPreferStraight(
@@ -551,6 +553,7 @@ function useHorizontalStripAlgorithm(config: ScreenConfig): boolean {
   switch (config.pitchPreset) {
     case '3.9-big':
     case '3.9-small':
+    case '2-outdoor':
       return true
     case '3.9-reshet':
     case '2.9':
