@@ -130,7 +130,7 @@ interface GridVisualizationProps {
    * null на полосе = микс выкл.; length = высота полосы при активном миксе.
    */
   rowCabinetPixelsPerStrip?: Array<
-    Array<{ pixelsWide: number; pixelsHigh: number; tag?: string }> | null
+    Array<{ pixelsWide: number; pixelsHigh: number; tag?: string; band?: number }> | null
   >
   /** V-Backup включён — вторая строка легенды Data Backup */
   signalBackup?: boolean
@@ -815,13 +815,27 @@ export default memo(function GridVisualization({
     })
   }, [rowCabinetPixelsPerStrip, isMobile])
 
+  const mixRowGap = useCallback(
+    (stripIndex: number, rowInStrip: number) => {
+      if (rowInStrip <= 0) return 0
+      const rows = rowCabinetPixelsPerStrip?.[stripIndex]
+      const prev = rows?.[rowInStrip - 1]
+      const cur = rows?.[rowInStrip]
+      if (prev && cur && prev.band != null && cur.band != null && prev.band !== cur.band) {
+        return STRIP_GAP
+      }
+      return GAP
+    },
+    [rowCabinetPixelsPerStrip, STRIP_GAP, GAP],
+  )
+
   const stripMixBlockHeights = useMemo(() => {
     if (!stripMixCellHs) return null
-    return stripMixCellHs.map((rowHs) => {
+    return stripMixCellHs.map((rowHs, si) => {
       if (!rowHs) return null
-      return rowHs.reduce((sum, h, i) => sum + h + (i > 0 ? GAP : 0), 0)
+      return rowHs.reduce((sum, h, i) => sum + h + mixRowGap(si, i), 0)
     })
-  }, [stripMixCellHs, GAP])
+  }, [stripMixCellHs, mixRowGap])
 
   const hasStripRowMix = useMemo(
     () => stripMixCellHs?.some((r) => r != null) ?? false,
@@ -944,7 +958,7 @@ export default memo(function GridVisualization({
         const stripTop = gridOriginY + (wallContentHeight - stripBlockH)
         let y = stripTop
         for (let r = 0; r < rowInStrip; r++) {
-          y += (mixRowHs[r] ?? CELL_H) + GAP
+          y += (mixRowHs[r] ?? CELL_H) + mixRowGap(si, r + 1)
         }
         return y
       }
@@ -959,6 +973,7 @@ export default memo(function GridVisualization({
     [
       stripMixCellHs,
       stripMixBlockHeights,
+      mixRowGap,
       stripIndexByCol,
       stripHeightsNorm,
       high,

@@ -199,14 +199,21 @@ export function resolveRowMixPitch(
 /** Пиксели каждого ряда по полосам (null = микс выкл. на полосе) */
 export function rowMixPixelsPerStrip(
   config: ScreenConfig,
-): Array<Array<{ pixelsWide: number; pixelsHigh: number }> | null> {
+): Array<
+  Array<{ pixelsWide: number; pixelsHigh: number; tag?: string; band?: number }> | null
+> {
   return stripRowMixBandsFor(config).map((bands) => {
     if (!isStripRowMixActive(bands)) return null
     const { rowGeos } = summarizeRowMix(bands!)
-    return rowGeos.map((g) => ({
+    const bandAt: number[] = []
+    normalizeRowMixBands(bands).forEach((band, bandIndex) => {
+      for (let i = 0; i < band.rows; i++) bandAt.push(bandIndex)
+    })
+    return rowGeos.map((g, row) => ({
       pixelsWide: g.pixelsWide,
       pixelsHigh: g.pixelsHigh,
       tag: mixTagForPreset(g.pitchPreset),
+      band: bandAt[row] ?? 0,
     }))
   })
 }
