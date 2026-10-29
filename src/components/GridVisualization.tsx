@@ -9,6 +9,7 @@ import type {
 } from '../types'
 import {
   cellPxFromMillimeters,
+  cellPxFromPixels,
   warnIfAspectBroken,
 } from '../lib/cabinetCellSize'
 import {
@@ -76,6 +77,10 @@ interface GridVisualizationProps {
   emptyCabinets?: string[]
   emptyPaintMode?: boolean
   onToggleEmpty?: (label: string) => void
+  /** Клик выбирает кубик для пикселей, а не для линии */
+  pixelEditMode?: boolean
+  pixelSelection?: string[]
+  onCabinetPixelClick?: (label: string) => void
   manualAssignments?: Record<string, number>
   /** Упорядоченные цепочки (порядок кликов) — для undo последнего кабинета линии */
   chainOrder?: Record<number, string[]>
@@ -712,6 +717,9 @@ export default memo(function GridVisualization({
   emptyCabinets = [],
   emptyPaintMode = false,
   onToggleEmpty,
+  pixelEditMode = false,
+  pixelSelection = [],
+  onCabinetPixelClick,
   manualAssignments = {},
   chainOrder = {},
   startPoints = {},
@@ -932,8 +940,19 @@ export default memo(function GridVisualization({
     [stripIndexByCol, rowCabinetPixelsPerStrip, stripHeightsNorm, high],
   )
 
+  const pixelLayoutRef = useRef<{
+    x: Map<string, number>
+    y: Map<string, number>
+    w: Map<string, number>
+    h: Map<string, number>
+    width: number
+    height: number
+  } | null>(null)
+  const cellKey = (col: number, row: number) => `${col}:${row}`
+
   const cellWAt = useCallback(
-    (col: number) => colLayout.widths[col] ?? CELL_W,
+    (col: number, row = 0) =>
+      pixelLayoutRef.current?.w.get(cellKey(col, row)) ?? colLayout.widths[col] ?? CELL_W,
     [colLayout.widths, CELL_W],
   )
   const cellHAt = useCallback(
@@ -945,16 +964,21 @@ export default memo(function GridVisualization({
       if (mixRowHs && rowInStrip >= 0 && rowInStrip < mixRowHs.length) {
         return mixRowHs[rowInStrip] ?? CELL_H
       }
+      const customH = pixelLayoutRef.current?.h.get(cellKey(col, row))
+      if (customH != null) return customH
       return stripCellHs[si] ?? CELL_H
     },
     [stripMixCellHs, stripHeightsNorm, stripCellHs, stripIndexByCol, high, CELL_H],
   )
   const cabLeft = useCallback(
-    (col: number) => colLayout.lefts[col] ?? PAD,
+    (col: number, row = 0) =>
+      pixelLayoutRef.current?.x.get(cellKey(col, row)) ?? colLayout.lefts[col] ?? PAD,
     [colLayout.lefts, PAD],
   )
   const cabTop = useCallback(
     (col: number, row: number) => {
+      const customY = pixelLayoutRef.current?.y.get(cellKey(col, row))
+      if (customY != null) return customY
       const si = stripIndexByCol[col] ?? 0
       const sh = stripHeightsNorm[si] ?? high
       const startRow = high - sh
@@ -1425,8 +1449,89 @@ export default memo(function GridVisualization({
     return set
   }, [emptyCabinets, stripWidths, stripHeightsProp, wide, high])
 
-  const svgW = PAD * 2 + colLayout.totalInnerW
-  const svgH = gridOriginY + wallContentHeight + PAD + 8
+  const pixelLayout = useMemo(() => {
+    if (!pixelEditMode) return null
+    const xOf = new Map<string, number>()
+    const yOf = new Map<string, number>()
+    const wOf = new Map<string, number>()
+    const hOf = new Map<string, number>()
+    const byRow = new Map<number, typeof cabinets>()
+    const byCol = new Map<number, typeof cabinets>()
+    for (const cab of cabinets) {
+      const px = cellPxFromPixels(cab.pixelsWide, cab.pixelsHigh, isMobile)
+      const key = cellKey(cab.col, cab.row)
+      wOf.set(key, px.w)
+      hOf.set(key, px.h)
+      const rowList = byRow.get(cab.row) ?? []
+      rowList.push(cab)
+      byRow.set(cab.row, rowList)
+      const colList = byCol.get(cab.col) ?? []
+      colList.push(cab)
+      byCol.set(cab.col, colList)
+    }
+    let maxRight = PAD
+    for (const list of byRow.values()) {
+      const sorted = [...list].sort((a, b) => a.col - b.col)
+      let x = PAD
+      let prevStrip = -1
+      for (const cab of sorted) {
+        const si = stripIndexByCol[cab.col] ?? 0
+        if (prevStrip >= 0 && si !== prevStrip) x += STRIP_GAP
+        prevStrip = si
+        xOf.set(cellKey(cab.col, cab.row), x)
+        x += (wOf.get(cellKey(cab.col, cab.row)) ?? CELL_W) + GAP
+      }
+      maxRight = Math.max(maxRight, x)
+    }
+    let maxBottom = gridOriginY
+    for (const list of byCol.values()) {
+      const sorted = [...list].sort((a, b) => a.row - b.row)
+      let y = gridOriginY
+      for (const cab of sorted) {
+        const si = stripIndexByCol[cab.col] ?? 0
+        const sh = stripHeightsNorm[si] ?? high
+        const startRow = high - sh
+        if (cab.row < startRow) {
+          yOf.set(cellKey(cab.col, cab.row), gridOriginY - 9999)
+          continue
+        }
+        const rowInStrip = cab.row - startRow
+        if (rowInStrip > 0) y += mixRowGap(si, rowInStrip)
+        yOf.set(cellKey(cab.col, cab.row), y)
+        y += hOf.get(cellKey(cab.col, cab.row)) ?? CELL_H
+      }
+      maxBottom = Math.max(maxBottom, y)
+    }
+    return {
+      x: xOf,
+      y: yOf,
+      w: wOf,
+      h: hOf,
+      width: maxRight + PAD,
+      height: maxBottom + PAD,
+    }
+  }, [
+    pixelEditMode,
+    cabinets,
+    isMobile,
+    stripIndexByCol,
+    stripHeightsNorm,
+    high,
+    mixRowGap,
+    gridOriginY,
+    PAD,
+    STRIP_GAP,
+    GAP,
+    CELL_W,
+    CELL_H,
+  ])
+
+  pixelLayoutRef.current = pixelLayout
+
+  const svgW = pixelLayout ? pixelLayout.width : PAD * 2 + colLayout.totalInnerW
+  const svgH = pixelLayout
+    ? pixelLayout.height + 8
+    : gridOriginY + wallContentHeight + PAD + 8
 
   const gridScrollRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -1869,8 +1974,14 @@ export default memo(function GridVisualization({
     }
   }, [manualMode, editMode, keyboardActive, narrow])
 
+  const pixelSelectionSet = useMemo(() => new Set(pixelSelection), [pixelSelection])
+
   const handleCabinetClick = useCallback(
     (label: string, shiftKey: boolean, altKey: boolean) => {
+      if (pixelEditMode && onCabinetPixelClick) {
+        onCabinetPixelClick(label)
+        return
+      }
       // Глобальный Empty из сайдбара не блокирует Paint/Set Start в ручном режиме
       const sidebarEmptyOnly =
         emptyPaintMode && (!manualMode || editMode === 'empty')
@@ -1930,6 +2041,8 @@ export default memo(function GridVisualization({
       focusManualKeyboard()
     },
     [
+      pixelEditMode,
+      onCabinetPixelClick,
       manualMode,
       emptyPaintMode,
       onToggleEmpty,
@@ -2150,9 +2263,9 @@ export default memo(function GridVisualization({
   const labelAtSvgPoint = useCallback(
     (x: number, y: number) => {
       for (const cab of cabinets) {
-        const left = cabLeft(cab.col)
+        const left = cabLeft(cab.col, cab.row)
         const top = cabTop(cab.col, cab.row)
-        const w = cellWAt(cab.col)
+        const w = cellWAt(cab.col, cab.row)
         const h = cellHAt(cab.col, cab.row)
         if (x >= left && x < left + w && y >= top && y < top + h) return cab.label
       }
@@ -2984,6 +3097,12 @@ export default memo(function GridVisualization({
         )}
       </div>
 
+      {pixelEditMode && (
+        <p className="mb-1 text-[11px] font-medium text-blue-800">
+          Нажмите кубики на схеме. Выбрано: {pixelSelection.length || 'нет'}
+        </p>
+      )}
+
       <div
         ref={gridScrollRef}
         onPointerDown={onGridPointerDown}
@@ -3041,9 +3160,9 @@ export default memo(function GridVisualization({
         )}
         <g id={`${mode}-cabinets`}>
           {cabinets.map((cab) => {
-            const x = cabLeft(cab.col)
+            const x = cabLeft(cab.col, cab.row)
             const y = cabTop(cab.col, cab.row)
-            const cellW = cellWAt(cab.col)
+            const cellW = cellWAt(cab.col, cab.row)
             const cellH = cellHAt(cab.col, cab.row)
             const isEmpty = emptySet.has(cab.label)
             const lineNum = isEmpty ? 0 : (assignmentMap.get(cab.label) ?? 0)
@@ -3076,7 +3195,8 @@ export default memo(function GridVisualization({
                     : 16
 
             const lineColors = lineColorFor(lineNum)
-            const isInteractive = manualMode || emptyPaintMode
+            const isPixelPicked = pixelEditMode && pixelSelectionSet.has(cab.label)
+            const isInteractive = pixelEditMode || manualMode || emptyPaintMode
             const rowMixTag = rowMixTagAt(cab.col, cab.row)
 
             return (
@@ -3114,7 +3234,9 @@ export default memo(function GridVisualization({
                         : COLORS.cabinetFill
                   }
                   stroke={
-                    isEmpty
+                    isPixelPicked
+                      ? '#2563eb'
+                      : isEmpty
                       ? '#94a3b8'
                       : isFeed
                         ? TRUNK_FEED_COLOR
@@ -3127,7 +3249,7 @@ export default memo(function GridVisualization({
                               : COLORS.cabinetStroke
                   }
                   strokeWidth={
-                    isEmpty ? 2 : isFeed ? 4 : isStart ? 4 : isSelected ? 3.5 : lineNum > 0 ? 2.5 : 1.5
+                    isPixelPicked ? 4 : isEmpty ? 2 : isFeed ? 4 : isStart ? 4 : isSelected ? 3.5 : lineNum > 0 ? 2.5 : 1.5
                   }
                   strokeDasharray={isEmpty ? '6 4' : undefined}
                 />
@@ -3252,7 +3374,7 @@ export default memo(function GridVisualization({
                     from.y,
                     to.x,
                     to.y,
-                    (towardRight ? 1 : -1) * (cellWAt(link.from.col) / 2 - xInset),
+                    (towardRight ? 1 : -1) * (cellWAt(link.from.col, link.from.row) / 2 - xInset),
                   )
                 }
               } else {
@@ -3338,9 +3460,9 @@ export default memo(function GridVisualization({
         <g id={`${mode}-start-markers`} pointerEvents="none">
           {cabinets.map((cab) => {
             if (emptySet.has(cab.label) || !startLabels.has(cab.label)) return null
-            const x = cabLeft(cab.col)
+            const x = cabLeft(cab.col, cab.row)
             const y = cabTop(cab.col, cab.row)
-            const cellW = cellWAt(cab.col)
+            const cellW = cellWAt(cab.col, cab.row)
             const cellH = cellHAt(cab.col, cab.row)
             const lineNum =
               startLineByLabel.get(cab.label) ?? assignmentMap.get(cab.label) ?? 0
@@ -3449,9 +3571,9 @@ export default memo(function GridVisualization({
           {!isData &&
             cabinets.map((cab) => {
               if (emptySet.has(cab.label) || !feedLabels.has(cab.label)) return null
-              const x = cabLeft(cab.col)
+              const x = cabLeft(cab.col, cab.row)
               const y = cabTop(cab.col, cab.row)
-              const cellW = cellWAt(cab.col)
+              const cellW = cellWAt(cab.col, cab.row)
               const cellH = cellHAt(cab.col, cab.row)
               const isAlsoStart = startLabels.has(cab.label)
               const isAlsoEnd = endLabels.has(cab.label)
@@ -3505,9 +3627,9 @@ export default memo(function GridVisualization({
             if (emptySet.has(cab.label) || !endLabels.has(cab.label)) return null
             // На короткой линии Start/FEED уже показывают End в комбинированной подписи
             if (startLabels.has(cab.label) || feedLabels.has(cab.label)) return null
-            const x = cabLeft(cab.col)
+            const x = cabLeft(cab.col, cab.row)
             const y = cabTop(cab.col, cab.row)
-            const cellW = cellWAt(cab.col)
+            const cellW = cellWAt(cab.col, cab.row)
             const cellH = cellHAt(cab.col, cab.row)
             const endFont =
               simplifyLabels || isMobile ? (isMobile && simplifyLabels ? 12 : 10) : 8

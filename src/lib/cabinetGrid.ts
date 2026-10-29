@@ -722,6 +722,47 @@ export function inferChainStart(
   return start?.label
 }
 
+/** Габарит экрана в пикселях по каждому кубику, а не по полосе */
+export function screenPixelBounds(
+  config: ScreenConfig,
+  cabinets: Cabinet[],
+): { wide: number; high: number } | null {
+  if (!config.manualCabinetPixels || cabinets.length === 0) return null
+  const stripWidths = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
+  const ranges = stripColumnRanges(stripWidths)
+  const stripHeights = normalizeStripHeights(
+    config.stripHeights,
+    stripWidths.length,
+    config.cabinetsHigh,
+  )
+  const active = cabinets.filter((cab) => {
+    const stripIdx =
+      ranges.find((r) => cab.col >= r.startCol && cab.col < r.endCol)?.index ?? 0
+    const sh = stripHeights[stripIdx] ?? config.cabinetsHigh
+    return cab.row >= config.cabinetsHigh - sh
+  })
+  if (active.length === 0) return null
+  const byRow = new Map<number, Cabinet[]>()
+  const byCol = new Map<number, Cabinet[]>()
+  for (const cab of active) {
+    const row = byRow.get(cab.row) ?? []
+    row.push(cab)
+    byRow.set(cab.row, row)
+    const col = byCol.get(cab.col) ?? []
+    col.push(cab)
+    byCol.set(cab.col, col)
+  }
+  let wide = 0
+  for (const row of byRow.values()) {
+    wide = Math.max(wide, row.reduce((sum, cab) => sum + cab.pixelsWide, 0))
+  }
+  let high = 0
+  for (const col of byCol.values()) {
+    high = Math.max(high, col.reduce((sum, cab) => sum + cab.pixelsHigh, 0))
+  }
+  return { wide, high }
+}
+
 /** Пиксели для лимита порта: в режиме NovaStar — по фактическим кубикам */
 export function routingPixelsPerCabinet(
   config: ScreenConfig,
@@ -813,15 +854,18 @@ export function generateCabinetGrid(config: ScreenConfig): Cabinet[] {
         const mixGeo = resolveStripRowMixPitch(config, stripIdx, rowInStrip)
         if (mixGeo) geo = mixGeo
       }
+      const own = config.manualCabinetPixels ? config.cabinetPixels?.[label] : undefined
+      const pixelsWide = own && own.wide > 0 ? Math.round(own.wide) : geo.pixelsWide
+      const pixelsHigh = own && own.high > 0 ? Math.round(own.high) : geo.pixelsHigh
       cabinets.push({
         id: label,
         label,
         row,
         col,
         rowLetter,
-        pixelsWide: geo.pixelsWide,
-        pixelsHigh: geo.pixelsHigh,
-        totalPixels: geo.totalPixels,
+        pixelsWide,
+        pixelsHigh,
+        totalPixels: pixelsWide * pixelsHigh,
         maxPowerW: config.maxPowerPerCabinetW,
       })
     }

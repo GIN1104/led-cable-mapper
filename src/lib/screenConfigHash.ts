@@ -51,6 +51,10 @@ export function screenRoutingKey(screen: ScreenConfig): string {
     (screen.stripCabinetPixels ?? [])
       .map((p) => (p ? `${p.wide}x${p.high}` : ''))
       .join(','),
+    Object.entries(screen.cabinetPixels ?? {})
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+      .map(([label, px]) => `${label}:${px.wide}x${px.high}`)
+      .join(','),
   ].join('|')
 }
 

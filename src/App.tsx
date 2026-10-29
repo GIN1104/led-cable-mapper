@@ -7,7 +7,7 @@ import {
 } from './types'
 import { buildAutoManualOverrides } from './lib/routingEngine'
 import { buildCombinedPackingList } from './lib/packingList'
-import { syncCabinetGridFromMeters, calcPixelsPerCabinet, normalizeStripWidths, generateCabinetGrid, canAppendToChainInStrip } from './lib/cabinetGrid'
+import { syncCabinetGridFromMeters, calcPixelsPerCabinet, normalizeStripWidths, generateCabinetGrid, canAppendToChainInStrip, screenPixelBounds } from './lib/cabinetGrid'
 import { refreshStripPitchSnapshots, resolveAllStripPitches } from './lib/stripPitch'
 import { isRowMixActive, rowMixPixelsPerStrip, screenPixelsHighFromRowMix } from './lib/rowMix'
 import {
@@ -159,6 +159,7 @@ export default function App() {
   const [screens, setScreens] = useState<ScreenConfig[]>(initialProject.screens)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [driveNotice, setDriveNotice] = useState<string | null>(null)
+  const [cabinetPixelSelection, setCabinetPixelSelection] = useState<string[]>([])
   useEffect(() => {
     const sync = () => setDriveNotice(peekDriveSignInNotice())
     sync()
@@ -167,6 +168,9 @@ export default function App() {
   }, [])
   const [headerToolsOpen, setHeaderToolsOpen] = useState(false)
   const [activeScreenId, setActiveScreenId] = useState(initialProject.activeScreenId)
+  useEffect(() => {
+    setCabinetPixelSelection([])
+  }, [activeScreenId])
   const [routingByScreen, setRoutingByScreen] = useState<Record<string, ScreenRoutingState>>(
     initialProject.routingByScreen,
   )
@@ -1521,11 +1525,15 @@ export default function App() {
   const { pixelsWide: cabPixelsWide, pixelsHigh: cabPixelsHigh } =
     calcPixelsPerCabinet(config)
   const normalizedStrips = normalizeStripWidths(config.stripWidths, config.cabinetsWide)
-  const screenPixelsWide = normalizedStrips.reduce(
-    (sum, w, i) => sum + w * (stripPitches[i]?.pixelsWide ?? cabPixelsWide),
-    0,
-  )
-  const screenPixelsHigh = (() => {
+  const cabinetGrid = useMemo(() => generateCabinetGrid(config), [config])
+  const pixelBounds = screenPixelBounds(config, cabinetGrid)
+  const screenPixelsWide = pixelBounds
+    ? pixelBounds.wide
+    : normalizedStrips.reduce(
+        (sum, w, i) => sum + w * (stripPitches[i]?.pixelsWide ?? cabPixelsWide),
+        0,
+      )
+  const screenPixelsHigh = pixelBounds ? pixelBounds.high : (() => {
     const fromMix = screenPixelsHighFromRowMix(config)
     if (fromMix != null) {
       return Math.max(
@@ -1579,6 +1587,17 @@ export default function App() {
           onRemoveScreen={handleRemoveScreen}
           onRenameScreen={handleRenameScreen}
           onResetProject={handleResetProject}
+          pixelSelection={cabinetPixelSelection}
+          cabinetPixelNow={Object.fromEntries(
+            cabinetGrid.map((cab) => [cab.label, { wide: cab.pixelsWide, high: cab.pixelsHigh }]),
+          )}
+          onSetCabinetPixels={(wide, high) => {
+            if (cabinetPixelSelection.length === 0) return
+            const next = { ...(activeScreen.cabinetPixels ?? {}) }
+            for (const label of cabinetPixelSelection) next[label] = { wide, high }
+            updateActiveScreen({ ...activeScreen, cabinetPixels: next })
+          }}
+          onClearPixelSelection={() => setCabinetPixelSelection([])}
           emptyPaintMode={emptyPaintMode}
           onEmptyPaintModeChange={setEmptyPaintMode}
           gridLayout={gridLayout}
@@ -1884,6 +1903,13 @@ export default function App() {
                   emptyCabinets={activeScreen.emptyCabinets}
                   emptyPaintMode={emptyPaintMode}
                   onToggleEmpty={handleToggleEmpty}
+                  pixelEditMode={Boolean(activeScreen.manualCabinetPixels)}
+                  pixelSelection={cabinetPixelSelection}
+                  onCabinetPixelClick={(label) =>
+                    setCabinetPixelSelection((prev) =>
+                      prev.includes(label) ? prev.filter((item) => item !== label) : [...prev, label],
+                    )
+                  }
                   manualAssignments={manualOverrides.dataPorts}
                   chainOrder={
                     manualOverrides.dataPortChains ?? EMPTY_MANUAL_OVERRIDES.dataPortChains
@@ -1938,6 +1964,13 @@ export default function App() {
                   emptyCabinets={activeScreen.emptyCabinets}
                   emptyPaintMode={emptyPaintMode}
                   onToggleEmpty={handleToggleEmpty}
+                  pixelEditMode={Boolean(activeScreen.manualCabinetPixels)}
+                  pixelSelection={cabinetPixelSelection}
+                  onCabinetPixelClick={(label) =>
+                    setCabinetPixelSelection((prev) =>
+                      prev.includes(label) ? prev.filter((item) => item !== label) : [...prev, label],
+                    )
+                  }
                   manualAssignments={manualOverrides.powerLines}
                   chainOrder={
                     manualOverrides.powerLineChains ?? EMPTY_MANUAL_OVERRIDES.powerLineChains

@@ -242,6 +242,9 @@ export interface ScreenConfig {
   /** Пиксели кубика на полосу, если manualCabinetPixels. null — из пресета. */
   stripCabinetPixels?: Array<{ wide: number; high: number } | null>
 
+  /** Пиксели конкретного кубика (метка A1, B2…). Имеют приоритет над полосой. */
+  cabinetPixels?: Record<string, { wide: number; high: number }>
+
   /** @deprecated мигрируется в stripRowMixBands при sync */
   rowMixBands?: RowMixBand[]
 

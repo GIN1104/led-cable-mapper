@@ -107,6 +107,14 @@ interface SidebarProps {
   /** Полный сброс проекта (localStorage + defaults) */
   onResetProject: () => void
 
+  pixelSelection?: string[]
+
+  cabinetPixelNow?: Record<string, { wide: number; high: number }>
+
+  onSetCabinetPixels?: (wide: number, high: number) => void
+
+  onClearPixelSelection?: () => void
+
   emptyPaintMode: boolean
 
   onEmptyPaintModeChange: (enabled: boolean) => void
@@ -399,7 +407,6 @@ function StripRowMixPanel({
   wallHeightM,
   bodySize,
   bodyRows,
-  manualPixels,
 }: {
   stripIndex: number
   stripLabel: string
@@ -409,7 +416,6 @@ function StripRowMixPanel({
   wallHeightM: number
   bodySize: import('../lib/rowMix').RowMixSize
   bodyRows: number
-  manualPixels: boolean
 }) {
   const mixOn = isStripRowMixActive(bands)
 
@@ -538,21 +544,9 @@ function StripRowMixPanel({
                 </label>
                 {preset && (
                   <p className="text-[10px] text-slate-500">
-                    {preset.cabinetWidthMm}×{preset.cabinetHeightMm} mm ·{' '}
-                    {manualPixels
-                      ? `${band.pixelsWide ?? preset.pixelsWide}×${band.pixelsHigh ?? preset.pixelsHigh}`
-                      : `${preset.pixelsWide}×${preset.pixelsHigh}`}{' '}
-                    px · питч {preset.pixelPitchMm}
+                    {preset.cabinetWidthMm}×{preset.cabinetHeightMm} mm · {preset.pixelsWide}×
+                    {preset.pixelsHigh} px · питч {preset.pixelPitchMm}
                   </p>
-                )}
-                {manualPixels && preset && (
-                  <CabinetPixelFields
-                    wide={band.pixelsWide ?? preset.pixelsWide}
-                    high={band.pixelsHigh ?? preset.pixelsHigh}
-                    onChange={(wide, high) => {
-                      commitBands(updateRowMixBand(bands, index, { pixelsWide: wide, pixelsHigh: high }))
-                    }}
-                  />
                 )}
               </div>
             )
@@ -614,6 +608,14 @@ export default function Sidebar({
   onRenameScreen,
 
   onResetProject,
+
+  pixelSelection = [],
+
+  cabinetPixelNow = {},
+
+  onSetCabinetPixels,
+
+  onClearPixelSelection,
 
   emptyPaintMode,
 
@@ -1316,26 +1318,7 @@ export default function Sidebar({
                               : '3.9-small'
                           }
                           bodyRows={stripHigh}
-                          manualPixels={Boolean(config.manualCabinetPixels)}
                         />
-                        {config.manualCabinetPixels && !stripMixOn && (
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-medium text-slate-600">
-                              Пиксели этого кубика
-                            </p>
-                            <CabinetPixelFields
-                              wide={config.stripCabinetPixels?.[i]?.wide ?? resolved.pixelsWide}
-                              high={config.stripCabinetPixels?.[i]?.high ?? resolved.pixelsHigh}
-                              onChange={(wide, high) => {
-                                const count = config.stripWidths?.length ?? 1
-                                const next = [...(config.stripCabinetPixels ?? [])]
-                                while (next.length < count) next.push(null)
-                                next[i] = { wide, high }
-                                update('stripCabinetPixels', next)
-                              }}
-                            />
-                          </div>
-                        )}
                         <label className="block text-[10px] font-medium text-slate-600">
                           Размер стрипа (высота)
                           {stripMixOn ? (
@@ -1510,10 +1493,45 @@ export default function Sidebar({
               onChange={(e) => update('manualCabinetPixels', e.target.checked)}
             />
             <span className="text-xs leading-snug text-slate-700">
-              Пиксели каждого кубика, как в NovaStar. На схеме 500×500 остаётся квадратом,
-              1000×500 — прямоугольником.
+              Пиксели каждого кубика, как в NovaStar. Нажмите кубики на схеме.
+              500×500 рисуется квадратом,               1000×500 — прямоугольником.
             </span>
           </label>
+          {config.manualCabinetPixels && (
+            <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold text-slate-800">
+                  Выбрано кубиков: {pixelSelection.length || 'нет'}
+                </p>
+                {pixelSelection.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-[10px] font-medium text-slate-600"
+                    onClick={() => onClearPixelSelection?.()}
+                  >
+                    Сбросить
+                  </button>
+                )}
+              </div>
+              {pixelSelection.length > 0 ? (
+                <>
+                  <p className="text-[10px] leading-snug text-slate-600">
+                    {pixelSelection.slice(0, 8).join(', ')}
+                    {pixelSelection.length > 8 ? '…' : ''}
+                  </p>
+                  <CabinetPixelFields
+                    wide={cabinetPixelNow[pixelSelection[0] ?? '']?.wide ?? 128}
+                    high={cabinetPixelNow[pixelSelection[0] ?? '']?.high ?? 128}
+                    onChange={(wide, high) => onSetCabinetPixels?.(wide, high)}
+                  />
+                </>
+              ) : (
+                <p className="text-[10px] leading-snug text-slate-600">
+                  Нажмите кубики на схеме Data или Power. Размер в пикселях задаётся каждому выбранному.
+                </p>
+              )}
+            </div>
+          )}
 
 
 
