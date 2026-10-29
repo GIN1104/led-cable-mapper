@@ -42,9 +42,15 @@ export function screenRoutingKey(screen: ScreenConfig): string {
       .join(';'),
     (screen.stripRowMixBands ?? [])
       .map((stripBands, i) =>
-        `${i}:${stripBands.map((b) => `${b.size}:${b.rows}`).join(',')}`,
+        `${i}:${stripBands
+          .map((b) => `${b.size}:${b.rows}:${b.edge ?? ''}:${b.pixelsWide ?? ''}x${b.pixelsHigh ?? ''}`)
+          .join(',')}`,
       )
       .join(';'),
+    screen.manualCabinetPixels ? 1 : 0,
+    (screen.stripCabinetPixels ?? [])
+      .map((p) => (p ? `${p.wide}x${p.high}` : ''))
+      .join(','),
   ].join('|')
 }
 

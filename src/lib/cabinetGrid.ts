@@ -722,6 +722,18 @@ export function inferChainStart(
   return start?.label
 }
 
+/** Пиксели для лимита порта: в режиме NovaStar — по фактическим кубикам */
+export function routingPixelsPerCabinet(
+  config: ScreenConfig,
+  cabinets: Cabinet[],
+): number {
+  if (config.manualCabinetPixels) {
+    const totals = cabinets.map((c) => c.totalPixels).filter((n) => n > 0)
+    if (totals.length > 0) return Math.max(...totals)
+  }
+  return calcPixelsPerCabinet(config).totalPixels
+}
+
 /** Рассчитывает пиксели на одну кабинетку */
 export function calcPixelsPerCabinet(config: ScreenConfig): {
   pixelsWide: number

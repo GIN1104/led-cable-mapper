@@ -68,7 +68,17 @@ export function updateRowMixBand(
   if (!current) return next
   const size = patch.size && isRowMixSize(patch.size) ? patch.size : current.size
   const rows = Math.max(1, Math.floor(patch.rows ?? current.rows) || 1)
-  next[index] = { size, rows, ...(current.edge ? { edge: current.edge } : {}) }
+  next[index] = {
+    size,
+    rows,
+    ...(current.edge ? { edge: current.edge } : {}),
+    ...(patch.pixelsWide != null || current.pixelsWide
+      ? { pixelsWide: Math.round(patch.pixelsWide ?? current.pixelsWide ?? 0) }
+      : {}),
+    ...(patch.pixelsHigh != null || current.pixelsHigh
+      ? { pixelsHigh: Math.round(patch.pixelsHigh ?? current.pixelsHigh ?? 0) }
+      : {}),
+  }
   return next
 }
 
@@ -89,6 +99,8 @@ export function normalizeRowMixBands(
       size: isRowMixSize(b.size) ? b.size : ('3.9-small' as RowMixSize),
       rows: Math.max(0, Math.floor(b.rows) || 0),
       ...(b.edge === 'top' || b.edge === 'bottom' ? { edge: b.edge } : {}),
+      ...(b.pixelsWide && b.pixelsWide > 0 ? { pixelsWide: Math.round(b.pixelsWide) } : {}),
+      ...(b.pixelsHigh && b.pixelsHigh > 0 ? { pixelsHigh: Math.round(b.pixelsHigh) } : {}),
     }))
     .filter((b) => b.rows > 0)
 }
@@ -131,22 +143,30 @@ export function isRowMixActive(config: ScreenConfig): boolean {
   return stripRowMixBandsFor(config).some((b) => isStripRowMixActive(b))
 }
 
-export function rowMixGeo(size: RowMixSize): ResolvedStripPitch {
-  const preset = getPitchPreset(size)!
+export function rowMixGeo(band: RowMixBand, manual = false): ResolvedStripPitch {
+  const preset = getPitchPreset(band.size)!
+  const pixelsWide =
+    manual && band.pixelsWide && band.pixelsWide > 0
+      ? Math.round(band.pixelsWide)
+      : preset.pixelsWide
+  const pixelsHigh =
+    manual && band.pixelsHigh && band.pixelsHigh > 0
+      ? Math.round(band.pixelsHigh)
+      : preset.pixelsHigh
   return {
     cabinetWidthMm: preset.cabinetWidthMm,
     cabinetHeightMm: preset.cabinetHeightMm,
     pixelPitchMm: preset.pixelPitchMm,
     pitchPreset: preset.id,
-    pixelsWide: preset.pixelsWide,
-    pixelsHigh: preset.pixelsHigh,
-    totalPixels: preset.pixelsWide * preset.pixelsHigh,
+    pixelsWide,
+    pixelsHigh,
+    totalPixels: pixelsWide * pixelsHigh,
     isOverride: true,
   }
 }
 
 /** Сводка микса: ряды, мм высоты, пиксели */
-export function summarizeRowMix(bands: RowMixBand[]): {
+export function summarizeRowMix(bands: RowMixBand[], manual = false): {
   cabinetsHigh: number
   wallHeightM: number
   pixelsHigh: number
@@ -159,7 +179,7 @@ export function summarizeRowMix(bands: RowMixBand[]): {
   let pixelsHigh = 0
   let heightMm = 0
   for (const band of normalized) {
-    const geo = rowMixGeo(band.size)
+    const geo = rowMixGeo(band, manual)
     for (let i = 0; i < band.rows; i++) {
       rowGeos.push(geo)
       rowHeightsMm.push(geo.cabinetHeightMm)
@@ -184,7 +204,7 @@ export function resolveStripRowMixPitch(
 ): ResolvedStripPitch | null {
   const bands = stripRowMixBandsFor(config)[stripIndex]
   if (!isStripRowMixActive(bands)) return null
-  const { rowGeos } = summarizeRowMix(bands!)
+  const { rowGeos } = summarizeRowMix(bands!, Boolean(config.manualCabinetPixels))
   if (rowInStrip < 0 || rowInStrip >= rowGeos.length) return null
   return rowGeos[rowInStrip] ?? null
 }
@@ -211,11 +231,19 @@ export function rowMixHasStripGap(
 export function rowMixPixelsPerStrip(
   config: ScreenConfig,
 ): Array<
-  Array<{ pixelsWide: number; pixelsHigh: number; tag?: string; band?: number }> | null
+  Array<{
+    pixelsWide: number
+    pixelsHigh: number
+    cabinetWidthMm?: number
+    cabinetHeightMm?: number
+    tag?: string
+    band?: number
+    edge?: 'top' | 'bottom'
+  }> | null
 > {
   return stripRowMixBandsFor(config).map((bands) => {
     if (!isStripRowMixActive(bands)) return null
-    const { rowGeos } = summarizeRowMix(bands!)
+    const { rowGeos } = summarizeRowMix(bands!, Boolean(config.manualCabinetPixels))
     const bandAt: Array<{ band: number; edge?: 'top' | 'bottom' }> = []
     normalizeRowMixBands(bands).forEach((band, bandIndex) => {
       for (let i = 0; i < band.rows; i++) bandAt.push({ band: bandIndex, edge: band.edge })
@@ -223,6 +251,8 @@ export function rowMixPixelsPerStrip(
     return rowGeos.map((g, row) => ({
       pixelsWide: g.pixelsWide,
       pixelsHigh: g.pixelsHigh,
+      cabinetWidthMm: g.cabinetWidthMm,
+      cabinetHeightMm: g.cabinetHeightMm,
       tag: mixTagForPreset(g.pitchPreset),
       band: bandAt[row]?.band ?? 0,
       edge: bandAt[row]?.edge,
@@ -442,7 +472,7 @@ export function screenPixelsHighFromRowMix(config: ScreenConfig): number | null 
   for (const bands of perStrip) {
     if (!isStripRowMixActive(bands)) continue
     any = true
-    maxPx = Math.max(maxPx, summarizeRowMix(bands!).pixelsHigh)
+    maxPx = Math.max(maxPx, summarizeRowMix(bands!, Boolean(config.manualCabinetPixels)).pixelsHigh)
   }
   return any ? maxPx : null
 }

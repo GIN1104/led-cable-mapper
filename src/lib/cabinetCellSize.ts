@@ -13,6 +13,31 @@ export interface CabinetCellPx {
   pixelsHigh: number
 }
 
+/** 500 мм — сторона эталонного квадрата на схеме */
+export const MM_MODULE = 500
+
+/**
+ * Размер ячейки по миллиметрам кабинета.
+ * 500×500 — квадрат, 1000×500 — прямоугольник 2:1, 500×1000 — 1:2.
+ * Число пикселей на это не влияет.
+ */
+export function cellPxFromMillimeters(
+  widthMm: number,
+  heightMm: number,
+  isMobile: boolean,
+): CabinetCellPx {
+  const modulePx = isMobile ? MODULE_PX_MOBILE : MODULE_PX_DESKTOP
+  const scale = modulePx / MM_MODULE
+  const wMm = Math.max(1, Math.round(widthMm) || MM_MODULE)
+  const hMm = Math.max(1, Math.round(heightMm) || MM_MODULE)
+  return {
+    w: Math.max(1, Math.round(wMm * scale)),
+    h: Math.max(1, Math.round(hMm * scale)),
+    pixelsWide: wMm,
+    pixelsHigh: hMm,
+  }
+}
+
 /** Размер ячейки на схеме строго по соотношению пикселей кабинета */
 export function cellPxFromPixels(
   pixelsWide: number,

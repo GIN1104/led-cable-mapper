@@ -257,12 +257,25 @@ export function resolveStripPitch(
   const stripCount = stripCountFor(screen)
   const configs = normalizeStripPitchConfigs(screen.stripPitchConfigs, stripCount)
   const ref = configs[stripIndex] ?? inheritStripPitch()
+  const done = (resolved: ResolvedStripPitch): ResolvedStripPitch => {
+    if (!screen.manualCabinetPixels) return resolved
+    const manual = screen.stripCabinetPixels?.[stripIndex]
+    if (!manual || manual.wide < 1 || manual.high < 1) return resolved
+    const pixelsWide = Math.round(manual.wide)
+    const pixelsHigh = Math.round(manual.high)
+    return {
+      ...resolved,
+      pixelsWide,
+      pixelsHigh,
+      totalPixels: pixelsWide * pixelsHigh,
+    }
+  }
 
   if (ref.kind === 'screen' && ref.screenId) {
     const live = allScreens.find((s) => s.id === ref.screenId)
     if (live) {
       const px = pixelsFromScreenLike(live)
-      return {
+      return done({
         cabinetWidthMm: live.cabinetWidthMm,
         cabinetHeightMm: live.cabinetHeightMm,
         pixelPitchMm: live.pixelPitchMm,
@@ -271,10 +284,10 @@ export function resolveStripPitch(
         pixelsHigh: px.pixelsHigh,
         totalPixels: px.totalPixels,
         isOverride: true,
-      }
+      })
     }
     if (ref.cabinetWidthMm && ref.cabinetHeightMm && ref.pixelsWide && ref.pixelsHigh) {
-      return {
+      return done({
         cabinetWidthMm: ref.cabinetWidthMm,
         cabinetHeightMm: ref.cabinetHeightMm,
         pixelPitchMm: ref.pixelPitchMm ?? screen.pixelPitchMm,
@@ -283,14 +296,14 @@ export function resolveStripPitch(
         pixelsHigh: ref.pixelsHigh,
         totalPixels: ref.pixelsWide * ref.pixelsHigh,
         isOverride: true,
-      }
+      })
     }
   }
 
   if (ref.kind === 'preset' && ref.pitchPreset && ref.pitchPreset !== 'custom') {
     const preset = getPitchPreset(ref.pitchPreset)
     if (preset) {
-      return {
+      return done({
         cabinetWidthMm: preset.cabinetWidthMm,
         cabinetHeightMm: preset.cabinetHeightMm,
         pixelPitchMm: preset.pixelPitchMm,
@@ -299,7 +312,7 @@ export function resolveStripPitch(
         pixelsHigh: preset.pixelsHigh,
         totalPixels: preset.pixelsWide * preset.pixelsHigh,
         isOverride: true,
-      }
+      })
     }
   }
 
@@ -307,7 +320,7 @@ export function resolveStripPitch(
     const pitch = ref.pixelPitchMm ?? screen.pixelPitchMm
     const pw = ref.pixelsWide ?? Math.round(ref.cabinetWidthMm / pitch)
     const ph = ref.pixelsHigh ?? Math.round(ref.cabinetHeightMm / pitch)
-    return {
+    return done({
       cabinetWidthMm: ref.cabinetWidthMm,
       cabinetHeightMm: ref.cabinetHeightMm,
       pixelPitchMm: pitch,
@@ -316,11 +329,11 @@ export function resolveStripPitch(
       pixelsHigh: ph,
       totalPixels: pw * ph,
       isOverride: true,
-    }
+    })
   }
 
   const px = pixelsFromScreenLike(screen)
-  return {
+  return done({
     cabinetWidthMm: screen.cabinetWidthMm,
     cabinetHeightMm: screen.cabinetHeightMm,
     pixelPitchMm: screen.pixelPitchMm,
@@ -329,7 +342,7 @@ export function resolveStripPitch(
     pixelsHigh: px.pixelsHigh,
     totalPixels: px.totalPixels,
     isOverride: false,
-  }
+  })
 }
 
 /** Геометрия каждой полосы экрана */
@@ -357,9 +370,11 @@ export function stripScreenConfig(
     cabinetWidthMm: geo.cabinetWidthMm,
     cabinetHeightMm: geo.cabinetHeightMm,
     pixelPitchMm: geo.pixelPitchMm,
-    pitchPreset: geo.pitchPreset,
+    pitchPreset: screen.manualCabinetPixels ? 'custom' : geo.pitchPreset,
     customPixelsWide: geo.pixelsWide,
     customPixelsHigh: geo.pixelsHigh,
-    customDensityInput: geo.pitchPreset === 'custom' ? 'pixels' : screen.customDensityInput,
+    customDensityInput: screen.manualCabinetPixels || geo.pitchPreset === 'custom'
+      ? 'pixels'
+      : screen.customDensityInput,
   }
 }

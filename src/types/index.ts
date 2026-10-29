@@ -233,6 +233,15 @@ export interface ScreenConfig {
    */
   stripRowMixBands: RowMixBand[][]
 
+  /**
+   * Как в NovaStar: пиксели задаются вручную для каждого кубика.
+   * Рисунок схемы при этом остаётся по миллиметрам кабинета.
+   */
+  manualCabinetPixels?: boolean
+
+  /** Пиксели кубика на полосу, если manualCabinetPixels. null — из пресета. */
+  stripCabinetPixels?: Array<{ wide: number; high: number } | null>
+
   /** @deprecated мигрируется в stripRowMixBands при sync */
   rowMixBands?: RowMixBand[]
 
@@ -251,6 +260,9 @@ export interface RowMixBand {
    * Только такие блоки отделяются зазором. Обычный микс Big/Small — без зазора.
    */
   edge?: 'top' | 'bottom'
+  /** Ручные пиксели кубика, если включён режим NovaStar */
+  pixelsWide?: number
+  pixelsHigh?: number
 }
 
 /** Источник питча для одной полосы */
@@ -611,6 +623,10 @@ const DEFAULT_SCREEN_FIELDS: Omit<ScreenConfig, 'id' | 'name' | 'emptyCabinets'>
   stripPitchConfigs: [{ kind: 'inherit' }],
 
   stripRowMixBands: [],
+
+  manualCabinetPixels: false,
+
+  stripCabinetPixels: [],
 
 }
 

@@ -25,6 +25,7 @@ import { EMPTY_SCREEN_ROUTING } from '../types'
 import {
 
   calcPixelsPerCabinet,
+  routingPixelsPerCabinet,
 
   filterActiveCabinets,
 
@@ -286,7 +287,7 @@ export function computeRouting(
 
   const isActive = isActiveFromEmpty(emptySet, config.cabinetsHigh)
 
-  const { totalPixels: pixelsPerCabinet } = calcPixelsPerCabinet(config)
+  const pixelsPerCabinet = routingPixelsPerCabinet(config, activeCabinets)
 
   const {
     manualModeData = false,
@@ -544,7 +545,7 @@ export function buildAutoManualOverrides(config: ScreenConfig) {
 
   const isActive = isActiveFromEmpty(emptySet, config.cabinetsHigh)
 
-  const { totalPixels: pixelsPerCabinet } = calcPixelsPerCabinet(config)
+  const pixelsPerCabinet = routingPixelsPerCabinet(config, activeCabinets)
 
   const { chains: dataChains } = buildDataChainsByStrips(
     activeCabinets,
