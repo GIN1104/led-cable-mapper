@@ -42,6 +42,7 @@ import {
   uploadSchemeImagesToTrip,
 } from '../lib/tripUpload'
 import { CUSTOM_PRESET_LABEL, getPitchPreset } from '../lib/pitchPresets'
+import { rowMixHasStripGap } from '../lib/rowMix'
 import { getPowerTrunkCabinet, inferPowerLineStart } from '../lib/powerRouting'
 import {
   backupLineColor,
@@ -130,7 +131,13 @@ interface GridVisualizationProps {
    * null на полосе = микс выкл.; length = высота полосы при активном миксе.
    */
   rowCabinetPixelsPerStrip?: Array<
-    Array<{ pixelsWide: number; pixelsHigh: number; tag?: string; band?: number }> | null
+    Array<{
+      pixelsWide: number
+      pixelsHigh: number
+      tag?: string
+      band?: number
+      edge?: 'top' | 'bottom'
+    }> | null
   >
   /** V-Backup включён — вторая строка легенды Data Backup */
   signalBackup?: boolean
@@ -821,9 +828,7 @@ export default memo(function GridVisualization({
       const rows = rowCabinetPixelsPerStrip?.[stripIndex]
       const prev = rows?.[rowInStrip - 1]
       const cur = rows?.[rowInStrip]
-      if (prev && cur && prev.band != null && cur.band != null && prev.band !== cur.band) {
-        return STRIP_GAP
-      }
+      if (rowMixHasStripGap(prev, cur)) return STRIP_GAP
       return GAP
     },
     [rowCabinetPixelsPerStrip, STRIP_GAP, GAP],

@@ -51,7 +51,7 @@ export function insertRowMixBand(
   size: RowMixSize = edge === 'top' ? '3.9-small' : '3.9-big',
   rows = 1,
 ): RowMixBand[] {
-  const band: RowMixBand = { size, rows: Math.max(1, Math.floor(rows) || 1) }
+  const band: RowMixBand = { size, rows: Math.max(1, Math.floor(rows) || 1), edge }
   const next = [...normalizeRowMixBands(bands)]
   if (edge === 'top') next.unshift(band)
   else next.push(band)
@@ -68,7 +68,7 @@ export function updateRowMixBand(
   if (!current) return next
   const size = patch.size && isRowMixSize(patch.size) ? patch.size : current.size
   const rows = Math.max(1, Math.floor(patch.rows ?? current.rows) || 1)
-  next[index] = { size, rows }
+  next[index] = { size, rows, ...(current.edge ? { edge: current.edge } : {}) }
   return next
 }
 
@@ -88,6 +88,7 @@ export function normalizeRowMixBands(
     .map((b) => ({
       size: isRowMixSize(b.size) ? b.size : ('3.9-small' as RowMixSize),
       rows: Math.max(0, Math.floor(b.rows) || 0),
+      ...(b.edge === 'top' || b.edge === 'bottom' ? { edge: b.edge } : {}),
     }))
     .filter((b) => b.rows > 0)
 }
@@ -196,6 +197,16 @@ export function resolveRowMixPitch(
   return resolveStripRowMixPitch(config, 0, row)
 }
 
+/** Зазор только между блоком «сверху/снизу» и остальной стеной, не внутри микса Big/Small */
+export function rowMixHasStripGap(
+  prev: { band?: number; edge?: 'top' | 'bottom' } | undefined,
+  cur: { band?: number; edge?: 'top' | 'bottom' } | undefined,
+): boolean {
+  if (!prev || !cur) return false
+  if (prev.band == null || cur.band == null || prev.band === cur.band) return false
+  return Boolean(prev.edge || cur.edge)
+}
+
 /** Пиксели каждого ряда по полосам (null = микс выкл. на полосе) */
 export function rowMixPixelsPerStrip(
   config: ScreenConfig,
@@ -205,15 +216,16 @@ export function rowMixPixelsPerStrip(
   return stripRowMixBandsFor(config).map((bands) => {
     if (!isStripRowMixActive(bands)) return null
     const { rowGeos } = summarizeRowMix(bands!)
-    const bandAt: number[] = []
+    const bandAt: Array<{ band: number; edge?: 'top' | 'bottom' }> = []
     normalizeRowMixBands(bands).forEach((band, bandIndex) => {
-      for (let i = 0; i < band.rows; i++) bandAt.push(bandIndex)
+      for (let i = 0; i < band.rows; i++) bandAt.push({ band: bandIndex, edge: band.edge })
     })
     return rowGeos.map((g, row) => ({
       pixelsWide: g.pixelsWide,
       pixelsHigh: g.pixelsHigh,
       tag: mixTagForPreset(g.pitchPreset),
-      band: bandAt[row] ?? 0,
+      band: bandAt[row]?.band ?? 0,
+      edge: bandAt[row]?.edge,
     }))
   })
 }

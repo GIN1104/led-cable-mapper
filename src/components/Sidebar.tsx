@@ -452,8 +452,7 @@ function StripRowMixPanel({
         <div className="space-y-2">
           {bands.map((band, index) => {
             const preset = PITCH_PRESETS.find((p) => p.id === band.size)
-            const place =
-              index === 0 ? 'верх' : index === bands.length - 1 ? 'низ' : 'середина'
+            const place = band.edge === 'top' ? 'сверху' : band.edge === 'bottom' ? 'снизу' : 'микс'
             return (
               <div key={`${band.size}-${index}`} className="rounded border border-amber-200 bg-white p-2 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
