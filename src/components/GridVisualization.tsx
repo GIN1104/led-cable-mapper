@@ -78,6 +78,7 @@ interface GridVisualizationProps {
   emptyPaintMode?: boolean
   onToggleEmpty?: (label: string) => void
   /** Клик выбирает кубик для пикселей, а не для линии */
+  pixelPickMode?: boolean
   pixelEditMode?: boolean
   pixelSelection?: string[]
   onCabinetPixelClick?: (label: string) => void
@@ -717,6 +718,7 @@ export default memo(function GridVisualization({
   emptyCabinets = [],
   emptyPaintMode = false,
   onToggleEmpty,
+  pixelPickMode = false,
   pixelEditMode = false,
   pixelSelection = [],
   onCabinetPixelClick,
@@ -1456,7 +1458,6 @@ export default memo(function GridVisualization({
     const wOf = new Map<string, number>()
     const hOf = new Map<string, number>()
     const byRow = new Map<number, typeof cabinets>()
-    const byCol = new Map<number, typeof cabinets>()
     for (const cab of cabinets) {
       const px = cellPxFromPixels(cab.pixelsWide, cab.pixelsHigh, isMobile)
       const key = cellKey(cab.col, cab.row)
@@ -1465,41 +1466,45 @@ export default memo(function GridVisualization({
       const rowList = byRow.get(cab.row) ?? []
       rowList.push(cab)
       byRow.set(cab.row, rowList)
-      const colList = byCol.get(cab.col) ?? []
-      colList.push(cab)
-      byCol.set(cab.col, colList)
     }
     let maxRight = PAD
-    for (const list of byRow.values()) {
-      const sorted = [...list].sort((a, b) => a.col - b.col)
+    let y = gridOriginY
+    let maxBottom = gridOriginY
+    let prevRow = -1
+    const rowNumbers = [...byRow.keys()].sort((a, b) => a - b)
+    for (const row of rowNumbers) {
+      const sorted = [...(byRow.get(row) ?? [])].sort((a, b) => a.col - b.col)
+      const visible = sorted.filter((cab) => {
+        const si = stripIndexByCol[cab.col] ?? 0
+        const sh = stripHeightsNorm[si] ?? high
+        return cab.row >= high - sh
+      })
+      for (const cab of sorted) {
+        if (!visible.includes(cab)) yOf.set(cellKey(cab.col, cab.row), gridOriginY - 9999)
+      }
+      if (visible.length === 0) continue
+      const rowH = Math.max(...visible.map((cab) => hOf.get(cellKey(cab.col, cab.row)) ?? CELL_H))
+      if (prevRow >= 0) {
+        const sample = visible[0]!
+        const si = stripIndexByCol[sample.col] ?? 0
+        const sh = stripHeightsNorm[si] ?? high
+        const rowInStrip = sample.row - (high - sh)
+        if (rowInStrip > 0) y += mixRowGap(si, rowInStrip)
+      }
       let x = PAD
       let prevStrip = -1
-      for (const cab of sorted) {
+      for (const cab of visible) {
         const si = stripIndexByCol[cab.col] ?? 0
         if (prevStrip >= 0 && si !== prevStrip) x += STRIP_GAP
         prevStrip = si
-        xOf.set(cellKey(cab.col, cab.row), x)
-        x += (wOf.get(cellKey(cab.col, cab.row)) ?? CELL_W) + GAP
+        const key = cellKey(cab.col, cab.row)
+        xOf.set(key, x)
+        yOf.set(key, y)
+        x += (wOf.get(key) ?? CELL_W) + GAP
       }
       maxRight = Math.max(maxRight, x)
-    }
-    let maxBottom = gridOriginY
-    for (const list of byCol.values()) {
-      const sorted = [...list].sort((a, b) => a.row - b.row)
-      let y = gridOriginY
-      for (const cab of sorted) {
-        const si = stripIndexByCol[cab.col] ?? 0
-        const sh = stripHeightsNorm[si] ?? high
-        const startRow = high - sh
-        if (cab.row < startRow) {
-          yOf.set(cellKey(cab.col, cab.row), gridOriginY - 9999)
-          continue
-        }
-        const rowInStrip = cab.row - startRow
-        if (rowInStrip > 0) y += mixRowGap(si, rowInStrip)
-        yOf.set(cellKey(cab.col, cab.row), y)
-        y += hOf.get(cellKey(cab.col, cab.row)) ?? CELL_H
-      }
+      y += rowH
+      prevRow = row
       maxBottom = Math.max(maxBottom, y)
     }
     return {
@@ -1978,7 +1983,7 @@ export default memo(function GridVisualization({
 
   const handleCabinetClick = useCallback(
     (label: string, shiftKey: boolean, altKey: boolean) => {
-      if (pixelEditMode && onCabinetPixelClick) {
+      if (pixelPickMode && onCabinetPixelClick) {
         onCabinetPixelClick(label)
         return
       }
@@ -2041,7 +2046,7 @@ export default memo(function GridVisualization({
       focusManualKeyboard()
     },
     [
-      pixelEditMode,
+      pixelPickMode,
       onCabinetPixelClick,
       manualMode,
       emptyPaintMode,
@@ -3097,9 +3102,10 @@ export default memo(function GridVisualization({
         )}
       </div>
 
-      {pixelEditMode && (
+      {pixelPickMode && (
         <p className="mb-1 text-[11px] font-medium text-blue-800">
-          Нажмите кубики на схеме. Выбрано: {pixelSelection.length || 'нет'}
+          Нажмите кубики, чтобы задать пиксели. Линию тикшорета рисуйте, когда выбор выключен. Выбрано:{' '}
+          {pixelSelection.length || 'нет'}
         </p>
       )}
 
@@ -3195,8 +3201,8 @@ export default memo(function GridVisualization({
                     : 16
 
             const lineColors = lineColorFor(lineNum)
-            const isPixelPicked = pixelEditMode && pixelSelectionSet.has(cab.label)
-            const isInteractive = pixelEditMode || manualMode || emptyPaintMode
+            const isPixelPicked = pixelPickMode && pixelSelectionSet.has(cab.label)
+            const isInteractive = pixelPickMode || manualMode || emptyPaintMode
             const rowMixTag = rowMixTagAt(cab.col, cab.row)
 
             return (

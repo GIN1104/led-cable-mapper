@@ -160,6 +160,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [driveNotice, setDriveNotice] = useState<string | null>(null)
   const [cabinetPixelSelection, setCabinetPixelSelection] = useState<string[]>([])
+  const [pickingCabinetPixels, setPickingCabinetPixels] = useState(false)
   useEffect(() => {
     const sync = () => setDriveNotice(peekDriveSignInNotice())
     sync()
@@ -170,6 +171,7 @@ export default function App() {
   const [activeScreenId, setActiveScreenId] = useState(initialProject.activeScreenId)
   useEffect(() => {
     setCabinetPixelSelection([])
+    setPickingCabinetPixels(false)
   }, [activeScreenId])
   const [routingByScreen, setRoutingByScreen] = useState<Record<string, ScreenRoutingState>>(
     initialProject.routingByScreen,
@@ -1598,6 +1600,8 @@ export default function App() {
             updateActiveScreen({ ...activeScreen, cabinetPixels: next })
           }}
           onClearPixelSelection={() => setCabinetPixelSelection([])}
+          pixelPickMode={pickingCabinetPixels}
+          onPixelPickModeChange={setPickingCabinetPixels}
           emptyPaintMode={emptyPaintMode}
           onEmptyPaintModeChange={setEmptyPaintMode}
           gridLayout={gridLayout}
@@ -1904,6 +1908,7 @@ export default function App() {
                   emptyPaintMode={emptyPaintMode}
                   onToggleEmpty={handleToggleEmpty}
                   pixelEditMode={Boolean(activeScreen.manualCabinetPixels)}
+                  pixelPickMode={pickingCabinetPixels && Boolean(activeScreen.manualCabinetPixels)}
                   pixelSelection={cabinetPixelSelection}
                   onCabinetPixelClick={(label) =>
                     setCabinetPixelSelection((prev) =>
@@ -1965,6 +1970,7 @@ export default function App() {
                   emptyPaintMode={emptyPaintMode}
                   onToggleEmpty={handleToggleEmpty}
                   pixelEditMode={Boolean(activeScreen.manualCabinetPixels)}
+                  pixelPickMode={pickingCabinetPixels && Boolean(activeScreen.manualCabinetPixels)}
                   pixelSelection={cabinetPixelSelection}
                   onCabinetPixelClick={(label) =>
                     setCabinetPixelSelection((prev) =>

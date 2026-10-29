@@ -257,19 +257,7 @@ export function resolveStripPitch(
   const stripCount = stripCountFor(screen)
   const configs = normalizeStripPitchConfigs(screen.stripPitchConfigs, stripCount)
   const ref = configs[stripIndex] ?? inheritStripPitch()
-  const done = (resolved: ResolvedStripPitch): ResolvedStripPitch => {
-    if (!screen.manualCabinetPixels) return resolved
-    const manual = screen.stripCabinetPixels?.[stripIndex]
-    if (!manual || manual.wide < 1 || manual.high < 1) return resolved
-    const pixelsWide = Math.round(manual.wide)
-    const pixelsHigh = Math.round(manual.high)
-    return {
-      ...resolved,
-      pixelsWide,
-      pixelsHigh,
-      totalPixels: pixelsWide * pixelsHigh,
-    }
-  }
+  const done = (resolved: ResolvedStripPitch): ResolvedStripPitch => resolved
 
   if (ref.kind === 'screen' && ref.screenId) {
     const live = allScreens.find((s) => s.id === ref.screenId)

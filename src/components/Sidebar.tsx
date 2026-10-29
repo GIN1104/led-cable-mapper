@@ -115,6 +115,10 @@ interface SidebarProps {
 
   onClearPixelSelection?: () => void
 
+  pixelPickMode?: boolean
+
+  onPixelPickModeChange?: (enabled: boolean) => void
+
   emptyPaintMode: boolean
 
   onEmptyPaintModeChange: (enabled: boolean) => void
@@ -616,6 +620,10 @@ export default function Sidebar({
   onSetCabinetPixels,
 
   onClearPixelSelection,
+
+  pixelPickMode = false,
+
+  onPixelPickModeChange,
 
   emptyPaintMode,
 
@@ -1490,15 +1498,29 @@ export default function Sidebar({
               type="checkbox"
               className="mt-0.5"
               checked={Boolean(config.manualCabinetPixels)}
-              onChange={(e) => update('manualCabinetPixels', e.target.checked)}
+              onChange={(e) => {
+                update('manualCabinetPixels', e.target.checked)
+                if (!e.target.checked) onPixelPickModeChange?.(false)
+              }}
             />
             <span className="text-xs leading-snug text-slate-700">
-              Пиксели каждого кубика, как в NovaStar. Нажмите кубики на схеме.
-              500×500 рисуется квадратом,               1000×500 — прямоугольником.
+              Пиксели каждого кубика, как в NovaStar. Кубик рисуется по своим пикселям,
+              соседи остаются на месте в своём ряду. Обычный клик рисует тикшорет.
             </span>
           </label>
           {config.manualCabinetPixels && (
             <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-2.5">
+              <button
+                type="button"
+                className={`w-full rounded-md px-2 py-1.5 text-[11px] font-semibold ${
+                  pixelPickMode
+                    ? 'bg-blue-700 text-white'
+                    : 'border border-blue-400 bg-white text-blue-900'
+                }`}
+                onClick={() => onPixelPickModeChange?.(!pixelPickMode)}
+              >
+                {pixelPickMode ? 'Выбор кубиков включён' : 'Выбрать кубики для пикселей'}
+              </button>
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[11px] font-semibold text-slate-800">
                   Выбрано кубиков: {pixelSelection.length || 'нет'}
@@ -1527,7 +1549,9 @@ export default function Sidebar({
                 </>
               ) : (
                 <p className="text-[10px] leading-snug text-slate-600">
-                  Нажмите кубики на схеме Data или Power. Размер в пикселях задаётся каждому выбранному.
+                  {pixelPickMode
+                    ? 'Нажмите кубики на схеме. Затем выключите выбор и рисуйте тикшорет обычным кликом.'
+                    : 'Обычный клик рисует тикшорет. Включите выбор, чтобы задать пиксели отдельным кубикам.'}
                 </p>
               )}
             </div>
