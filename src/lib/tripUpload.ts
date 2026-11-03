@@ -5,8 +5,8 @@ import {
 } from './panelExport'
 import {
   buildFullEventWorkbook,
+  equipmentListPhoneRows,
   equipmentListToXlsxBlob,
-  getEquipmentListExportRows,
   getDriveSheetFilename,
   getFullEventXlsxFilename,
   type EmbeddedSchemeImage,
@@ -299,15 +299,14 @@ function wrapCanvasLine(
 }
 
 /**
- * Список оборудования из того же набора строк, что и Excel, рисуется в PNG.
- * html-to-image за экраном давал пустой файл; canvas всегда содержит таблицу.
- * GAS не принимает .xlsx (unsupported_mime) — в выезд уходит этот PNG вместе со схемами.
+ * Список оборудования как узкая картинка под ширину iPhone.
+ * Крупный текст: название, количество и кейсы. Пустые строки шаблона не рисуются.
  */
 export async function buildEquipmentListPngUploadFile(
   state: EquipmentListState,
 ): Promise<SchemeUploadFile> {
-  const filename = getFullEventXlsxFilename(state.meta).replace(/\.xlsx$/i, '.png')
-  const rows = getEquipmentListExportRows(state)
+  const filename = 'equipment-list.png'
+  const rows = equipmentListPhoneRows(state)
   const meta = state.meta
   const metaLines = [
     meta.eventDate ? `תאריך: ${meta.eventDate}` : '',
@@ -319,60 +318,67 @@ export async function buildEquipmentListPngUploadFile(
     meta.types ? `סוג: ${meta.types}` : '',
   ].filter(Boolean)
 
-  const scale = 2
-  const pad = 28
-  const tableW = 1320
-  const colW = [300, 520, 260, 240]
-  const lineH = 22
-  const cellPadX = 10
-  const cellPadY = 8
-  const font = '16px Arial, "Segoe UI", sans-serif'
-  const fontBold = 'bold 16px Arial, "Segoe UI", sans-serif'
-  const fontTitle = 'bold 26px Arial, "Segoe UI", sans-serif'
+  const logicalW = 390
+  const pad = 16
+  const cardGap = 10
+  const fontTitle = 'bold 24px Arial, "Segoe UI", sans-serif'
+  const fontMeta = '17px Arial, "Segoe UI", sans-serif'
+  const fontHebrew = 'bold 22px Arial, "Segoe UI", sans-serif'
+  const fontRussian = '18px Arial, "Segoe UI", sans-serif'
+  const fontQty = 'bold 32px Arial, "Segoe UI", sans-serif'
+  const fontFoot = '15px Arial, "Segoe UI", sans-serif'
 
   const measure = document.createElement('canvas').getContext('2d')
   if (!measure) throw new Error('Canvas недоступен')
+  const textW = logicalW - pad * 2
 
-  const cellLines = (
-    text: string,
-    width: number,
-    bold: boolean,
-  ): string[] => {
-    measure.font = bold ? fontBold : font
-    return wrapCanvasLine(measure, text, Math.max(20, width - cellPadX * 2))
+  const wrap = (text: string, font: string, width: number): string[] => {
+    measure.font = font
+    return wrapCanvasLine(measure, text, width)
   }
 
-  const headers = ['ציוד', 'Оборудование', 'כמויות', 'תופסות']
-  const headerHeights = headers.map((title, i) => {
-    const lines = cellLines(title, colW[i]!, true)
-    return Math.max(36, lines.length * lineH + cellPadY * 2)
-  })
-  const headerH = Math.max(...headerHeights)
+  type Card = {
+    hebrew: string[]
+    russian: string[]
+    quantity: string
+    footprint: string
+    height: number
+  }
 
-  const body = rows.map((row) => {
-    const values = [row.hebrew, row.russian, row.quantity, row.footprint]
-    const wrapped = values.map((value, i) => cellLines(value, colW[i]!, false))
-    const height = Math.max(
-      34,
-      ...wrapped.map((lines) => lines.length * lineH + cellPadY * 2),
-    )
-    return { wrapped, height }
+  const cards: Card[] = rows.map((row) => {
+    const qtyW = 92
+    const nameW = textW - qtyW - 12
+    const hebrew = wrap(row.hebrew.trim() || '—', fontHebrew, nameW)
+    const russian = wrap(row.russian.trim(), fontRussian, nameW).filter(Boolean)
+    const footprint = row.footprint.trim()
+    const height =
+      14 +
+      hebrew.length * 26 +
+      (russian.length ? 4 + russian.length * 22 : 0) +
+      14
+    return {
+      hebrew,
+      russian,
+      quantity: row.quantity.trim(),
+      footprint,
+      height: Math.max(78, height),
+    }
   })
 
-  measure.font = font
-  const metaBlockH = metaLines.length * 24
-  const titleH = 40
-  const tableH = headerH + body.reduce((n, row) => n + row.height, 0)
-  const logicalW = pad * 2 + tableW
-  const logicalH = pad + titleH + metaBlockH + 16 + tableH + pad
+  const titleH = 34
+  const metaH = metaLines.length * 22
+  const cardsH = cards.reduce((sum, card) => sum + card.height + cardGap, 0)
+  const emptyH = cards.length === 0 ? 48 : 0
+  const logicalH = pad + titleH + 8 + metaH + 12 + cardsH + emptyH + pad
+  const scale = logicalH > 4600 ? 2 : 3
 
   const canvas = document.createElement('canvas')
   canvas.width = logicalW * scale
-  canvas.height = logicalH * scale
+  canvas.height = Math.max(1, logicalH * scale)
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('Canvas недоступен')
   ctx.scale(scale, scale)
-  ctx.fillStyle = '#ffffff'
+  ctx.fillStyle = '#f8fafc'
   ctx.fillRect(0, 0, logicalW, logicalH)
 
   ctx.fillStyle = '#0f172a'
@@ -380,65 +386,55 @@ export async function buildEquipmentListPngUploadFile(
   ctx.direction = 'rtl'
   ctx.textAlign = 'right'
   ctx.textBaseline = 'top'
-  ctx.fillText('רשימת ציוד לאירוע', logicalW - pad, pad)
+  ctx.fillText('רשימת ציוד', logicalW - pad, pad)
 
-  ctx.font = font
+  ctx.font = fontMeta
   ctx.fillStyle = '#334155'
   metaLines.forEach((line, i) => {
-    ctx.fillText(line, logicalW - pad, pad + titleH + i * 24)
+    ctx.fillText(line, logicalW - pad, pad + titleH + 8 + i * 22)
   })
 
-  const tableX = pad
-  const tableY = pad + titleH + metaBlockH + 16
-
-  const paintCell = (
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    lines: string[],
-    opts: { bold?: boolean; rtl?: boolean; fill?: string },
-  ) => {
-    ctx.fillStyle = opts.fill ?? '#ffffff'
-    ctx.fillRect(x, y, w, h)
-    ctx.strokeStyle = '#64748b'
-    ctx.lineWidth = 1
-    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1)
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(x + cellPadX, y + cellPadY, w - cellPadX * 2, h - cellPadY * 2)
-    ctx.clip()
-    ctx.font = opts.bold ? fontBold : font
-    ctx.fillStyle = '#0f172a'
-    ctx.direction = opts.rtl ? 'rtl' : 'ltr'
-    ctx.textAlign = opts.rtl ? 'right' : 'left'
-    ctx.textBaseline = 'top'
-    const tx = opts.rtl ? x + w - cellPadX : x + cellPadX
-    lines.forEach((line, i) => {
-      ctx.fillText(line, tx, y + cellPadY + i * lineH)
-    })
-    ctx.restore()
+  let y = pad + titleH + 8 + metaH + 12
+  if (cards.length === 0) {
+    ctx.fillStyle = '#64748b'
+    ctx.font = fontRussian
+    ctx.textAlign = 'right'
+    ctx.fillText('Нет заполненных строк', logicalW - pad, y)
   }
 
-  let x = tableX
-  headers.forEach((title, i) => {
-    const rtl = i !== 1
-    paintCell(x, tableY, colW[i]!, headerH, cellLines(title, colW[i]!, true), {
-      bold: true,
-      rtl,
-      fill: '#e2e8f0',
-    })
-    x += colW[i]!
-  })
+  for (const card of cards) {
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(pad, y, textW, card.height)
+    ctx.strokeStyle = '#cbd5e1'
+    ctx.lineWidth = 1
+    ctx.strokeRect(pad + 0.5, y + 0.5, textW - 1, card.height - 1)
 
-  let y = tableY + headerH
-  for (const row of body) {
-    x = tableX
-    row.wrapped.forEach((lines, i) => {
-      paintCell(x, y, colW[i]!, row.height, lines, { rtl: i !== 1 })
-      x += colW[i]!
+    ctx.fillStyle = '#1d4ed8'
+    ctx.font = fontQty
+    ctx.direction = 'ltr'
+    ctx.textAlign = 'left'
+    ctx.fillText(card.quantity || '—', pad + 14, y + 16)
+
+    if (card.footprint) {
+      ctx.fillStyle = '#475569'
+      ctx.font = fontFoot
+      ctx.fillText(card.footprint, pad + 14, y + 50)
+    }
+
+    const nameX = logicalW - pad - 14
+    ctx.fillStyle = '#0f172a'
+    ctx.font = fontHebrew
+    ctx.direction = 'rtl'
+    ctx.textAlign = 'right'
+    card.hebrew.forEach((line, i) => {
+      ctx.fillText(line, nameX, y + 14 + i * 26)
     })
-    y += row.height
+    ctx.fillStyle = '#334155'
+    ctx.font = fontRussian
+    card.russian.forEach((line, i) => {
+      ctx.fillText(line, nameX, y + 14 + card.hebrew.length * 26 + 4 + i * 22)
+    })
+    y += card.height + cardGap
   }
 
   const dataUrl = canvas.toDataURL('image/png')
@@ -456,7 +452,6 @@ export async function buildEquipmentListPngUploadFile(
     base64: stripPngDataUrlPrefix(dataUrl),
   }
 }
-
 export interface TripPackFiles {
   /** Схемы PNG всех экранов */
   pngs: SchemeUploadFile[]
@@ -672,7 +667,7 @@ export async function sendAllSchemes(
     state,
     eventName || state?.meta.eventName,
     screenCapture,
-    { includeEquipmentPng: false },
+    { includeEquipmentPng: true },
   )
   let editLink: string | null = null
   if (state) {
@@ -687,7 +682,7 @@ export async function sendAllSchemes(
       onStatus?.(links.length ? 'Схемы и ссылка в карточку…' : 'Отправка схем…')
       const result = await uploadTripPackToTrip(
         bridge,
-        { pngs: pack.pngs, excel: null },
+        { pngs: pack.pngs, excel: pack.excel },
         onStatus,
         editLink ?? undefined,
         links,
@@ -700,7 +695,7 @@ export async function sendAllSchemes(
         onStatus?.('Пробую ссылку в формате карточки…')
         const result = await uploadTripPackToTrip(
           bridge,
-          { pngs: pack.pngs, excel: null },
+          { pngs: pack.pngs, excel: pack.excel },
           onStatus,
           editLink ?? undefined,
           editLink ?? undefined,
@@ -711,7 +706,7 @@ export async function sendAllSchemes(
         onStatus?.('Отправляю только схемы…')
         const result = await uploadTripPackToTrip(
           bridge,
-          { pngs: pack.pngs, excel: null },
+          { pngs: pack.pngs, excel: pack.excel },
           onStatus,
           editLink ?? undefined,
         )

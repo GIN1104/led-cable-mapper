@@ -203,6 +203,15 @@ export function getEquipmentListExportRows(
   ]
 }
 
+/** Строки с количеством или кейсами — их видно на картинке для iPhone */
+export function equipmentListPhoneRows(
+  state: EquipmentListState,
+): { hebrew: string; russian: string; quantity: string; footprint: string }[] {
+  return getEquipmentListExportRows(state).filter(
+    (row) => row.quantity.trim() || row.footprint.trim(),
+  )
+}
+
 /** Кабинетов в кейсе: 500×500 → 8, 500×1000 / 1000×500 → 6 */
 export function cabinetsPerCase(cabinetWidthMm: number, cabinetHeightMm: number): number {
   if (cabinetWidthMm === 500 && cabinetHeightMm === 500) return 8
