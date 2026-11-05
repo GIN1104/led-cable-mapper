@@ -662,76 +662,67 @@ export async function sendAllSchemes(
 }> {
   onStatus?.('Вход в Google Drive…')
   await ensureDriveAccess()
-  onStatus?.('Сборка схем…')
+  onStatus?.('Сборка схем и списка…')
   const pack = await collectTripPackFiles(
     state,
     eventName || state?.meta.eventName,
     screenCapture,
     { includeEquipmentPng: true },
   )
+
+  // Сначала файлы в скрипт. Ошибка Диска или формата ссылки не должна их съедать.
+  onStatus?.(pack.excel ? 'Список и схемы в карточку…' : 'Отправка схем…')
+  const uploadedFiles = await uploadTripPackToTrip(bridge, pack, onStatus)
+  let uploaded = uploadedFiles.uploaded
+
   let editLink: string | null = null
+  let driveError: string | null = null
   if (state) {
-    onStatus?.('Excel на Google Drive…')
-    editLink = await publishEventWorkbookEditLink(state, pack.pngs)
-  }
-  const links = sheetsLinks(editLink ? [editLink] : [])
-  try {
-    let uploaded = 0
-    let linkInTrip = false
     try {
-      onStatus?.(links.length ? 'Схемы и ссылка в карточку…' : 'Отправка схем…')
-      const result = await uploadTripPackToTrip(
-        bridge,
-        { pngs: pack.pngs, excel: pack.excel },
-        onStatus,
-        editLink ?? undefined,
-        links,
-      )
-      uploaded = result.uploaded
-      linkInTrip = links.length > 0
-    } catch (firstError) {
-      if (!links.length) throw firstError
-      try {
-        onStatus?.('Пробую ссылку в формате карточки…')
-        const result = await uploadTripPackToTrip(
-          bridge,
-          { pngs: pack.pngs, excel: pack.excel },
-          onStatus,
-          editLink ?? undefined,
-          editLink ?? undefined,
-        )
-        uploaded = result.uploaded
-        linkInTrip = true
-      } catch {
-        onStatus?.('Отправляю только схемы…')
-        const result = await uploadTripPackToTrip(
-          bridge,
-          { pngs: pack.pngs, excel: pack.excel },
-          onStatus,
-          editLink ?? undefined,
-        )
-        uploaded = result.uploaded
-      }
+      onStatus?.('Excel на Google Drive…')
+      editLink = await publishEventWorkbookEditLink(state, pack.pngs)
+    } catch (error) {
+      driveError = error instanceof Error ? error.message : 'Не удалось сохранить Excel на Drive'
     }
-    let excelInTrip = false
-    if (editLink) {
-      onStatus?.('Excel со ссылкой внутри…')
-      excelInTrip = await uploadExcelHyperlinkFile(
-        bridge,
-        editLink,
-        linkInTrip ? undefined : editLink,
-      )
-      if (excelInTrip) {
-        uploaded += 1
-        if (!linkInTrip) linkInTrip = true
-      }
-    }
-    return { uploaded, editLink, linkInTrip, excelInTrip }
-  } catch (error) {
-    if (!editLink) throw error
-    const message = error instanceof Error ? error.message : 'Не удалось отправить файлы'
-    throw new Error(`${message}\nСсылка на Excel:\n${editLink}`)
   }
+
+  let linkInTrip = false
+  let excelInTrip = false
+  if (editLink) {
+    try {
+      onStatus?.('Ссылка на таблицу в карточку…')
+      const linkPng = await buildDriveEditLinkPng(editLink)
+      const linkResult = await uploadSchemeImagesToTrip(
+        bridge,
+        [linkPng],
+        null,
+        editLink,
+        [editLink],
+      )
+      if (linkResult.ok) {
+        uploaded += linkResult.uploaded ?? 1
+        linkInTrip = true
+      }
+    } catch {
+      linkInTrip = false
+    }
+    try {
+      excelInTrip = await uploadExcelHyperlinkFile(bridge, editLink)
+      if (excelInTrip) uploaded += 1
+    } catch {
+      excelInTrip = false
+    }
+  }
+
+  if (driveError && !editLink) {
+    return {
+      uploaded,
+      editLink: null,
+      linkInTrip: false,
+      excelInTrip: false,
+    }
+  }
+  return { uploaded, editLink, linkInTrip, excelInTrip }
 }
 
 /** Текст после отправки: что именно карточка могла принять */
@@ -873,7 +864,7 @@ export async function uploadTripPackToTrip(
   if (allFiles.length === 0) {
     throw new Error('Нет файлов для отправки')
   }
-  const batches = chunkFiles(allFiles, 5)
+  const batches = chunkFilesByLimits(allFiles)
   let uploaded = 0
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i]!
@@ -900,6 +891,31 @@ export async function uploadTripPackToTrip(
     uploaded,
     excelUploaded: Boolean(pack.excel),
   }
+}
+
+/** Пачки: не больше 5 файлов и 8 МБ, иначе Apps Script отклоняет весь запрос. */
+export function chunkFilesByLimits<T extends { blob: Blob }>(
+  items: T[],
+  maxFiles = 5,
+  maxBytes = 8 * 1024 * 1024,
+): T[][] {
+  const chunks: T[][] = []
+  let current: T[] = []
+  let size = 0
+  for (const item of items) {
+    const next = item.blob.size
+    const full =
+      current.length > 0 && (current.length >= maxFiles || size + next > maxBytes)
+    if (full) {
+      chunks.push(current)
+      current = []
+      size = 0
+    }
+    current.push(item)
+    size += next
+  }
+  if (current.length > 0) chunks.push(current)
+  return chunks
 }
 
 /** Режет список на пачки по maxFiles (лимит GAS ≈ 5). */
