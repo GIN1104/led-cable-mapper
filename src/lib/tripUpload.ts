@@ -298,14 +298,23 @@ function wrapCanvasLine(
   return lines.length > 0 ? lines : ['']
 }
 
+/** Высота одной картинки списка: длинный холст скрипт и Telegram не сохраняют. */
+const EQUIPMENT_LIST_PAGE_HEIGHT = 1400
+
+export function equipmentListPageFilename(page: number, pages: number): string {
+  const base = 'schema-screen-equipment-list'
+  if (pages <= 1) return `${base}.png`
+  return `${base}-${page}.png`
+}
+
 /**
- * Список оборудования как узкая картинка под ширину iPhone.
+ * Список оборудования как узкие картинки под ширину iPhone.
  * Крупный текст: название, количество и кейсы. Пустые строки шаблона не рисуются.
+ * Длинный список режется на страницы, иначе файл не появляется в карточке.
  */
-export async function buildEquipmentListPngUploadFile(
+export async function buildEquipmentListPngUploadFiles(
   state: EquipmentListState,
-): Promise<SchemeUploadFile> {
-  const filename = 'equipment-list.png'
+): Promise<SchemeUploadFile[]> {
   const rows = equipmentListPhoneRows(state)
   const meta = state.meta
   const metaLines = [
@@ -321,6 +330,7 @@ export async function buildEquipmentListPngUploadFile(
   const logicalW = 390
   const pad = 16
   const cardGap = 10
+  const scale = 2
   const fontTitle = 'bold 24px Arial, "Segoe UI", sans-serif'
   const fontMeta = '17px Arial, "Segoe UI", sans-serif'
   const fontHebrew = 'bold 22px Arial, "Segoe UI", sans-serif'
@@ -367,96 +377,146 @@ export async function buildEquipmentListPngUploadFile(
 
   const titleH = 34
   const metaH = metaLines.length * 22
-  const cardsH = cards.reduce((sum, card) => sum + card.height + cardGap, 0)
-  const emptyH = cards.length === 0 ? 48 : 0
-  const logicalH = pad + titleH + 8 + metaH + 12 + cardsH + emptyH + pad
-  const scale = logicalH > 4600 ? 2 : 3
+  const headerH = pad + titleH + 8 + metaH + 12
 
-  const canvas = document.createElement('canvas')
-  canvas.width = logicalW * scale
-  canvas.height = Math.max(1, logicalH * scale)
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('Canvas недоступен')
-  ctx.scale(scale, scale)
-  ctx.fillStyle = '#f8fafc'
-  ctx.fillRect(0, 0, logicalW, logicalH)
+  type PageItem =
+    | { kind: 'header' }
+    | { kind: 'empty' }
+    | { kind: 'card'; card: Card }
 
-  ctx.fillStyle = '#0f172a'
-  ctx.font = fontTitle
-  ctx.direction = 'rtl'
-  ctx.textAlign = 'right'
-  ctx.textBaseline = 'top'
-  ctx.fillText('רשימת ציוד', logicalW - pad, pad)
+  const items: PageItem[] = [{ kind: 'header' }]
+  if (cards.length === 0) items.push({ kind: 'empty' })
+  for (const card of cards) items.push({ kind: 'card', card })
 
-  ctx.font = fontMeta
-  ctx.fillStyle = '#334155'
-  metaLines.forEach((line, i) => {
-    ctx.fillText(line, logicalW - pad, pad + titleH + 8 + i * 22)
-  })
-
-  let y = pad + titleH + 8 + metaH + 12
-  if (cards.length === 0) {
-    ctx.fillStyle = '#64748b'
-    ctx.font = fontRussian
-    ctx.textAlign = 'right'
-    ctx.fillText('Нет заполненных строк', logicalW - pad, y)
+  const itemHeight = (item: PageItem): number => {
+    if (item.kind === 'header') return headerH
+    if (item.kind === 'empty') return 48
+    return item.card.height + cardGap
   }
 
-  for (const card of cards) {
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(pad, y, textW, card.height)
-    ctx.strokeStyle = '#cbd5e1'
-    ctx.lineWidth = 1
-    ctx.strokeRect(pad + 0.5, y + 0.5, textW - 1, card.height - 1)
+  const pages: PageItem[][] = []
+  let page: PageItem[] = []
+  let pageH = pad
+  for (const item of items) {
+    const h = itemHeight(item)
+    if (page.length > 0 && pageH + h + pad > EQUIPMENT_LIST_PAGE_HEIGHT) {
+      pages.push(page)
+      page = []
+      pageH = pad
+    }
+    page.push(item)
+    pageH += h
+  }
+  if (page.length > 0) pages.push(page)
 
-    ctx.fillStyle = '#1d4ed8'
-    ctx.font = fontQty
-    ctx.direction = 'ltr'
-    ctx.textAlign = 'left'
-    ctx.fillText(card.quantity || '—', pad + 14, y + 16)
+  const files: SchemeUploadFile[] = []
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+    const pageItems = pages[pageIndex]!
+    const logicalH = pageItems.reduce((sum, item) => sum + itemHeight(item), pad) + pad
+    const canvas = document.createElement('canvas')
+    canvas.width = logicalW * scale
+    canvas.height = Math.max(1, logicalH * scale)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('Canvas недоступен')
+    ctx.scale(scale, scale)
+    ctx.fillStyle = '#f8fafc'
+    ctx.fillRect(0, 0, logicalW, logicalH)
+    ctx.textBaseline = 'top'
 
-    if (card.footprint) {
-      ctx.fillStyle = '#475569'
-      ctx.font = fontFoot
-      ctx.fillText(card.footprint, pad + 14, y + 50)
+    let y = pad
+    for (const item of pageItems) {
+      if (item.kind === 'header') {
+        ctx.fillStyle = '#0f172a'
+        ctx.font = fontTitle
+        ctx.direction = 'rtl'
+        ctx.textAlign = 'right'
+        const title =
+          pages.length > 1
+            ? `רשימת ציוד ${pageIndex + 1}/${pages.length}`
+            : 'רשימת ציוד'
+        ctx.fillText(title, logicalW - pad, y)
+        ctx.font = fontMeta
+        ctx.fillStyle = '#334155'
+        metaLines.forEach((line, i) => {
+          ctx.fillText(line, logicalW - pad, y + titleH + 8 + i * 22)
+        })
+      } else if (item.kind === 'empty') {
+        ctx.fillStyle = '#64748b'
+        ctx.font = fontRussian
+        ctx.direction = 'rtl'
+        ctx.textAlign = 'right'
+        ctx.fillText('Нет заполненных строк', logicalW - pad, y)
+      } else {
+        const card = item.card
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(pad, y, textW, card.height)
+        ctx.strokeStyle = '#cbd5e1'
+        ctx.lineWidth = 1
+        ctx.strokeRect(pad + 0.5, y + 0.5, textW - 1, card.height - 1)
+
+        ctx.fillStyle = '#1d4ed8'
+        ctx.font = fontQty
+        ctx.direction = 'ltr'
+        ctx.textAlign = 'left'
+        ctx.fillText(card.quantity || '—', pad + 14, y + 16)
+
+        if (card.footprint) {
+          ctx.fillStyle = '#475569'
+          ctx.font = fontFoot
+          ctx.fillText(card.footprint, pad + 14, y + 50)
+        }
+
+        const nameX = logicalW - pad - 14
+        ctx.fillStyle = '#0f172a'
+        ctx.font = fontHebrew
+        ctx.direction = 'rtl'
+        ctx.textAlign = 'right'
+        card.hebrew.forEach((line, i) => {
+          ctx.fillText(line, nameX, y + 14 + i * 26)
+        })
+        ctx.fillStyle = '#334155'
+        ctx.font = fontRussian
+        card.russian.forEach((line, i) => {
+          ctx.fillText(line, nameX, y + 14 + card.hebrew.length * 26 + 4 + i * 22)
+        })
+      }
+      y += itemHeight(item)
     }
 
-    const nameX = logicalW - pad - 14
-    ctx.fillStyle = '#0f172a'
-    ctx.font = fontHebrew
-    ctx.direction = 'rtl'
-    ctx.textAlign = 'right'
-    card.hebrew.forEach((line, i) => {
-      ctx.fillText(line, nameX, y + 14 + i * 26)
+    const dataUrl = canvas.toDataURL('image/png')
+    if (!dataUrl.startsWith('data:image/png') || dataUrl.length < 800) {
+      throw new Error('PNG списка оборудования получился пустым')
+    }
+    const blob = await dataUrlToPngBlob(dataUrl)
+    if (blob.size < 1500) {
+      throw new Error('PNG списка оборудования получился пустым')
+    }
+    files.push({
+      filename: equipmentListPageFilename(pageIndex + 1, pages.length),
+      blob: blob.type === 'image/png' ? blob : new Blob([blob], { type: 'image/png' }),
+      mimeType: 'image/png',
+      base64: stripPngDataUrlPrefix(dataUrl),
     })
-    ctx.fillStyle = '#334155'
-    ctx.font = fontRussian
-    card.russian.forEach((line, i) => {
-      ctx.fillText(line, nameX, y + 14 + card.hebrew.length * 26 + 4 + i * 22)
-    })
-    y += card.height + cardGap
   }
+  return files
+}
 
-  const dataUrl = canvas.toDataURL('image/png')
-  if (!dataUrl.startsWith('data:image/png') || dataUrl.length < 800) {
-    throw new Error('PNG списка оборудования получился пустым')
-  }
-  const blob = await dataUrlToPngBlob(dataUrl)
-  if (blob.size < 1500) {
-    throw new Error('PNG списка оборудования получился пустым')
-  }
-  return {
-    filename,
-    blob: blob.type === 'image/png' ? blob : new Blob([blob], { type: 'image/png' }),
-    mimeType: 'image/png',
-    base64: stripPngDataUrlPrefix(dataUrl),
-  }
+/** Первая страница списка. Для отправки используйте buildEquipmentListPngUploadFiles. */
+export async function buildEquipmentListPngUploadFile(
+  state: EquipmentListState,
+): Promise<SchemeUploadFile> {
+  const files = await buildEquipmentListPngUploadFiles(state)
+  const first = files[0]
+  if (!first) throw new Error('PNG списка оборудования получился пустым')
+  return first
 }
 export interface TripPackFiles {
   /** Схемы PNG всех экранов */
   pngs: SchemeUploadFile[]
-  /** Список оборудования как PNG (эквивалент Excel для GAS) */
+  /** Список оборудования как PNG (эквивалент Excel для GAS). Первая страница. */
   excel: SchemeUploadFile | null
+  /** Все страницы списка для iPhone */
+  equipmentPngs?: SchemeUploadFile[]
 }
 
 /**
@@ -484,12 +544,14 @@ export async function collectTripPackFiles(
       )
     : await collectSchemePngFiles(name)
   let excel: SchemeUploadFile | null = null
+  let equipmentPngs: SchemeUploadFile[] = []
   const includeEquipmentPng = options?.includeEquipmentPng !== false
   if (state && includeEquipmentPng) {
     screenCapture?.onProgress?.('Сборка списка оборудования (PNG)…')
-    excel = await buildEquipmentListPngUploadFile(state)
+    equipmentPngs = await buildEquipmentListPngUploadFiles(state)
+    excel = equipmentPngs[0] ?? null
   }
-  return { pngs, excel }
+  return { pngs, excel, equipmentPngs }
 }
 
 /**
@@ -670,59 +732,42 @@ export async function sendAllSchemes(
     { includeEquipmentPng: true },
   )
 
-  // Сначала файлы в скрипт. Ошибка Диска или формата ссылки не должна их съедать.
-  onStatus?.(pack.excel ? 'Список и схемы в карточку…' : 'Отправка схем…')
-  const uploadedFiles = await uploadTripPackToTrip(bridge, pack, onStatus)
-  let uploaded = uploadedFiles.uploaded
-
   let editLink: string | null = null
-  let driveError: string | null = null
   if (state) {
     try {
       onStatus?.('Excel на Google Drive…')
       editLink = await publishEventWorkbookEditLink(state, pack.pngs)
-    } catch (error) {
-      driveError = error instanceof Error ? error.message : 'Не удалось сохранить Excel на Drive'
+    } catch {
+      editLink = null
     }
   }
 
-  let linkInTrip = false
-  let excelInTrip = false
-  if (editLink) {
-    try {
-      onStatus?.('Ссылка на таблицу в карточку…')
-      const linkPng = await buildDriveEditLinkPng(editLink)
-      const linkResult = await uploadSchemeImagesToTrip(
-        bridge,
-        [linkPng],
-        null,
-        editLink,
-        [editLink],
-      )
-      if (linkResult.ok) {
-        uploaded += linkResult.uploaded ?? 1
-        linkInTrip = true
-      }
-    } catch {
-      linkInTrip = false
-    }
-    try {
-      excelInTrip = await uploadExcelHyperlinkFile(bridge, editLink)
-      if (excelInTrip) uploaded += 1
-    } catch {
-      excelInTrip = false
-    }
-  }
-
-  if (driveError && !editLink) {
+  // Один запрос: список и схемы. Повторный запрос со ссылкой затирал список
+  // и добавлял схемы второй раз. Ссылка — одно поле schemeLinks.
+  onStatus?.(
+    pack.equipmentPngs?.length
+      ? 'Список и схемы в карточку…'
+      : 'Отправка схем…',
+  )
+  try {
+    const uploadedFiles = await uploadTripPackToTrip(
+      bridge,
+      pack,
+      onStatus,
+      undefined,
+      editLink ? [editLink] : undefined,
+    )
     return {
-      uploaded,
-      editLink: null,
-      linkInTrip: false,
+      uploaded: uploadedFiles.uploaded,
+      editLink,
+      linkInTrip: Boolean(editLink),
       excelInTrip: false,
     }
+  } catch (error) {
+    if (!editLink) throw error
+    const message = error instanceof Error ? error.message : 'Не удалось отправить файлы'
+    throw new Error(`${message}\nСсылка на Excel:\n${editLink}`)
   }
-  return { uploaded, editLink, linkInTrip, excelInTrip }
 }
 
 /** Текст после отправки: что именно карточка могла принять */
@@ -761,7 +806,13 @@ export function describeTripSendResult(result: {
 
 /** Плоский список для локального скачивания / upload */
 export function flattenTripPackFiles(pack: TripPackFiles): SchemeUploadFile[] {
-  return pack.excel ? [pack.excel, ...pack.pngs] : [...pack.pngs]
+  const list =
+    pack.equipmentPngs && pack.equipmentPngs.length > 0
+      ? pack.equipmentPngs
+      : pack.excel
+        ? [pack.excel]
+        : []
+  return [...list, ...pack.pngs]
 }
 
 export interface UploadTripPackResult {
@@ -815,13 +866,16 @@ export async function uploadSchemeImagesToTrip(
       trip_id: bridge.tripId,
       upload_token: bridge.uploadToken,
       files: filePayloads,
-      ...(linkList.length ? { schemeLinks: linkList.join('\n') } : {}),
+      // Одно поле. Строка и массив вместе давали две одинаковые ссылки в карточке.
+      ...(linkList.length
+        ? { schemeLinks: linkList.join('\n') }
+        : excelUrl
+          ? { schemeLinks: excelUrl }
+          : {}),
       meta: {
         source: 'led-cable-mapper',
         title: bridge.title || undefined,
         types: bridge.types || undefined,
-        excelUrl: excelUrl || undefined,
-        ...(linkList.length ? { schemeLinks: linkList } : {}),
       },
     })
 
