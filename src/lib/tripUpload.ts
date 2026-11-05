@@ -298,8 +298,9 @@ function wrapCanvasLine(
   return lines.length > 0 ? lines : ['']
 }
 
-/** Высота одной картинки списка: длинный холст скрипт и Telegram не сохраняют. */
-const EQUIPMENT_LIST_PAGE_HEIGHT = 1400
+/** Один экран iPhone: картинка открывается на весь экран, без полей сбоку. */
+const EQUIPMENT_LIST_SCREEN_W = 390
+const EQUIPMENT_LIST_SCREEN_H = 844
 
 export function equipmentListPageFilename(page: number, pages: number): string {
   const base = 'schema-screen-equipment-list'
@@ -307,180 +308,221 @@ export function equipmentListPageFilename(page: number, pages: number): string {
   return `${base}-${page}.png`
 }
 
+/** Колонки как в Excel, справа налево: ציוד, Оборудование, כמויות, תופסות. */
+const EQUIPMENT_LIST_COLUMNS: {
+  key: 'hebrew' | 'russian' | 'quantity' | 'footprint'
+  title: string
+  width: number
+  rtl: boolean
+}[] = [
+  { key: 'footprint', title: 'תופסות', width: 52, rtl: true },
+  { key: 'quantity', title: 'כמויות', width: 118, rtl: false },
+  { key: 'russian', title: 'Оборудование', width: 128, rtl: false },
+  { key: 'hebrew', title: 'ציוד', width: 92, rtl: true },
+]
+
 /**
- * Список оборудования как узкие картинки под ширину iPhone.
- * Крупный текст: название, количество и кейсы. Пустые строки шаблона не рисуются.
- * Длинный список режется на страницы, иначе файл не появляется в карточке.
+ * Список оборудования как лист Excel на весь экран iPhone.
+ * Колонки и названия те же: ציוד, Оборудование, כמויות, תופסות.
+ * Пустые строки шаблона не рисуются. Сбоку нет отдельной колонки с цифрами.
  */
 export async function buildEquipmentListPngUploadFiles(
   state: EquipmentListState,
 ): Promise<SchemeUploadFile[]> {
   const rows = equipmentListPhoneRows(state)
-  const meta = state.meta
-  const metaLines = [
-    meta.eventDate ? `תאריך: ${meta.eventDate}` : '',
-    meta.eventName ? `שם האירוע: ${meta.eventName}` : '',
-    meta.location ? `מיקום: ${meta.location}` : '',
-    meta.hours ? `שעות: ${meta.hours}` : '',
-    meta.contact ? `איש קשר: ${meta.contact}` : '',
-    meta.car ? `רכב: ${meta.car}` : '',
-    meta.types ? `סוג: ${meta.types}` : '',
-  ].filter(Boolean)
-
-  const logicalW = 390
-  const pad = 16
-  const cardGap = 10
-  const scale = 2
-  const fontTitle = 'bold 24px Arial, "Segoe UI", sans-serif'
-  const fontMeta = '17px Arial, "Segoe UI", sans-serif'
-  const fontHebrew = 'bold 22px Arial, "Segoe UI", sans-serif'
-  const fontRussian = '18px Arial, "Segoe UI", sans-serif'
-  const fontQty = 'bold 32px Arial, "Segoe UI", sans-serif'
-  const fontFoot = '15px Arial, "Segoe UI", sans-serif'
+  const scale = 3
+  const fontHeader = 'bold 14px Arial, "Segoe UI", sans-serif'
+  const fontCell = '15px Arial, "Segoe UI", sans-serif'
+  const fontMeta = 'bold 14px Arial, "Segoe UI", sans-serif'
+  const lineH = 18
+  const cellPad = 4
+  const headerH = 32
+  const minRowH = 36
 
   const measure = document.createElement('canvas').getContext('2d')
   if (!measure) throw new Error('Canvas недоступен')
-  const textW = logicalW - pad * 2
 
   const wrap = (text: string, font: string, width: number): string[] => {
     measure.font = font
-    return wrapCanvasLine(measure, text, width)
+    const maxWidth = Math.max(8, width)
+    const lines: string[] = []
+    const pushLongWord = (word: string) => {
+      let chunk = ''
+      for (const ch of word) {
+        const next = chunk + ch
+        if (chunk && measure.measureText(next).width > maxWidth) {
+          lines.push(chunk)
+          chunk = ch
+        } else {
+          chunk = next
+        }
+      }
+      if (chunk) lines.push(chunk)
+    }
+    for (const paragraph of String(text ?? '').replace(/\r/g, '').split('\n')) {
+      const words = paragraph.trim().split(/\s+/).filter(Boolean)
+      if (words.length === 0) {
+        lines.push('')
+        continue
+      }
+      let line = ''
+      for (const word of words) {
+        if (measure.measureText(word).width > maxWidth) {
+          if (line) lines.push(line)
+          pushLongWord(word)
+          line = ''
+          continue
+        }
+        const next = line ? `${line} ${word}` : word
+        if (line && measure.measureText(next).width > maxWidth) {
+          lines.push(line)
+          line = word
+        } else {
+          line = next
+        }
+      }
+      if (line) lines.push(line)
+    }
+    return lines.length > 0 ? lines : ['']
   }
 
-  type Card = {
-    hebrew: string[]
-    russian: string[]
-    quantity: string
-    footprint: string
-    height: number
-  }
+  const columnWidth = (key: (typeof EQUIPMENT_LIST_COLUMNS)[number]['key']) =>
+    EQUIPMENT_LIST_COLUMNS.find((column) => column.key === key)!.width
 
-  const cards: Card[] = rows.map((row) => {
-    const qtyW = 92
-    const nameW = textW - qtyW - 12
-    const hebrew = wrap(row.hebrew.trim() || '—', fontHebrew, nameW)
-    const russian = wrap(row.russian.trim(), fontRussian, nameW).filter(Boolean)
-    const footprint = row.footprint.trim()
-    const height =
-      14 +
-      hebrew.length * 26 +
-      (russian.length ? 4 + russian.length * 22 : 0) +
-      14
+  const meta = state.meta
+  const metaText = [
+    meta.eventDate ? `תאריך: ${meta.eventDate}` : '',
+    meta.eventName ? `שם האירוע: ${meta.eventName}` : '',
+  ]
+    .filter(Boolean)
+    .join('   ')
+  const metaLines = metaText
+    ? wrap(metaText, fontMeta, EQUIPMENT_LIST_SCREEN_W - 12)
+    : []
+  const metaH = metaLines.length > 0 ? metaLines.length * lineH + 10 : 0
+
+  const measured = rows.map((row) => {
+    const lines = {
+      hebrew: wrap(row.hebrew.trim(), fontCell, columnWidth('hebrew') - cellPad * 2),
+      russian: wrap(row.russian.trim(), fontCell, columnWidth('russian') - cellPad * 2),
+      quantity: wrap(row.quantity.trim(), fontCell, columnWidth('quantity') - cellPad * 2),
+      footprint: wrap(row.footprint.trim(), fontCell, columnWidth('footprint') - cellPad * 2),
+    }
+    const lineCount = Math.max(
+      1,
+      lines.hebrew.length,
+      lines.russian.length,
+      lines.quantity.length,
+      lines.footprint.length,
+    )
     return {
-      hebrew,
-      russian,
-      quantity: row.quantity.trim(),
-      footprint,
-      height: Math.max(78, height),
+      lines,
+      height: Math.max(minRowH, lineCount * lineH + cellPad * 2),
     }
   })
 
-  const titleH = 34
-  const metaH = metaLines.length * 22
-  const headerH = pad + titleH + 8 + metaH + 12
-
-  type PageItem =
-    | { kind: 'header' }
-    | { kind: 'empty' }
-    | { kind: 'card'; card: Card }
-
-  const items: PageItem[] = [{ kind: 'header' }]
-  if (cards.length === 0) items.push({ kind: 'empty' })
-  for (const card of cards) items.push({ kind: 'card', card })
-
-  const itemHeight = (item: PageItem): number => {
-    if (item.kind === 'header') return headerH
-    if (item.kind === 'empty') return 48
-    return item.card.height + cardGap
-  }
-
-  const pages: PageItem[][] = []
-  let page: PageItem[] = []
-  let pageH = pad
-  for (const item of items) {
-    const h = itemHeight(item)
-    if (page.length > 0 && pageH + h + pad > EQUIPMENT_LIST_PAGE_HEIGHT) {
+  const pages: (typeof measured)[] = []
+  let page: typeof measured = []
+  let used = headerH + (pages.length === 0 ? metaH : 0)
+  for (const row of measured) {
+    const chrome = headerH + (pages.length === 0 && page.length === 0 ? metaH : 0)
+    if (page.length > 0 && used + row.height > EQUIPMENT_LIST_SCREEN_H) {
       pages.push(page)
       page = []
-      pageH = pad
+      used = headerH
     }
-    page.push(item)
-    pageH += h
+    if (page.length === 0) used = chrome
+    page.push(row)
+    used += row.height
   }
   if (page.length > 0) pages.push(page)
+  if (pages.length === 0) pages.push([])
 
   const files: SchemeUploadFile[] = []
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
-    const pageItems = pages[pageIndex]!
-    const logicalH = pageItems.reduce((sum, item) => sum + itemHeight(item), pad) + pad
+    const pageRows = pages[pageIndex]!
+    const topChrome = (pageIndex === 0 ? metaH : 0) + headerH
+    const rowsH = pageRows.reduce((sum, row) => sum + row.height, 0)
+    const logicalH = Math.max(EQUIPMENT_LIST_SCREEN_H, topChrome + rowsH)
     const canvas = document.createElement('canvas')
-    canvas.width = logicalW * scale
-    canvas.height = Math.max(1, logicalH * scale)
+    canvas.width = EQUIPMENT_LIST_SCREEN_W * scale
+    canvas.height = logicalH * scale
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('Canvas недоступен')
     ctx.scale(scale, scale)
-    ctx.fillStyle = '#f8fafc'
-    ctx.fillRect(0, 0, logicalW, logicalH)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, EQUIPMENT_LIST_SCREEN_W, logicalH)
     ctx.textBaseline = 'top'
+    ctx.lineWidth = 1
+    ctx.strokeStyle = '#000000'
+    ctx.fillStyle = '#000000'
 
-    let y = pad
-    for (const item of pageItems) {
-      if (item.kind === 'header') {
-        ctx.fillStyle = '#0f172a'
-        ctx.font = fontTitle
-        ctx.direction = 'rtl'
-        ctx.textAlign = 'right'
-        const title =
-          pages.length > 1
-            ? `רשימת ציוד ${pageIndex + 1}/${pages.length}`
-            : 'רשימת ציוד'
-        ctx.fillText(title, logicalW - pad, y)
-        ctx.font = fontMeta
-        ctx.fillStyle = '#334155'
-        metaLines.forEach((line, i) => {
-          ctx.fillText(line, logicalW - pad, y + titleH + 8 + i * 22)
-        })
-      } else if (item.kind === 'empty') {
-        ctx.fillStyle = '#64748b'
-        ctx.font = fontRussian
-        ctx.direction = 'rtl'
-        ctx.textAlign = 'right'
-        ctx.fillText('Нет заполненных строк', logicalW - pad, y)
-      } else {
-        const card = item.card
-        ctx.fillStyle = '#ffffff'
-        ctx.fillRect(pad, y, textW, card.height)
-        ctx.strokeStyle = '#cbd5e1'
-        ctx.lineWidth = 1
-        ctx.strokeRect(pad + 0.5, y + 0.5, textW - 1, card.height - 1)
+    let y = 0
+    if (pageIndex === 0 && metaLines.length > 0) {
+      ctx.font = fontMeta
+      ctx.direction = 'rtl'
+      ctx.textAlign = 'right'
+      ctx.fillStyle = '#000000'
+      metaLines.forEach((line, index) => {
+        ctx.fillText(line, EQUIPMENT_LIST_SCREEN_W - 6, 6 + index * lineH)
+      })
+      y = metaH
+    }
 
-        ctx.fillStyle = '#1d4ed8'
-        ctx.font = fontQty
-        ctx.direction = 'ltr'
-        ctx.textAlign = 'left'
-        ctx.fillText(card.quantity || '—', pad + 14, y + 16)
-
-        if (card.footprint) {
-          ctx.fillStyle = '#475569'
-          ctx.font = fontFoot
-          ctx.fillText(card.footprint, pad + 14, y + 50)
-        }
-
-        const nameX = logicalW - pad - 14
-        ctx.fillStyle = '#0f172a'
-        ctx.font = fontHebrew
-        ctx.direction = 'rtl'
-        ctx.textAlign = 'right'
-        card.hebrew.forEach((line, i) => {
-          ctx.fillText(line, nameX, y + 14 + i * 26)
-        })
-        ctx.fillStyle = '#334155'
-        ctx.font = fontRussian
-        card.russian.forEach((line, i) => {
-          ctx.fillText(line, nameX, y + 14 + card.hebrew.length * 26 + 4 + i * 22)
-        })
+    const paintCell = (
+      textLines: string[],
+      x: number,
+      top: number,
+      width: number,
+      height: number,
+      font: string,
+      rtl: boolean,
+      fill?: string,
+    ) => {
+      if (fill) {
+        ctx.fillStyle = fill
+        ctx.fillRect(x, top, width, height)
       }
-      y += itemHeight(item)
+      ctx.strokeStyle = '#000000'
+      ctx.strokeRect(x + 0.5, top + 0.5, width - 1, height - 1)
+      ctx.font = font
+      ctx.direction = rtl ? 'rtl' : 'ltr'
+      ctx.textAlign = 'center'
+      ctx.fillStyle = '#000000'
+      const blockH = textLines.length * lineH
+      let textY = top + Math.max(cellPad, (height - blockH) / 2)
+      const shown = textLines.length > 0 ? textLines : ['']
+      for (const line of shown) {
+        if (textY + lineH > top + height) break
+        ctx.fillText(line, x + width / 2, textY)
+        textY += lineH
+      }
+    }
+
+    let x = 0
+    for (const column of EQUIPMENT_LIST_COLUMNS) {
+      paintCell([column.title], x, y, column.width, headerH, fontHeader, column.rtl, '#d8d8d8')
+      x += column.width
+    }
+    y += headerH
+
+    const data = pageRows.length > 0 ? pageRows : []
+    for (const row of data) {
+      x = 0
+      for (const column of EQUIPMENT_LIST_COLUMNS) {
+        paintCell(row.lines[column.key], x, y, column.width, row.height, fontCell, column.rtl)
+        x += column.width
+      }
+      y += row.height
+    }
+
+    while (y + minRowH <= EQUIPMENT_LIST_SCREEN_H && y + minRowH <= logicalH) {
+      x = 0
+      for (const column of EQUIPMENT_LIST_COLUMNS) {
+        paintCell([''], x, y, column.width, minRowH, fontCell, column.rtl)
+        x += column.width
+      }
+      y += minRowH
     }
 
     const dataUrl = canvas.toDataURL('image/png')
