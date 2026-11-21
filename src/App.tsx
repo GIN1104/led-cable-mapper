@@ -27,9 +27,8 @@ import {
   getMaxCabinetsPerDataPort,
   getPowerLineLimitHint,
   getMaxPixelsPerDataPort,
-  HIGH_PIXEL_SCREEN_THRESHOLD,
-  needsHighPixelController,
 } from './lib/constants'
+import { assessControllerResolution } from './lib/controllerLimits'
 import { isLargeGrid, fullRoutingKey } from './lib/screenConfigHash'
 import { useActiveRouting, useAllScreensRouting } from './hooks/useRoutingResults'
 import Sidebar from './components/Sidebar'
@@ -1552,6 +1551,13 @@ export default function App() {
     )
   })()
   const maxPixelsPerPort = getMaxPixelsPerDataPort(config.refreshRate)
+  const controllerAlert = assessControllerResolution({
+    model: config.controllerModel,
+    dualVx1000: config.dualVx1000,
+    refreshRate: config.refreshRate,
+    pixelsWide: screenPixelsWide,
+    pixelsHigh: screenPixelsHigh,
+  })
   const maxCabinetsPerPort =
     result != null
       ? getMaxCabinetsPerDataPort(config.refreshRate, result.summary.pixelsPerCabinet)
@@ -1748,32 +1754,18 @@ export default function App() {
             </div>
           </header>
 
-          {!showInitialSpinner &&
-            result &&
-            needsHighPixelController(
-              result.summary.totalPixels,
-              config.controllerModel,
-            ) && (
+          {controllerAlert && (
               <div
-                className="no-print shrink-0 border-b border-red-500 bg-red-100 px-3 py-1.5 text-xs font-medium text-red-800 sm:px-6 sm:py-2.5 sm:text-sm"
+                className="no-print shrink-0 border-b-4 border-red-950 bg-red-600 px-3 py-2 text-sm font-semibold leading-snug text-white sm:px-6"
                 role="alert"
               >
-                <strong className="font-bold text-red-900">
-                  {result.summary.totalPixels.toLocaleString()} px
-                </strong>
-                {' > '}
-                {(HIGH_PIXEL_SCREEN_THRESHOLD / 1_000_000).toFixed(1)}M — выберите
-                контроллер <strong className="text-red-950">VX2000</strong>,{' '}
-                <strong className="text-red-950">H2</strong> или{' '}
-                <strong className="text-red-950">MCTRL4K</strong>
-                {' / '}
-                Select <strong className="text-red-950">VX2000</strong>,{' '}
-                <strong className="text-red-950">H2</strong> or{' '}
-                <strong className="text-red-950">MCTRL4K</strong>
-                {' / '}
-                בחר <strong className="text-red-950">VX2000</strong>,{' '}
-                <strong className="text-red-950">H2</strong> או{' '}
-                <strong className="text-red-950">MCTRL4K</strong>
+                {controllerAlert.outputText && <p>{controllerAlert.outputText}</p>}
+                {controllerAlert.inputText && (
+                  <p className={controllerAlert.outputText ? 'mt-1' : undefined}>
+                    {controllerAlert.inputText}
+                  </p>
+                )}
+                <p className="mt-1 font-bold text-white">{controllerAlert.suggestion}</p>
               </div>
             )}
 

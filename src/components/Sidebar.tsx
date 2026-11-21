@@ -1970,6 +1970,9 @@ export default function Sidebar({
               ))}
 
             </div>
+            <p className="mt-1 text-[10px] leading-snug text-slate-500">
+              Обычно 50 Гц, реже 60. Ниже 50 Гц не используем.
+            </p>
 
           </Field>
 
